@@ -1,0 +1,518 @@
+<Window x:Class="Liuzhuan.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:models="clr-namespace:Liuzhuan.Models"
+        Title="流转"
+        Width="340"
+        Height="600"
+        WindowStyle="None"
+        AllowsTransparency="False"
+        Topmost="True"
+        ShowInTaskbar="True"
+        ResizeMode="NoResize"
+        Background="{StaticResource PanelBrush}"
+        FontFamily="{StaticResource UIFont}"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing"
+        MouseEnter="Window_MouseEnter"
+        MouseLeave="Window_MouseLeave"
+        AllowDrop="True"
+        Drop="Window_Drop"
+        DragEnter="Window_DragEnter"
+        DragOver="Window_DragOver"
+        DragLeave="Window_DragLeave"
+        PreviewMouseDown="Window_PreviewMouseDown"
+        PreviewKeyDown="Window_PreviewKeyDown">
+
+    <Window.Resources>
+        <!-- 素材卡片模板（网格用：图片/视频/其他文件）— 自适应比例，紧凑排列 -->
+        <DataTemplate x:Key="GridCardTemplate" DataType="{x:Type models:MaterialItem}">
+            <Border x:Name="CardBorder" Margin="2" Background="{StaticResource PanelLightBrush}"
+                    CornerRadius="4" MouseMove="Card_MouseMove"
+                    MouseLeftButtonDown="Card_MouseLeftButtonDown"
+                    MouseLeftButtonUp="Card_MouseLeftButtonUp"
+                    MouseEnter="Card_MouseEnter"
+                    MouseLeave="Card_MouseLeave"
+                    Cursor="Hand"
+                    Width="148">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- 📄占位符 -->
+                    <TextBlock Grid.Row="0"
+                               Text="📄" FontSize="28"
+                               HorizontalAlignment="Center"
+                               VerticalAlignment="Center"
+                               Visibility="{Binding ThumbnailPath, Converter={StaticResource EmptyToVisibleConverter}}"/>
+                    <!-- 缩略图区域 -->
+                    <Image Grid.Row="0"
+                           x:Name="ThumbImage"
+                           Stretch="Uniform"
+                           HorizontalAlignment="Center"
+                           VerticalAlignment="Center"
+                           Margin="2"
+                           IsHitTestVisible="False"
+                           RenderOptions.BitmapScalingMode="HighQuality"
+                           Loaded="ThumbnailImage_Loaded"/>
+                    <!-- 视频标记 -->
+                    <Border Grid.Row="0"
+                            Visibility="{Binding Type, Converter={StaticResource VideoVisibilityConverter}}"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                            Margin="3" Background="#80000000" CornerRadius="2" Padding="2,1">
+                        <TextBlock Text="▶" FontSize="7" Foreground="White"/>
+                    </Border>
+
+                    <!-- 收藏星星按钮（右下角，hover或已收藏时显示） -->
+                    <Button Grid.Row="0"
+                            x:Name="FavStar"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                            Margin="3,3,13,3" Width="20" Height="20"
+                            Click="FavoriteBtn_Click"
+                            Cursor="Hand"
+                            Tag="{Binding Id}"
+                            Opacity="0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="#60000000" CornerRadius="10">
+                                    <TextBlock x:Name="star" Text="☆" FontSize="12"
+                                               Foreground="#CCCCCC"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                                        <Setter TargetName="star" Property="Text" Value="★"/>
+                                        <Setter TargetName="star" Property="Foreground" Value="#FFD700"/>
+                                    </DataTrigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#AA000000"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+
+                    <!-- 文件名 -->
+                    <TextBlock Grid.Row="1" Text="{Binding DisplayName}"
+                               Foreground="{StaticResource TextDimBrush}"
+                               FontSize="9" Margin="3,1,3,2"
+                               TextTrimming="CharacterEllipsis"
+                               TextWrapping="NoWrap"/>
+                </Grid>
+
+                <!-- hover时显示星星，已收藏时始终显示 -->
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter Property="Opacity" Value="1"/>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                    <Setter TargetName="FavStar" Property="Opacity" Value="1"/>
+                </DataTrigger>
+                <Trigger SourceName="CardBorder" Property="IsMouseOver" Value="True">
+                    <Setter TargetName="FavStar" Property="Opacity" Value="1"/>
+                </Trigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <!-- 文字卡片模板（自动换行填满卡片） -->
+        <DataTemplate x:Key="TextCardTemplate" DataType="{x:Type models:MaterialItem}">
+            <Border x:Name="TextCardBorder" Margin="2" Background="{StaticResource PanelLightBrush}"
+                    CornerRadius="4" MouseMove="Card_MouseMove"
+                    MouseLeftButtonDown="Card_MouseLeftButtonDown"
+                    MouseLeftButtonUp="Card_MouseLeftButtonUp"
+                    MouseEnter="Card_MouseEnter"
+                    MouseLeave="Card_MouseLeave"
+                    Cursor="Hand"
+                    MinHeight="36"
+                    MaxHeight="120"
+                    HorizontalAlignment="Stretch">
+                <Grid>
+                    <TextBlock Text="{Binding TextContent}"
+                               Foreground="{StaticResource TextBrush}"
+                               FontSize="10"
+                               Margin="5,4"
+                               TextWrapping="Wrap"
+                               TextTrimming="CharacterEllipsis"/>
+
+                    <!-- 收藏星星按钮（右下角） -->
+                    <Button x:Name="TextFavStar"
+                            HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                            Margin="2,3,12,3" Width="20" Height="20"
+                            Click="FavoriteBtn_Click"
+                            Cursor="Hand"
+                            Tag="{Binding Id}"
+                            Opacity="0">
+                        <Button.Template>
+                            <ControlTemplate TargetType="Button">
+                                <Border x:Name="bd" Background="#60000000" CornerRadius="10">
+                                    <TextBlock x:Name="star" Text="☆" FontSize="12"
+                                               Foreground="#CCCCCC"
+                                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                </Border>
+                                <ControlTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                                        <Setter TargetName="star" Property="Text" Value="★"/>
+                                        <Setter TargetName="star" Property="Foreground" Value="#FFD700"/>
+                                    </DataTrigger>
+                                    <Trigger Property="IsMouseOver" Value="True">
+                                        <Setter TargetName="bd" Property="Background" Value="#AA000000"/>
+                                    </Trigger>
+                                </ControlTemplate.Triggers>
+                            </ControlTemplate>
+                        </Button.Template>
+                    </Button>
+                </Grid>
+            </Border>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding IsFavorite}" Value="True">
+                    <Setter TargetName="TextFavStar" Property="Opacity" Value="1"/>
+                </DataTrigger>
+                <Trigger SourceName="TextCardBorder" Property="IsMouseOver" Value="True">
+                    <Setter TargetName="TextFavStar" Property="Opacity" Value="1"/>
+                </Trigger>
+            </DataTemplate.Triggers>
+        </DataTemplate>
+
+        <!-- 列表行模板（音频用） -->
+        <DataTemplate x:Key="ListRowTemplate" DataType="{x:Type models:MaterialItem}">
+            <Border Background="Transparent"
+                    MouseMove="Card_MouseMove"
+                    MouseLeftButtonDown="Card_MouseLeftButtonDown"
+                    MouseLeftButtonUp="Card_MouseLeftButtonUp"
+                    MouseEnter="Card_MouseEnter"
+                    MouseLeave="Card_MouseLeave"
+                    Cursor="Hand"
+                    Padding="8,6">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" VerticalAlignment="Center"
+                               FontSize="14" Margin="0,0,8,0"
+                               Foreground="{StaticResource AccentBrush}"
+                               Text="{Binding Type, Converter={StaticResource TypeIconConverter}}"/>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding DisplayName}"
+                                   Foreground="{StaticResource TextBrush}"
+                                   FontSize="12" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding FilePath, Converter={StaticResource PathShortConverter}}"
+                                   Foreground="{StaticResource TextDimBrush}"
+                                   FontSize="9" TextTrimming="CharacterEllipsis"
+                                   Margin="0,1,0,0"/>
+                    </StackPanel>
+
+                    <TextBlock Grid.Column="2" VerticalAlignment="Center"
+                               Foreground="{StaticResource TextDimBrush}"
+                               FontSize="10"
+                               Text="{Binding Duration, Converter={StaticResource DurationConverter}}"/>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Window.Resources>
+
+    <!-- 主容器：触发条 + 面板 -->
+    <Grid>
+        <Grid.ColumnDefinitions>
+            <ColumnDefinition x:Name="PanelColumn" Width="332"/>
+            <ColumnDefinition x:Name="TriggerColumn" Width="8"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- ============ 主面板 ============ -->
+        <Border x:Name="MainPanel"
+                Grid.Column="0"
+                Background="{StaticResource PanelBrush}"
+                CornerRadius="8,0,0,8"
+                Margin="0,0,-1,0"
+                AllowDrop="True"
+                Drop="Window_Drop"
+                DragEnter="Window_DragEnter"
+                DragOver="Window_DragOver"
+                DragLeave="Window_DragLeave"
+                RenderTransformOrigin="0,0">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="*"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- 标题栏 + 搜索框 -->
+                <Grid Grid.Row="0" Height="36">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" Text="流转"
+                               Foreground="{StaticResource TextBrush}"
+                               FontSize="14" FontWeight="Medium"
+                               VerticalAlignment="Center"
+                               Margin="10,0,4,0"/>
+
+                    <!-- 搜索框 + 清除按钮 -->
+                    <Grid Grid.Column="1" Margin="2,4" VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <Border Grid.Column="0" Background="#20FFFFFF" CornerRadius="4,0,0,4">
+                            <TextBox x:Name="SearchBox"
+                                     Background="Transparent" BorderThickness="0"
+                                     Foreground="{StaticResource TextBrush}"
+                                     FontSize="11"
+                                     Padding="4,2"
+                                     VerticalContentAlignment="Center"
+                                     TextChanged="SearchBox_TextChanged"
+                                     KeyDown="SearchBox_KeyDown"/>
+                        </Border>
+                        <Button Grid.Column="1" x:Name="SearchClearBtn"
+                                Width="18" Background="#20FFFFFF"
+                                BorderThickness="0"
+                                Foreground="{StaticResource TextDimBrush}"
+                                Content="✕" FontSize="9"
+                                Click="SearchClearBtn_Click"
+                                ToolTip="清除搜索"
+                                Visibility="Collapsed">
+                            <Button.Template>
+                                <ControlTemplate TargetType="Button">
+                                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                            CornerRadius="0,4,4,0">
+                                        <ContentPresenter HorizontalAlignment="Center"
+                                                          VerticalAlignment="Center"/>
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="#30FFFFFF"/>
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Button.Template>
+                        </Button>
+                    </Grid>
+
+                    <!-- 设置按钮 -->
+                    <Button Grid.Column="2" x:Name="SettingsBtn"
+                            Width="26" Height="26"
+                            Background="Transparent" BorderThickness="0"
+                            Foreground="{StaticResource TextDimBrush}"
+                            Click="SettingsBtn_Click"
+                            Content="⚙" FontSize="13"
+                            ToolTip="设置"/>
+                    <!-- 收回按钮 -->
+                    <Button Grid.Column="3" x:Name="CollapseBtn"
+                            Width="26" Height="26"
+                            Background="Transparent" BorderThickness="0"
+                            Foreground="{StaticResource TextDimBrush}"
+                            Click="CollapseBtn_Click"
+                            Content="▶" FontSize="10"
+                            ToolTip="收回面板"/>
+                </Grid>
+
+                <!-- 标签页栏 -->
+                <Border Grid.Row="1" Background="{StaticResource PanelLightBrush}">
+                    <StackPanel Orientation="Horizontal" Margin="4,3">
+                        <RadioButton x:Name="TabRecent" Content="最近" IsChecked="True"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Recent" Checked="Tab_Checked"
+                                     Margin="1,0"/>
+                        <RadioButton x:Name="TabFavorites" Content="★"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Favorites" Checked="Tab_Checked"
+                                     Margin="1,0"
+                                     ToolTip="收藏"/>
+                        <RadioButton x:Name="TabVideo" Content="视频"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Video" Checked="Tab_Checked"
+                                     Margin="1,0"/>
+                        <RadioButton x:Name="TabText" Content="文字"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Text" Checked="Tab_Checked"
+                                     Margin="1,0"/>
+                        <RadioButton x:Name="TabImage" Content="图片"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Image" Checked="Tab_Checked"
+                                     Margin="1,0"/>
+                        <RadioButton x:Name="TabAudio" Content="音频"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Audio" Checked="Tab_Checked"
+                                     Margin="1,0"/>
+                        <RadioButton x:Name="TabOther" Content="其他"
+                                     Style="{StaticResource TabButtonStyle}"
+                                     Tag="Other" Checked="Tab_Checked"
+                                     Margin="1,0"/>
+                    </StackPanel>
+                </Border>
+
+                <!-- 内容区 -->
+                <Grid Grid.Row="2" Background="{StaticResource PanelBrush}">
+                    <!-- 网格视图（图片/视频/其他文件/最近） -->
+                    <ListView x:Name="GridView"
+                              Visibility="Visible"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
+                              ItemsSource="{Binding}"
+                              SelectionMode="Extended"
+                              Margin="2,2">
+                        <ListView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" ItemWidth="154"/>
+                            </ItemsPanelTemplate>
+                        </ListView.ItemsPanel>
+                    </ListView>
+
+                    <!-- 文字视图（自动换行卡片） -->
+                    <ListView x:Name="TextView"
+                              Visibility="Collapsed"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
+                              ItemsSource="{Binding}"
+                              ItemTemplate="{StaticResource TextCardTemplate}"
+                              SelectionMode="Extended"
+                              Margin="2,2">
+                        <ListView.ItemsPanel>
+                            <ItemsPanelTemplate>
+                                <WrapPanel Orientation="Horizontal" ItemWidth="154"/>
+                            </ItemsPanelTemplate>
+                        </ListView.ItemsPanel>
+                    </ListView>
+
+                    <!-- 列表视图（音频） -->
+                    <ListView x:Name="ListView"
+                              Visibility="Collapsed"
+                              Background="Transparent"
+                              BorderThickness="0"
+                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                              ScrollViewer.VerticalScrollBarVisibility="Auto"
+                              ItemsSource="{Binding}"
+                              SelectionMode="Extended"
+                              Margin="4,2"/>
+
+                    <!-- 空状态提示 -->
+                    <StackPanel x:Name="EmptyState"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"
+                                Visibility="Collapsed">
+                        <TextBlock Text="拖入素材到这里"
+                                   Foreground="{StaticResource TextDimBrush}"
+                                   FontSize="13"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Text="支持视频、图片、音频、文字、文件夹"
+                                   Foreground="{StaticResource TextDimBrush}"
+                                   FontSize="10"
+                                   HorizontalAlignment="Center"
+                                   Margin="0,4,0,0"
+                                   Opacity="0.6"/>
+                    </StackPanel>
+
+                    <!-- 拖入高亮提示 -->
+                    <Border x:Name="DropHighlight"
+                            Background="#153B82F6"
+                            BorderBrush="{StaticResource AccentBrush}"
+                            BorderThickness="2"
+                            CornerRadius="8"
+                            Margin="4"
+                            Visibility="Collapsed"
+                            IsHitTestVisible="False">
+                        <TextBlock Text="松开添加素材"
+                                   Foreground="{StaticResource AccentBrush}"
+                                   FontSize="14" FontWeight="Medium"
+                                   HorizontalAlignment="Center"
+                                   VerticalAlignment="Center"/>
+                    </Border>
+                </Grid>
+
+                <!-- 底部状态栏 -->
+                <Border Grid.Row="3" Height="28" Background="{StaticResource PanelLightBrush}">
+                    <Grid Margin="8,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" x:Name="StatusText"
+                                   Foreground="{StaticResource TextDimBrush}"
+                                   FontSize="10"
+                                   VerticalAlignment="Center"/>
+
+                        <!-- 撤回删除 -->
+                        <Button Grid.Column="1" x:Name="UndoBtn" Content="撤回"
+                                Background="Transparent" BorderThickness="0"
+                                Foreground="{StaticResource TextDimBrush}"
+                                FontSize="10" Padding="4,0"
+                                Click="UndoBtn_Click"
+                                ToolTip="撤回删除 (Ctrl+Z)"
+                                IsEnabled="False"/>
+
+                        <!-- 清空当前分类 -->
+                        <Button Grid.Column="2" Content="清空"
+                                Background="Transparent" BorderThickness="0"
+                                Foreground="{StaticResource TextDimBrush}"
+                                FontSize="10" Padding="4,0"
+                                Click="ClearCurrentBtn_Click"
+                                ToolTip="清空当前分类"/>
+
+                        <!-- 清空全部 -->
+                        <Button Grid.Column="3" Content="全部清空"
+                                Background="Transparent" BorderThickness="0"
+                                Foreground="#FF6B6B"
+                                FontSize="10" Padding="4,0"
+                                Click="ClearAllBtn_Click"
+                                ToolTip="清空所有素材"/>
+                    </Grid>
+                </Border>
+
+                <!-- 底部拖拽调整高度 -->
+                <Thumb x:Name="ResizeThumb"
+                       Grid.Row="3"
+                       HorizontalAlignment="Stretch"
+                       VerticalAlignment="Bottom"
+                       Height="4"
+                       Cursor="SizeNS"
+                       DragDelta="ResizeThumb_DragDelta"
+                       Background="Transparent"/>
+            </Grid>
+        </Border>
+
+        <!-- ============ 触发条 ============ -->
+        <Border x:Name="TriggerBar"
+                Grid.Column="1"
+                Background="{StaticResource TriggerBarBrush}"
+                CornerRadius="0,3,3,0"
+                Opacity="0.4"
+                AllowDrop="True"
+                Drop="Window_Drop"
+                DragEnter="Window_DragEnter"
+                DragOver="Window_DragOver"
+                DragLeave="Window_DragLeave"
+                MouseEnter="TriggerBar_MouseEnter">
+            <Rectangle Width="2" Height="40"
+                       Fill="{StaticResource AccentBrush}"
+                       Opacity="0.6"
+                       HorizontalAlignment="Center"
+                       VerticalAlignment="Center"
+                       RadiusX="1" RadiusY="1"/>
+        </Border>
+    </Grid>
+</Window>

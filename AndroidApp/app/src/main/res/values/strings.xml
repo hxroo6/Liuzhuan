@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">流转</string>
+    <string name="clip_monitor_label">流转剪贴板监控</string>
+    <string name="accessibility_description">用于监听复制操作，将剪贴板文字实时同步到电脑端流转。</string>
+</resources>

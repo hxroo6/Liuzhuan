@@ -1,0 +1,143 @@
+<Application x:Class="Liuzhuan.App"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:utils="clr-namespace:Liuzhuan.Utils"
+             xmlns:tb="http://www.hardcodet.net/taskbar"
+             StartupUri="MainWindow.xaml"
+             ShutdownMode="OnMainWindowClose">
+    <Application.Resources>
+        <ResourceDictionary>
+            <!-- 全局颜色 -->
+            <Color x:Key="AccentColor">#3B82F6</Color>
+            <Color x:Key="PanelColor">#2D2D35</Color>
+            <Color x:Key="PanelLightColor">#383842</Color>
+            <Color x:Key="TextColor">#E8E8EC</Color>
+            <Color x:Key="TextDimColor">#9999A3</Color>
+            <Color x:Key="TriggerBarColor">#4A4A55</Color>
+
+            <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
+            <SolidColorBrush x:Key="PanelBrush" Color="{StaticResource PanelColor}"/>
+            <SolidColorBrush x:Key="PanelLightBrush" Color="{StaticResource PanelLightColor}"/>
+            <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}"/>
+            <SolidColorBrush x:Key="TextDimBrush" Color="{StaticResource TextDimColor}"/>
+            <SolidColorBrush x:Key="TriggerBarBrush" Color="{StaticResource TriggerBarColor}"/>
+
+            <!-- 默认字体 -->
+            <FontFamily x:Key="UIFont">Microsoft YaHei UI, Segoe UI</FontFamily>
+
+            <!-- 转换器 -->
+            <utils:VideoVisibilityConverter x:Key="VideoVisibilityConverter"/>
+            <utils:TypeIconConverter x:Key="TypeIconConverter"/>
+            <utils:PathShortConverter x:Key="PathShortConverter"/>
+            <utils:DurationConverter x:Key="DurationConverter"/>
+            <utils:EmptyToVisibleConverter x:Key="EmptyToVisibleConverter"/>
+            <utils:StringToImageConverter x:Key="StringToImageConverter"/>
+
+            <!-- 标签页按钮样式 -->
+            <Style x:Key="TabButtonStyle" TargetType="RadioButton">
+                <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Padding" Value="8,4"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="RadioButton">
+                            <Border x:Name="bd"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="4"
+                                    Padding="{TemplateBinding Padding}">
+                                <ContentPresenter x:Name="cp"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  TextBlock.Foreground="{TemplateBinding Foreground}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                </Trigger>
+                                <Trigger Property="IsChecked" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
+                                    <Setter TargetName="bd" Property="Background" Value="#20FFFFFF"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 通用按钮样式 -->
+            <Style x:Key="IconButtonStyle" TargetType="Button">
+                <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="BorderThickness" Value="0"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="bd"
+                                    Background="{TemplateBinding Background}"
+                                    CornerRadius="4">
+                                <ContentPresenter HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"
+                                                  TextBlock.Foreground="{TemplateBinding Foreground}"/>
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="bd" Property="Background" Value="#20FFFFFF"/>
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- 滚动条样式 — 细身圆角，适配深色面板 -->
+            <Style TargetType="ScrollBar">
+                <Setter Property="Width" Value="6"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ScrollBar">
+                            <Grid Background="Transparent">
+                                <Track x:Name="PART_Track" IsDirectionReversed="False">
+                                    <Track.DecreaseRepeatButton>
+                                        <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Background="Transparent"/>
+                                    </Track.DecreaseRepeatButton>
+                                    <Track.IncreaseRepeatButton>
+                                        <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Background="Transparent"/>
+                                    </Track.IncreaseRepeatButton>
+                                    <Track.Thumb>
+                                        <Thumb>
+                                            <Thumb.Template>
+                                                <ControlTemplate TargetType="Thumb">
+                                                    <Border x:Name="thumbBg"
+                                                            Background="{StaticResource TextDimBrush}"
+                                                            Opacity="0.3"
+                                                            CornerRadius="3"
+                                                            Margin="0,2"/>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                            <Setter TargetName="thumbBg" Property="Opacity" Value="0.6"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsDragging" Value="True">
+                                                            <Setter TargetName="thumbBg" Property="Opacity" Value="0.8"/>
+                                                            <Setter TargetName="thumbBg" Property="Background" Value="{StaticResource AccentBrush}"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Thumb.Template>
+                                        </Thumb>
+                                    </Track.Thumb>
+                                </Track>
+                            </Grid>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+        </ResourceDictionary>
+    </Application.Resources>
+</Application>

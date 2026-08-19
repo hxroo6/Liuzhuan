@@ -1,0 +1,28 @@
+# ===== 用户数据（绝不入库）=====
+data/
+logs/
+backup/
+.workbuddy/
+ENV.md
+
+# ===== 构建产物 =====
+# 根目录电脑端发布产物（AndroidApp/app 是安卓源码，不排除）
+/app
+portable/
+publish/
+Liuzhuan/bin/
+Liuzhuan/obj/
+AndroidApp/.gradle/
+AndroidApp/build/
+AndroidApp/local.properties
+AndroidApp/keystore/
+*.apk
+*.jks
+
+# ===== IDE / 系统 =====
+.vs/
+.idea/
+*.user
+*.suo
+Thumbs.db
+.DS_Store

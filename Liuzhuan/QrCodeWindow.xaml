@@ -1,0 +1,16 @@
+<Window x:Class="Liuzhuan.QrCodeWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="扫码连接（流转）" Width="340" Height="460"
+        WindowStartupLocation="CenterOwner" ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="#1E1E28">
+    <StackPanel Margin="20" HorizontalAlignment="Center">
+        <TextBlock x:Name="TitleText" Text="手机扫码自动连接" FontSize="16" FontWeight="Bold"
+                   Foreground="#EEEEEE" HorizontalAlignment="Center"/>
+        <Image x:Name="QrImage" Width="280" Height="280" Margin="0,12" SnapsToDevicePixels="True"/>
+        <TextBlock x:Name="InfoText" FontSize="11" Foreground="#9E9E9E" TextWrapping="Wrap"
+                   HorizontalAlignment="Center" TextAlignment="Center"/>
+        <TextBlock Text="打开手机流转 → 连接页 → 扫码连接" FontSize="11" Foreground="#757575"
+                   HorizontalAlignment="Center" Margin="0,8,0,0"/>
+    </StackPanel>
+</Window>

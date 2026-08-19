@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- 深色圆角底 -->
+    <path
+        android:fillColor="#12121C"
+        android:pathData="M18,0 L90,0 A18,18 0 0 1 108,18 L108,90 A18,18 0 0 1 90,108 L18,108 A18,18 0 0 1 0,90 L0,18 A18,18 0 0 1 18,0 Z" />
+    <!-- 银色闪电主体 -->
+    <path
+        android:strokeColor="#F5F8FF"
+        android:strokeWidth="7"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M57,16 L40,50 L51,50 L36,86 L66,54 L54,54 L66,16 Z" />
+</vector>
