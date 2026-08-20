@@ -138,36 +138,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 扫码结果：解析二维码 JSON → 填入 IP/端口/口令 → 连接 */
-    @Deprecated("Deprecated in Java")
-    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-        super.onActivityResult(requestCode, resultCode, data)
-        val result = com.journeyapps.barcodescanner.ScanIntentResult.parseActivityResult(requestCode, data)
-        if (result != null && result.contents != null) {
-            try {
-                val json = org.json.JSONObject(result.contents)
-                val ip = json.optString("ip")
-                val port = json.optInt("port", 8899)
-                val pwd = json.optString("pwd", "")
-                if (ip.isNotBlank() && pwd.isNotBlank()) {
-                    // 保存并连接
-                    val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO)
-                    scope.launch {
-                        store.save(SettingsStore.Settings(ip, port.toString(), pwd))
-                        runOnUiThread {
-                            LanHub.client?.connect(SettingsStore.Settings(ip, port.toString(), pwd))
-                            toast(this@MainActivity, "✅ 已从二维码填入配置并连接")
-                        }
-                    }
-                } else {
-                    toast(this, "❌ 二维码内容无效")
-                }
-            } catch (ex: Exception) {
-                toast(this, "❌ 二维码解析失败")
-            }
-        }
-    }
-
     private fun handleShareIntent(intent: Intent) {
         val text = intent.getStringExtra(Intent.EXTRA_TEXT)
         val stream = if (android.os.Build.VERSION.SDK_INT >= 33)
@@ -279,6 +249,34 @@ fun MainScreen(
         settings = newSettings
         scope.launch { store.save(newSettings) }
         client.connect(newSettings)
+    }
+
+    // 扫码连接（ScanContract 现代ActivityResult API，绕过 onActivityResult 的坑）
+    val scanLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
+        com.journeyapps.barcodescanner.ScanContract()
+    ) { result ->
+        val content = result.contents
+        if (content == null) {
+            toast(context, "未识别到二维码")
+        } else {
+            try {
+                val json = org.json.JSONObject(content)
+                val qrIp = json.optString("ip")
+                val qrPort = json.optInt("port", 8899).toString()
+                val qrPwd = json.optString("pwd", "")
+                if (qrIp.isNotBlank() && qrPwd.isNotBlank()) {
+                    ip = qrIp
+                    port = qrPort
+                    password = qrPwd
+                    saveAndConnect()
+                    toast(context, "✅ 扫码成功，正在连接 $qrIp")
+                } else {
+                    toast(context, "❌ 二维码内容无效")
+                }
+            } catch (ex: Exception) {
+                toast(context, "❌ 二维码解析失败")
+            }
+        }
     }
 
     Scaffold(
@@ -410,14 +408,12 @@ fun MainScreen(
                             ) { Text(if (searching) "搜索中..." else "🔍 搜索电脑") }
                             OutlinedButton(
                                 onClick = {
-                                    val activity = context as? android.app.Activity
-                                    if (activity != null) {
-                                        val integrator = com.google.zxing.integration.android.IntentIntegrator(activity)
-                                        integrator.setDesiredBarcodeFormats(com.google.zxing.integration.android.IntentIntegrator.QR_CODE)
-                                        integrator.setPrompt("扫描电脑屏幕上的配对二维码")
-                                        integrator.setBeepEnabled(false)
-                                        integrator.initiateScan()
+                                    val options = com.journeyapps.barcodescanner.ScanOptions().apply {
+                                        setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+                                        setPrompt("扫描电脑屏幕上的配对二维码")
+                                        setBeepEnabled(false)
                                     }
+                                    scanLauncher.launch(options)
                                 },
                                 enabled = !isConnected,
                                 modifier = Modifier.weight(1f)
