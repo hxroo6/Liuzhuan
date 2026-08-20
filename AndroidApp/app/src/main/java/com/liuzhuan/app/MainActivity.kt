@@ -12,6 +12,8 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -20,6 +22,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
@@ -53,6 +56,7 @@ class MainActivity : ComponentActivity() {
         val logLines = mutableStateListOf<String>()
         val stateText = mutableStateOf("未连接")
         val isConnected = mutableStateOf(false)
+        val isReconnecting = mutableStateOf(false)
         val remoteItems = mutableStateListOf<Proto.ItemSummary>()
         val client = LanClient(
             onState = { s ->
@@ -61,16 +65,19 @@ class MainActivity : ComponentActivity() {
                     LanClient.State.Connecting -> "连接中..."
                     LanClient.State.Connected -> "已连接 ✓"
                     is LanClient.State.AuthFailed -> "认证失败：${s.reason}"
-                    LanClient.State.Disconnected -> "已断开"
+                    LanClient.State.Disconnected -> "已断开（自动重连中...）"
+                    LanClient.State.Paused -> "已暂停重连"
                 }
                 isConnected.value = s == LanClient.State.Connected
-                // 前台服务保活：连接成功 → 启动；断开/失败 → 停止
+                // 是否处于「断开后自动重连」状态（供暂停按钮显示）
+                isReconnecting.value = s == LanClient.State.Disconnected || s == LanClient.State.Connecting
+                // 前台服务保活：连接成功 → 启动；断开/失败/暂停 → 停止
                 if (s == LanClient.State.Connected) {
                     ContextCompat.startForegroundService(
                         this,
                         Intent(this, ForegroundService::class.java)
                     )
-                } else if (s is LanClient.State.AuthFailed || s == LanClient.State.Disconnected) {
+                } else if (s is LanClient.State.AuthFailed || s == LanClient.State.Disconnected || s == LanClient.State.Paused) {
                     stopService(Intent(this, ForegroundService::class.java))
                 }
             },
@@ -123,6 +130,7 @@ class MainActivity : ComponentActivity() {
                     client = client,
                     stateText = stateText.value,
                     isConnected = isConnected.value,
+                    isReconnecting = isReconnecting.value,
                     logLines = logLines,
                     remoteItems = remoteItems
                 )
@@ -212,6 +220,7 @@ fun MainScreen(
     client: LanClient,
     stateText: String,
     isConnected: Boolean,
+    isReconnecting: Boolean,
     logLines: androidx.compose.runtime.snapshots.SnapshotStateList<String>,
     remoteItems: androidx.compose.runtime.snapshots.SnapshotStateList<Proto.ItemSummary>
 ) {
@@ -388,6 +397,17 @@ fun MainScreen(
                             ) { Text("断开") }
                         }
 
+                        // ===== 暂停重连（连接失败死循环时手动打断）=====
+                        if (isReconnecting) {
+                            OutlinedButton(
+                                onClick = { client.pause() },
+                                modifier = Modifier.fillMaxWidth(),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = Color(0xFFFFB74D)
+                                )
+                            ) { Text("⏸️ 暂停自动重连") }
+                        }
+
                         // ===== 自动发现 + 扫码配对 =====
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedButton(
@@ -463,14 +483,42 @@ fun MainScreen(
                     }
                 }
 
-                // ===== 日志 =====
+                // ===== 日志（长按 3 秒复制全部）=====
                 Card {
                     Column(
                         Modifier
                             .padding(16.dp)
                             .fillMaxWidth()
+                            .pointerInput(logLines) {
+                                awaitEachGesture {
+                                    val down = awaitFirstDown(requireUnconsumed = false)
+                                    down.consume()
+                                    val startTime = System.currentTimeMillis()
+                                    var triggered = false
+                                    while (true) {
+                                        val event = awaitPointerEvent()
+                                        val allReleased = event.changes.all { !it.pressed }
+                                        if (allReleased) break
+                                        if (!triggered && System.currentTimeMillis() - startTime >= 3000) {
+                                            triggered = true
+                                            if (logLines.isEmpty()) {
+                                                toast(context, "暂无日志可复制")
+                                            } else {
+                                                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                                        as android.content.ClipboardManager
+                                                clipboard.setPrimaryClip(
+                                                    android.content.ClipData.newPlainText(
+                                                        "liuzhuan_logs", logLines.joinToString("\n")
+                                                    )
+                                                )
+                                                toast(context, "📋 已复制 ${logLines.size} 条日志")
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                     ) {
-                        Text("📜 日志", style = MaterialTheme.typography.titleSmall)
+                        Text("📜 日志（长按 3 秒复制）", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
                         logLines.takeLast(8).reversed().forEach { line ->
                             Text(

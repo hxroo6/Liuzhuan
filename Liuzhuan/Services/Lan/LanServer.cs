@@ -42,6 +42,22 @@ public class LanServer : IDisposable
 
     public int ClientCount => _hub.ClientCount;
 
+    /// <summary>端口自检：TCP 自连 127.0.0.1:Port 确认 WS 真的在监听（Fleck 静默失败检测）</summary>
+    public bool IsListening
+    {
+        get
+        {
+            try
+            {
+                using var c = new System.Net.Sockets.TcpClient();
+                var task = c.ConnectAsync("127.0.0.1", LanConfig.Port);
+                task.Wait(1500);
+                return c.Connected;
+            }
+            catch { return false; }
+        }
+    }
+
     /// <summary>获取已连接设备列表（设备名, IP）</summary>
     public List<(string Device, string Ip)> GetDevices() => _hub.GetDevices();
 

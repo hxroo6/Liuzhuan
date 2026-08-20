@@ -89,7 +89,9 @@ public partial class MainWindow : Window
         Logger.Run("MainWindow loaded, positioned at right edge");
     }
 
-    /// <summary>初始化局域网服务器（按配置自动启动）</summary>
+    /// <summary>初始化局域网服务器（自动启动 + 启动自检重试）
+    /// 场景：杀进程后端口短暂 TIME_WAIT 占用 → Fleck/Http bind 静默失败 → 端口空了服务器却没起。
+    /// 方案：启动后 2s 自检端口监听，失败则 Stop→等 3s→重启，最多 5 轮。</summary>
     private void SetupLanServer()
     {
         try
@@ -107,10 +109,35 @@ public partial class MainWindow : Window
             _lanServer.ListProvider = () => _dataStore.GetRecentSummaries(50);
             _lanServer.ItemLookup = id => _dataStore.Items.FirstOrDefault(x => x.Id == id);
             _dataStore.ItemAdded += OnDataStoreItemAdded;
-            if (LanConfig.Enabled)
+            if (!LanConfig.Enabled) return;
+
+            _lanServer.Start();
+            // 自检 + 重试（后台，不阻塞 UI）
+            _ = Task.Run(async () =>
             {
-                _lanServer.Start();
-            }
+                for (int attempt = 1; attempt <= 5; attempt++)
+                {
+                    await Task.Delay(2000);
+                    if (_lanServer.IsListening)
+                    {
+                        Logger.Run("LAN self-check OK (attempt {0})", attempt);
+                        return;
+                    }
+                    Logger.Error("LAN self-check FAILED (attempt {0}), restarting...", attempt);
+                    try
+                    {
+                        _lanServer.Stop();
+                        await Task.Delay(3000);
+                        _lanServer.Start();
+                    }
+                    catch (Exception ex)
+                    {
+                        Logger.Error("LAN restart failed (attempt {0}): {1}", attempt, ex.Message);
+                        await Task.Delay(3000);
+                    }
+                }
+                Logger.Error("LAN self-check: all attempts exhausted");
+            });
         }
         catch (Exception ex)
         {

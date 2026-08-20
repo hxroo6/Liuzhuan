@@ -32,6 +32,7 @@ class LanClient(
         data object Connected : State()
         data class AuthFailed(val reason: String) : State()
         data object Disconnected : State()
+        data object Paused : State()
     }
 
     private var ws: WebSocket? = null
@@ -51,7 +52,7 @@ class LanClient(
     fun connect(settings: SettingsStore.Settings) {
         lastSettings = settings
         if (settings.serverIp.isBlank() || settings.password.isBlank()) {
-            onLog("请先填写电脑 IP 和口令")
+            log("请先填写电脑 IP 和口令")
             return
         }
         manuallyClosed = false
@@ -66,23 +67,34 @@ class LanClient(
         ws?.close(1000, "bye")
         ws = null
         setState(State.Disconnected)
-        onLog("已断开连接")
+        log("已断开连接")
+    }
+
+    /** 暂停自动重连（阻止死循环；下次 connect() 可恢复） */
+    fun pause() {
+        manuallyClosed = true
+        reconnectJob?.cancel()
+        stopHeartbeat()
+        ws?.close(1000, "paused")
+        ws = null
+        setState(State.Paused)
+        log("⏸️ 已暂停重连（点「连接」可恢复）")
     }
 
     fun sendText(content: String) {
         if (state != State.Connected) {
-            onLog("未连接，无法发送")
+            log("未连接，无法发送")
             return
         }
         ws?.send(Proto.buildSyncText(content))
-        onLog("已发送文字（${content.length} 字）")
+        log("已发送文字（${content.length} 字）")
     }
 
     /** 推送剪贴板内容，返回是否已发送（供 Toast 提示） */
     fun pushClipboard(content: String, app: String): Boolean {
         if (state != State.Connected) return false
         ws?.send(Proto.buildClipboardPush(content, app))
-        onLog("剪贴板已推送（${content.length} 字）")
+        log("剪贴板已推送（${content.length} 字）")
         return true
     }
 
@@ -96,10 +108,10 @@ class LanClient(
         setState(State.Connecting)
         val url = "ws://${s.serverIp}:${s.serverPort}/ws"
         val request = Request.Builder().url(url).build()
-        onLog("正在连接 $url ...")
+        log("正在连接 $url ...")
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
-                // 握手消息
+                log("TCP 已连通，发送握手...")
                 webSocket.send(Proto.buildHello(Proto.sha256Hex(s.password)))
                 startHeartbeat(webSocket)
             }
@@ -109,13 +121,13 @@ class LanClient(
                 when (type) {
                     "welcome" -> {
                         setState(State.Connected)
-                        onLog("✅ 已连接电脑端流转")
+                        log("✅ 已连接电脑端流转")
                         // 连接成功后拉取最近素材列表（接收页初始化）
                         webSocket.send(Proto.buildListSync())
                     }
                     "auth_fail" -> {
                         setState(State.AuthFailed(data.optString("reason", "口令错误")))
-                        onLog("❌ 认证失败: ${data.optString("reason")}")
+                        log("❌ 认证失败: ${data.optString("reason")}")
                         stopHeartbeat()
                         webSocket.close(1000, "auth_fail")
                     }
@@ -131,7 +143,7 @@ class LanClient(
                 ws = null
                 if (!manuallyClosed) {
                     setState(State.Disconnected)
-                    onLog("连接断开（$code），准备重连...")
+                    log("连接断开（code=$code reason=$reason），准备重连...")
                     scheduleReconnect()
                 }
             }
@@ -141,7 +153,8 @@ class LanClient(
                 ws = null
                 if (!manuallyClosed) {
                     setState(State.Disconnected)
-                    onLog("连接失败: ${t.message ?: "未知错误"}")
+                    val http = response?.let { " HTTP${it.code}" } ?: ""
+                    log("连接失败${http}: ${t.javaClass.simpleName}: ${t.message ?: "未知错误"}")
                     scheduleReconnect()
                 }
             }
@@ -172,10 +185,12 @@ class LanClient(
         reconnectJob = scope.launch {
             var attempt = 0
             while (!manuallyClosed && state != State.Connected) {
-                delay(minOf(1000L shl attempt, 30_000L))
+                val waitMs = minOf(1000L shl attempt, 30_000L)
+                log("等待 ${waitMs / 1000}s 后重连...")
+                delay(waitMs)
                 attempt++
                 if (manuallyClosed) break
-                onLog("第 $attempt 次重连...")
+                log("第 $attempt 次重连...")
                 val s = lastSettings ?: break
                 doConnect(s)
             }
@@ -185,5 +200,11 @@ class LanClient(
     private fun setState(new: State) {
         state = new
         onState(new)
+    }
+
+    /** 统一日志：带时间戳 */
+    private fun log(msg: String) {
+        val ts = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(java.util.Date())
+        onLog("[$ts] $msg")
     }
 }
