@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
@@ -28,6 +29,7 @@ public partial class MainWindow : Window
     private string _searchKeyword = "";
     private bool _isExpanded = true;
     private DispatcherTimer? _collapseTimer;
+    private DispatcherTimer? _hotspotTimer;
 
     // 拖出相关
     private Point _dragStartPoint;
@@ -72,6 +74,7 @@ public partial class MainWindow : Window
 
         PositionWindowRightEdge();
         SetupCollapseTimer();
+        StartHotspotTimer();
         UpdateStatusText();
         UpdateUndoButton();
         SetupTrayIcon();
@@ -264,6 +267,41 @@ public partial class MainWindow : Window
     {
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CollapseDelayMs) };
         _collapseTimer.Tick += (s, e) => { _collapseTimer.Stop(); CollapsePanel(); };
+    }
+
+    /// <summary>
+    /// 热区轮询：每 150ms 检测鼠标是否贴近屏幕右缘（不依赖窄条 MouseEnter，
+    /// 兼容透明区域 / 收起态 8px 细条命中难 / 多屏切换窗口位置跑偏等情况）
+    /// </summary>
+    private void StartHotspotTimer()
+    {
+        _hotspotTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        _hotspotTimer.Tick += (s, e) =>
+        {
+            if (!GetCursorPos(out var pt)) return;
+            var hMon = MonitorFromPoint(pt, 2 /* MONITOR_DEFAULTTONEAREST */);
+            var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(hMon, ref mi)) return;
+            var work = mi.rcWork;
+
+            // 窗口完全跑出该屏幕（多屏拔插/分辨率变化）→ 自动归位
+            if (Left < work.Left - 50 || Left > work.Right + 50)
+            {
+                var top = work.Top + (work.Bottom - work.Top - Height) / 2;
+                _expandedLeft = work.Right - PanelWidth;
+                _collapsedLeft = work.Right - CollapsedVisible;
+                Left = _isExpanded ? _expandedLeft : _collapsedLeft;
+                Top = top;
+                Logger.Run("Hotspot: window repositioned to screen ({0})", Left);
+            }
+
+            // 鼠标贴近屏幕右缘（12px 内）且纵向在工作区内 → 展开
+            if (pt.X >= work.Right - 12 && pt.Y >= work.Top && pt.Y <= work.Bottom)
+            {
+                ExpandPanel();
+            }
+        };
+        _hotspotTimer.Start();
     }
 
     #endregion
@@ -1251,6 +1289,34 @@ public partial class MainWindow : Window
         var ip = Utils.LanNetUtil.GetLanIp();
         return ip == "127.0.0.1" ? "（未检测到）" : ip;
     }
+
+    #endregion
+
+    #region Win32 P/Invoke（热区检测）
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct POINT { public int X; public int Y; }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct RECT { public int Left, Top, Right, Bottom; }
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    private struct MONITORINFO
+    {
+        public int cbSize;
+        public RECT rcMonitor;
+        public RECT rcWork;
+        public uint dwFlags;
+    }
+
+    [DllImport("user32.dll")]
+    private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    private static extern bool GetMonitorInfo(IntPtr hMonitor, ref MONITORINFO lpmi);
 
     #endregion
 }
