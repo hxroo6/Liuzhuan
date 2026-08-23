@@ -6,7 +6,10 @@ import android.content.Context
 import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import com.liuzhuan.app.LanHub
+import com.liuzhuan.app.core.SettingsStore
 import com.liuzhuan.app.net.LanClient
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
 
 /**
  * 剪贴板监控（决策 #3：无障碍方案）
@@ -19,9 +22,17 @@ import com.liuzhuan.app.net.LanClient
 class ClipMonitorService : AccessibilityService() {
 
     private val prefs by lazy { getSharedPreferences("clip", Context.MODE_PRIVATE) }
+    private val settingsStore by lazy { SettingsStore(applicationContext) }
     private var lastText: String = prefs.getString("last_text", "") ?: ""
     private var lastPushTime: Long = 0
     private val debounceMs = 2_000L // 额外防抖：同内容 2s 内不重复推送
+
+    /** 后台自动发送开关（发送页可关闭） */
+    private fun autoSendEnabled(): Boolean = try {
+        runBlocking { settingsStore.settings.first().autoSendClipboard }
+    } catch (e: Exception) {
+        true // 读取失败默认开启，不阻塞复制秒达
+    }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -48,6 +59,9 @@ class ClipMonitorService : AccessibilityService() {
 
     /** 读取剪贴板并推送（仅剪贴板内容变化时；持久化防重复） */
     private fun readClipboardAndPush(trigger: String) {
+        // 后台自动发送开关（发送页可关闭）
+        if (!autoSendEnabled()) return
+
         val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
         if (!cm.hasPrimaryClip()) return
         val clip = cm.primaryClip ?: return

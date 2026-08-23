@@ -1,6 +1,7 @@
 package com.liuzhuan.app.core
 
 import android.content.Context
+import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
@@ -17,13 +18,15 @@ class SettingsStore(private val context: Context) {
         private val KEY_PORT = stringPreferencesKey("server_port")
         private val KEY_PASSWORD = stringPreferencesKey("password")
         private val KEY_DEVICE_NAME = stringPreferencesKey("device_name")
+        private val KEY_AUTO_SEND = booleanPreferencesKey("auto_send_clipboard")
     }
 
     data class Settings(
         val serverIp: String = "",
         val serverPort: String = "8899",
         val password: String = "",
-        val deviceName: String = android.os.Build.MODEL
+        val deviceName: String = android.os.Build.MODEL,
+        val autoSendClipboard: Boolean = true
     )
 
     val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
@@ -31,7 +34,8 @@ class SettingsStore(private val context: Context) {
             serverIp = prefs[KEY_IP] ?: "",
             serverPort = prefs[KEY_PORT] ?: "8899",
             password = prefs[KEY_PASSWORD] ?: "",
-            deviceName = prefs[KEY_DEVICE_NAME] ?: android.os.Build.MODEL
+            deviceName = prefs[KEY_DEVICE_NAME] ?: android.os.Build.MODEL,
+            autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true
         )
     }
 
@@ -41,6 +45,7 @@ class SettingsStore(private val context: Context) {
             prefs[KEY_PORT] = s.serverPort
             prefs[KEY_PASSWORD] = s.password
             prefs[KEY_DEVICE_NAME] = s.deviceName
+            prefs[KEY_AUTO_SEND] = s.autoSendClipboard
         }
     }
 }

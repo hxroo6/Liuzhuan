@@ -24,6 +24,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MaterialItem> _currentView = new();
     private readonly HotkeyService _hotkeyService = new();
     private readonly LanServer _lanServer = new();
+    private readonly ClipboardMonitorService _clipMonitor = new();
 
     private string _currentTab = "Recent";
     private string _searchKeyword = "";
@@ -1048,6 +1049,39 @@ public partial class MainWindow : Window
         };
         autoStartItem.Click += (s, e) => StartupService.SetEnabled(autoStartItem.IsChecked);
         menu.Items.Add(autoStartItem);
+
+        // 剪贴板监控：电脑上任意复制 → 自动加载进流转（可选开关）
+        var clipMonitorItem = new MenuItem
+        {
+            Header = "剪贴板监控（复制自动收藏）",
+            Foreground = (Brush)FindResource("TextBrush"),
+            IsCheckable = true,
+            IsChecked = AppSettings.ClipboardMonitorEnabled,
+        };
+        clipMonitorItem.Click += (s, e) =>
+        {
+            AppSettings.ClipboardMonitorEnabled = clipMonitorItem.IsChecked;
+            AppSettings.Save();
+            if (clipMonitorItem.IsChecked)
+            {
+                var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+                _clipMonitor.Start(hwnd, text =>
+                {
+                    var item = DragDropService.CreateTextItem(text);
+                    _dataStore.Add(item);
+                    DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
+                    RefreshView();
+                    Logger.Run("ClipboardMonitor: auto-added ({0} chars)", text.Length);
+                });
+                Logger.Run("Settings: clipboard monitor ON");
+            }
+            else
+            {
+                _clipMonitor.Stop();
+                Logger.Run("Settings: clipboard monitor OFF");
+            }
+        };
+        menu.Items.Add(clipMonitorItem);
 
         menu.Items.Add(new Separator());
 

@@ -236,6 +236,7 @@ fun MainScreen(
     var textInput by remember { mutableStateOf("") }
     var selectedTab by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
+    var autoSend by remember { mutableStateOf(true) }
 
     // 读取已保存配置
     LaunchedEffect(Unit) {
@@ -244,6 +245,7 @@ fun MainScreen(
             ip = s.serverIp
             port = s.serverPort
             password = s.password
+            autoSend = s.autoSendClipboard
         }
     }
 
@@ -543,11 +545,35 @@ fun MainScreen(
                             enabled = isConnected,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("发送") }
-                        Text(
-                            "提示：开启剪贴板监控后，在任意 App 复制文字会自动同步",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF757575)
-                        )
+                        HorizontalDivider()
+                        // ===== 剪贴板自动发送开关 =====
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("后台自动发送剪贴板", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "开启后：在任意 App 复制 → 自动读取并发送到电脑",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF757575)
+                                )
+                            }
+                            Switch(
+                                checked = autoSend,
+                                onCheckedChange = { checked ->
+                                    autoSend = checked
+                                    scope.launch {
+                                        store.save(
+                                            settings?.copy(autoSendClipboard = checked)
+                                                ?: SettingsStore.Settings(autoSendClipboard = checked)
+                                        )
+                                    }
+                                    toast(context, if (checked) "已开启自动发送" else "已关闭自动发送")
+                                }
+                            )
+                        }
                     }
                 }
             } else {
