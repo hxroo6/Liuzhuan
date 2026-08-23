@@ -12,8 +12,7 @@ import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.awaitEachGesture
-import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -483,42 +482,32 @@ fun MainScreen(
                     }
                 }
 
-                // ===== 日志（长按 3 秒复制全部）=====
+                // ===== 日志（双击复制全部）=====
                 Card {
                     Column(
                         Modifier
                             .padding(16.dp)
                             .fillMaxWidth()
                             .pointerInput(logLines) {
-                                awaitEachGesture {
-                                    val down = awaitFirstDown(requireUnconsumed = false)
-                                    down.consume()
-                                    val startTime = System.currentTimeMillis()
-                                    var triggered = false
-                                    while (true) {
-                                        val event = awaitPointerEvent()
-                                        val allReleased = event.changes.all { !it.pressed }
-                                        if (allReleased) break
-                                        if (!triggered && System.currentTimeMillis() - startTime >= 3000) {
-                                            triggered = true
-                                            if (logLines.isEmpty()) {
-                                                toast(context, "暂无日志可复制")
-                                            } else {
-                                                val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                                        as android.content.ClipboardManager
-                                                clipboard.setPrimaryClip(
-                                                    android.content.ClipData.newPlainText(
-                                                        "liuzhuan_logs", logLines.joinToString("\n")
-                                                    )
+                                detectTapGestures(
+                                    onDoubleTap = {
+                                        if (logLines.isEmpty()) {
+                                            toast(context, "暂无日志可复制")
+                                        } else {
+                                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                                    as android.content.ClipboardManager
+                                            clipboard.setPrimaryClip(
+                                                android.content.ClipData.newPlainText(
+                                                    "liuzhuan_logs", logLines.joinToString("\n")
                                                 )
-                                                toast(context, "📋 已复制 ${logLines.size} 条日志")
-                                            }
+                                            )
+                                            toast(context, "✅ 已复制 ${logLines.size} 条日志")
                                         }
                                     }
-                                }
+                                )
                             }
                     ) {
-                        Text("📜 日志（长按 3 秒复制）", style = MaterialTheme.typography.titleSmall)
+                        Text("📜 日志（双击复制）", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
                         logLines.takeLast(8).reversed().forEach { line ->
                             Text(
