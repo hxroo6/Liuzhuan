@@ -6,14 +6,6 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 English · [中文](README.md)
 
-## 🎬 Demo
-
-![Copy-to-PC demo](docs/screenshots/liuzhuan_copy_demo.gif)
-
-(With the desktop "Clipboard Monitor" on — copy text anywhere → it lands in Liuzhuan within a second and syncs to your phone.)
-
-Screenshot: [Desktop panel](docs/screenshots/screenshot_main.png)
-
 Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floating side panel on the edge of your screen (drag-and-drop stash, use-and-drag), and the Android side pushes clipboard text and shared files from your phone to the PC in realtime — and pulls PC materials back to the phone whenever you need them.
 
 **No cloud servers involved.** All data flows only inside your own local network.
