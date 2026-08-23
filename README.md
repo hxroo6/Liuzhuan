@@ -6,6 +6,14 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [English](README_en.md) · 中文
 
+## 🎬 演示
+
+![复制秒达演示](docs/screenshots/liuzhuan_copy_demo.gif)
+
+（电脑开启「剪贴板监控」→ 任何地方复制文字 → 1 秒内自动收藏到流转面板 → 同步到手机）
+
+截图：[电脑端面板](docs/screenshots/screenshot_main.png)
+
 流转是一个**纯局域网**的素材流转工具。电脑端是一个悬浮在屏幕边缘的素材暂存栏（拖拽暂存、即用即拖），安卓端负责把手机上的剪贴板文字、分享的文件实时送到电脑，也能随时把电脑上的素材拉回手机。
 
 **全程不经过任何云端服务器**，数据只在你自己的局域网里流动。
