@@ -487,6 +487,13 @@ fun MainScreen(
                             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                                 if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                                     accState = accessibilityState(context)
+                                    // 切回流转前台（获得焦点）→ 立即检查剪贴板推送。
+                                    // Android 10+ 仅焦点应用可读剪贴板，ON_RESUME 读取必然成功，
+                                    // 比依赖无障碍事件更可靠（无障碍方案受平台焦点限制）
+                                    try {
+                                        com.liuzhuan.app.clipboard.ClipPusher.checkAndPush(context, "app_resume")
+                                    } catch (_: Exception) {
+                                    }
                                 }
                             }
                             lifecycleOwner.lifecycle.addObserver(observer)

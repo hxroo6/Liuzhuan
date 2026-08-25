@@ -33,6 +33,19 @@
             </intent-filter>
         </activity>
 
+        <!-- 文本选择菜单入口：任意 App 选中文本 → 菜单「流转」直接发送（绕过剪贴板焦点限制） -->
+        <activity
+            android:name=".ProcessTextActivity"
+            android:exported="true"
+            android:excludeFromRecents="true"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar">
+            <intent-filter>
+                <action android:name="android.intent.action.PROCESS_TEXT" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <data android:mimeType="text/plain" />
+            </intent-filter>
+        </activity>
+
         <!-- 剪贴板监控无障碍服务（决策 #3） -->
         <service
             android:name=".clipboard.ClipMonitorService"
