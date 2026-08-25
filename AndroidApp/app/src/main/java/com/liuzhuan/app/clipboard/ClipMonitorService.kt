@@ -59,32 +59,60 @@ class ClipMonitorService : AccessibilityService() {
 
     /** 读取剪贴板并推送（仅剪贴板内容变化时；持久化防重复） */
     private fun readClipboardAndPush(trigger: String) {
-        // 后台自动发送开关（发送页可关闭）
-        if (!autoSendEnabled()) return
+        // 调试日志（定位不推送问题）
+        android.util.Log.d("ClipMonitor", "readClipboardAndPush triggered: $trigger")
 
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
-        if (!cm.hasPrimaryClip()) return
+        // 后台自动发送开关（发送页可关闭）
+        if (!autoSendEnabled()) {
+            android.util.Log.d("ClipMonitor", "SKIP: autoSend disabled")
+            return
+        }
+
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: run {
+            android.util.Log.d("ClipMonitor", "SKIP: no ClipboardManager")
+            return
+        }
+        if (!cm.hasPrimaryClip()) {
+            android.util.Log.d("ClipMonitor", "SKIP: no primary clip")
+            return
+        }
         val clip = cm.primaryClip ?: return
         if (clip.itemCount == 0) return
 
         val text = clip.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: return
-        if (text.isEmpty() || text.length < 2) return
+        if (text.isEmpty() || text.length < 2) {
+            android.util.Log.d("ClipMonitor", "SKIP: text too short (${text.length})")
+            return
+        }
 
         val now = System.currentTimeMillis()
-        // 核心去重：内容与上次推送完全相同 → 直接跳过（不读取不弹 Toast，也不写时间）
-        if (text == lastText) return
-        // 额外防抖：即使内容不同，2s 内不重复（防止快速连续事件）
-        if (now - lastPushTime < debounceMs) return
+        // 核心去重：内容与上次推送完全相同 → 直接跳过
+        if (text == lastText) {
+            android.util.Log.d("ClipMonitor", "SKIP: same as last text")
+            return
+        }
+        // 额外防抖：即使内容不同，2s 内不重复
+        if (now - lastPushTime < debounceMs) {
+            android.util.Log.d("ClipMonitor", "SKIP: debounce (${now - lastPushTime}ms < ${debounceMs}ms)")
+            return
+        }
 
         lastText = text
         lastPushTime = now
         prefs.edit().putString("last_text", text).apply()
 
         // 未连接电脑则不推送、不提示
-        val client = LanHub.client ?: return
-        if (client.state !is LanClient.State.Connected) return
+        val client = LanHub.client ?: run {
+            android.util.Log.d("ClipMonitor", "SKIP: LanHub.client is null")
+            return
+        }
+        if (client.state !is LanClient.State.Connected) {
+            android.util.Log.d("ClipMonitor", "SKIP: client state = ${client.state}")
+            return
+        }
 
         val ok = client.pushClipboard(text, packageName)
+        android.util.Log.d("ClipMonitor", "pushClipboard result: $ok, text len=${text.length}")
         if (ok) {
             Toast.makeText(this, "⚡ 流转已复制", Toast.LENGTH_SHORT).show()
         }

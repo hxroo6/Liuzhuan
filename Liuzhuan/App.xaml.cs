@@ -12,8 +12,20 @@ public partial class App : Application
     /// <summary>数据目录：exe 同级 ../data 文件夹（无 C 盘依赖）</summary>
     public static string DataDir { get; private set; } = string.Empty;
 
+    private static Mutex? _singleMutex;
+
     protected override void OnStartup(StartupEventArgs e)
     {
+        // 单实例锁：防止双开（双开会导致端口冲突/窗口重叠/托盘图标异常）
+        _singleMutex = new Mutex(true, "Liuzhuan_SingleInstance", out bool isNew);
+        if (!isNew)
+        {
+            System.Windows.MessageBox.Show("流转已在运行中（检查任务栏右下角托盘图标）", "流转",
+                System.Windows.MessageBoxButton.OK, System.Windows.MessageBoxImage.Information);
+            Shutdown();
+            return;
+        }
+
         base.OnStartup(e);
 
         // 确定 app 目录（基于 exe 所在位置）

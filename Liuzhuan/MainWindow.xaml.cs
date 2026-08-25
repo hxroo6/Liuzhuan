@@ -278,11 +278,38 @@ public partial class MainWindow : Window
                 ToolTipText = "流转 - 素材中转站",
                 Visibility = Visibility.Visible
             };
+            // 嵌入式 icon：强制立即加载（懒加载会导致托盘图标不显示）
             try
             {
-                _trayIcon.IconSource = new System.Windows.Media.Imaging.BitmapImage(iconUri);
+                var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                bmp.BeginInit();
+                bmp.UriSource = new Uri("pack://application:,,,/app.ico");
+                bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                bmp.EndInit();
+                bmp.Freeze();
+                _trayIcon.IconSource = bmp;
+                Logger.Run("TrayIcon: icon loaded from embedded resource");
             }
-            catch { }
+            catch (Exception iconEx)
+            {
+                Logger.Error("TrayIcon: embedded icon failed: {0}, trying exe icon", iconEx.Message);
+                try
+                {
+                    // 回退：从 exe 文件提取图标
+                    var exeIcon = System.Drawing.Icon.ExtractAssociatedIcon(Environment.ProcessPath ?? "");
+                    if (exeIcon != null)
+                    {
+                        _trayIcon.IconSource = System.Windows.Interop.Imaging.CreateBitmapSourceFromHIcon(
+                            exeIcon.Handle, System.Windows.Int32Rect.Empty,
+                            System.Windows.Media.Imaging.BitmapSizeOptions.FromEmptyOptions());
+                        Logger.Run("TrayIcon: icon loaded from exe");
+                    }
+                }
+                catch (Exception ex2)
+                {
+                    Logger.Error("TrayIcon: exe icon also failed: {0}", ex2.Message);
+                }
+            }
             _trayIcon.TrayLeftMouseDoubleClick += (s, e) =>
             {
                 if (_isExpanded) CollapsePanel(); else ExpandPanel();
