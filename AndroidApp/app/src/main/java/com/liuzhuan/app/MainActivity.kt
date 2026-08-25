@@ -254,6 +254,7 @@ fun MainScreen(
             port = s.serverPort
             password = s.password
             autoSend = s.autoSendClipboard
+            LanHub.autoSendClipboard = s.autoSendClipboard // 同步给无障碍服务
         }
     }
 
@@ -583,6 +584,7 @@ fun MainScreen(
                                 checked = autoSend,
                                 onCheckedChange = { checked ->
                                     autoSend = checked
+                                    LanHub.autoSendClipboard = checked // 立即同步给无障碍服务
                                     scope.launch {
                                         store.save(
                                             settings?.copy(autoSendClipboard = checked)

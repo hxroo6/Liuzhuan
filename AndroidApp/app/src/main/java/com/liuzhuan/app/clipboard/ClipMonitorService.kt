@@ -11,7 +11,7 @@ import com.liuzhuan.app.LanHub
 import com.liuzhuan.app.core.SettingsStore
 import com.liuzhuan.app.net.LanClient
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.launch
 
 /**
  * 剪贴板监控（后台自动发送）
@@ -43,15 +43,19 @@ class ClipMonitorService : AccessibilityService() {
         }
     }
 
-    /** 后台自动发送开关（发送页可关闭） */
-    private fun autoSendEnabled(): Boolean = try {
-        runBlocking { settingsStore.settings.first().autoSendClipboard }
-    } catch (e: Exception) {
-        true // 读取失败默认开启
-    }
+    /** 后台自动发送开关（非阻塞读 @Volatile，避免 runBlocking 卡死主线程） */
+    private fun autoSendEnabled(): Boolean = LanHub.autoSendClipboard
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        // 异步初始化开关值（不阻塞主线程；MainActivity 已启动时会覆盖，服务单独启动时兜底）
+        kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO).launch {
+            try {
+                LanHub.autoSendClipboard = settingsStore.settings.first().autoSendClipboard
+            } catch (e: Exception) {
+                LanHub.autoSendClipboard = true
+            }
+        }
         checkClipboard("service_connected")
         handler.postDelayed(pollRunnable, 2_000L)
         android.util.Log.d("ClipMonitor", "服务已连接，轮询每2s启动")

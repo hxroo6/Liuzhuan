@@ -7,4 +7,8 @@ package com.liuzhuan.app
 object LanHub {
     @Volatile
     var client: com.liuzhuan.app.net.LanClient? = null
+
+    /** 后台自动发送剪贴板开关（@Volatile 供无障碍服务非阻塞读取） */
+    @Volatile
+    var autoSendClipboard: Boolean = true
 }
