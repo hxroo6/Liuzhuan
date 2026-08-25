@@ -3,6 +3,8 @@ package com.liuzhuan.app.clipboard
 import android.accessibilityservice.AccessibilityService
 import android.content.ClipboardManager
 import android.content.Context
+import android.os.Handler
+import android.os.Looper
 import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import com.liuzhuan.app.LanHub
@@ -12,12 +14,17 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 
 /**
- * 剪贴板监控（决策 #3：无障碍方案）
- * Android 10+ 后台读剪贴板的唯一可靠方式：
- * 监听窗口/视图事件 → 读取剪贴板文字 → 推送到电脑端
+ * 剪贴板监控（后台自动发送）
  *
- * 关键点：响应任意事件（窗口切换、视图聚焦、点击、内容变化）都尝试读一次剪贴板，
- * 这样「快捷启用」图标点击、App 切换、复制操作都能触发推送。
+ * 核心思路：Android 无「复制」这一直接事件，只能监听「剪贴板内容变化」——
+ * 内容变了 = 用户刚复制/剪切了东西，此时才读取并推送（有差异才发送）。
+ *
+ * 三种触发方式组合，保证后台也能可靠捕捉：
+ * 1. 无障碍事件（文本选择变化/窗口切换/点击等）→ 复制后立即读一次（快）
+ * 2. 轮询兜底（每 2s 读一次对比）→ 即使复制动作没触发任何事件也能捕捉（稳）
+ * 3. 服务连接时读一次（用户可能刚复制才开服务）
+ *
+ * 去重：内容与上次相同 → 跳过（避免重复推送）。
  */
 class ClipMonitorService : AccessibilityService() {
 
@@ -25,83 +32,81 @@ class ClipMonitorService : AccessibilityService() {
     private val settingsStore by lazy { SettingsStore(applicationContext) }
     private var lastText: String = prefs.getString("last_text", "") ?: ""
     private var lastPushTime: Long = 0
-    private val debounceMs = 2_000L // 额外防抖：同内容 2s 内不重复推送
+    private val debounceMs = 2_000L // 同内容 2s 内不重复推送
+
+    // 轮询兜底：每 2s 读一次剪贴板，开销极小（读字符串+对比）
+    private val handler = Handler(Looper.getMainLooper())
+    private val pollRunnable = object : Runnable {
+        override fun run() {
+            checkClipboard("poll")
+            handler.postDelayed(this, 2_000L)
+        }
+    }
 
     /** 后台自动发送开关（发送页可关闭） */
     private fun autoSendEnabled(): Boolean = try {
         runBlocking { settingsStore.settings.first().autoSendClipboard }
     } catch (e: Exception) {
-        true // 读取失败默认开启，不阻塞复制秒达
+        true // 读取失败默认开启
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
-        // 服务首次连接成功时，主动读一次剪贴板（用户可能刚复制）
-        readClipboardAndPush("service_connected")
+        checkClipboard("service_connected")
+        handler.postDelayed(pollRunnable, 2_000L)
+        android.util.Log.d("ClipMonitor", "服务已连接，轮询每2s启动")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
-        // 响应所有感兴趣的事件类型
         when (event.eventType) {
             AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
             AccessibilityEvent.TYPE_VIEW_FOCUSED,
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                readClipboardAndPush("event_" + event.eventType)
+            AccessibilityEvent.TYPE_VIEW_CLICKED,
+            AccessibilityEvent.TYPE_VIEW_TEXT_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED,
+            AccessibilityEvent.TYPE_VIEW_SCROLLED -> {
+                checkClipboard("event_" + event.eventType)
             }
         }
     }
 
     override fun onInterrupt() {
-        // 服务被系统中断时调用
+        // 服务被系统中断
     }
 
-    /** 读取剪贴板并推送（仅剪贴板内容变化时；持久化防重复） */
-    private fun readClipboardAndPush(trigger: String) {
-        // 调试日志（定位不推送问题）
-        android.util.Log.d("ClipMonitor", "readClipboardAndPush triggered: $trigger")
+    override fun onDestroy() {
+        handler.removeCallbacks(pollRunnable)
+        super.onDestroy()
+    }
 
-        // 后台自动发送开关（发送页可关闭）
-        if (!autoSendEnabled()) {
-            android.util.Log.d("ClipMonitor", "SKIP: autoSend disabled")
-            return
-        }
+    /** 读取剪贴板，内容有变化才推送 */
+    private fun checkClipboard(trigger: String) {
+        if (!autoSendEnabled()) return
 
-        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: run {
-            android.util.Log.d("ClipMonitor", "SKIP: no ClipboardManager")
-            return
-        }
-        if (!cm.hasPrimaryClip()) {
-            android.util.Log.d("ClipMonitor", "SKIP: no primary clip")
-            return
-        }
+        val cm = getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager ?: return
+        if (!cm.hasPrimaryClip()) return
         val clip = cm.primaryClip ?: return
         if (clip.itemCount == 0) return
 
         val text = clip.getItemAt(0)?.coerceToText(this)?.toString()?.trim() ?: return
-        if (text.isEmpty() || text.length < 2) {
-            android.util.Log.d("ClipMonitor", "SKIP: text too short (${text.length})")
-            return
-        }
+        if (text.isEmpty() || text.length < 2) return
+
+        // 有差异才处理：内容与上次相同 → 跳过
+        if (text == lastText) return
 
         val now = System.currentTimeMillis()
-        // 核心去重：内容与上次推送完全相同 → 直接跳过
-        if (text == lastText) {
-            android.util.Log.d("ClipMonitor", "SKIP: same as last text")
-            return
-        }
-        // 额外防抖：即使内容不同，2s 内不重复
-        if (now - lastPushTime < debounceMs) {
-            android.util.Log.d("ClipMonitor", "SKIP: debounce (${now - lastPushTime}ms < ${debounceMs}ms)")
-            return
-        }
+        // 防抖：2s 内不重复推送（防止快速连续事件）
+        if (now - lastPushTime < debounceMs) return
 
         lastText = text
         lastPushTime = now
         prefs.edit().putString("last_text", text).apply()
 
-        // 未连接电脑则不推送、不提示
+        android.util.Log.d("ClipMonitor", "检测到新剪贴板内容 (trigger=$trigger, len=${text.length})")
+
+        // 未连接电脑则不推送
         val client = LanHub.client ?: run {
             android.util.Log.d("ClipMonitor", "SKIP: LanHub.client is null")
             return
@@ -112,7 +117,7 @@ class ClipMonitorService : AccessibilityService() {
         }
 
         val ok = client.pushClipboard(text, packageName)
-        android.util.Log.d("ClipMonitor", "pushClipboard result: $ok, text len=${text.length}")
+        android.util.Log.d("ClipMonitor", "pushClipboard result: $ok")
         if (ok) {
             Toast.makeText(this, "⚡ 流转已复制", Toast.LENGTH_SHORT).show()
         }
