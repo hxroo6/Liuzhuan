@@ -41,9 +41,26 @@ class ClipMonitorService : AccessibilityService() {
 
     private val prefs by lazy { getSharedPreferences("clip", Context.MODE_PRIVATE) }
     private val settingsStore by lazy { SettingsStore(applicationContext) }
-    private var lastText: String = prefs.getString("last_text", "") ?: ""
+
+    // ⚠️ 严禁在此（字段初始化=构造期）访问 Context：Service 构造函数执行时
+    // mBase 尚未 attach（handleCreateService: instantiateService → attach → onCreate），
+    // 构造期调 getSharedPreferences 会 NPE → 服务创建崩溃 → 系统绑定失败 →
+    // onServiceConnected 永不触发（表现为「开关已开但服务未运行」）。
+    // 所有需要 Context 的初始化一律延迟到 onCreate()/首次使用（lazy）。
+    private var lastText: String = ""
     private var lastPushTime: Long = 0
     private val debounceMs = 2_000L // 同内容 2s 内不重复推送
+
+    override fun onCreate() {
+        super.onCreate()
+        // onCreate 时 mBase 已注入，这里访问 Context 安全
+        lastText = try {
+            prefs.getString("last_text", "") ?: ""
+        } catch (_: Exception) {
+            ""
+        }
+        android.util.Log.d("ClipMonitor", "onCreate: lastText 已加载 (len=${lastText.length})")
+    }
 
     // 轮询兜底
     private val handler = Handler(Looper.getMainLooper())
