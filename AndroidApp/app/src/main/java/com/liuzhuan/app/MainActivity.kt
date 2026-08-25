@@ -747,11 +747,15 @@ private fun mimeFor(name: String): String {
     }
 }
 
-/** 检测无障碍服务是否已启用 */
+/** 检测无障碍服务是否已启用（兼容不同 Android 版本的格式差异） */
 private fun isAccessibilityEnabled(context: Context): Boolean {
     val enabled = Settings.Secure.getString(
         context.contentResolver,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
     ) ?: return false
-    return enabled.split(':').any { it.contains("com.liuzhuan.app/.clipboard.ClipMonitorService") }
+    // 不同 Android 版本格式：短格式 pkg/.Svc、全格式 pkg/pkg.Svc、FlatString
+    return enabled.split(':').any {
+        (it.contains("com.liuzhuan.app") && it.contains("ClipMonitorService")) ||
+        it.contains("com.liuzhuan.app.clipboard.ClipMonitorService")
+    }
 }

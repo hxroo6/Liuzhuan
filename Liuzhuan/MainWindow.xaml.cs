@@ -48,6 +48,7 @@ public partial class MainWindow : Window
 
     private double _expandedLeft;
     private double _collapsedLeft;
+    private bool _isLeftAnchored; // 左吸附模式：不自动收起、不跳右
     private HwndSource? _mainSource;
     private const int WM_DISPLAYCHANGE = 0x007E;
 
@@ -325,7 +326,7 @@ public partial class MainWindow : Window
     private void SetupCollapseTimer()
     {
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CollapseDelayMs) };
-        _collapseTimer.Tick += (s, e) => { _collapseTimer.Stop(); CollapsePanel(); };
+        _collapseTimer.Tick += (s, e) => { _collapseTimer.Stop(); if (!_isLeftAnchored) CollapsePanel(); };
     }
 
     /// <summary>
@@ -419,6 +420,7 @@ public partial class MainWindow : Window
             // 窗口右边界贴近屏幕右缘 → 贴右 + 缩进
             if (Left + w >= work.Right - 80)
             {
+                _isLeftAnchored = false;
                 _expandedLeft = work.Right - PanelWidth;
                 _collapsedLeft = work.Right - CollapsedVisible;
                 Left = _expandedLeft;
@@ -426,10 +428,12 @@ public partial class MainWindow : Window
                 CollapsePanel();
                 Logger.Run("Snap: right edge (collapsed), Left={0}", Left);
             }
-            // 窗口贴近屏幕左缘 → 贴左展开
+            // 窗口贴近屏幕左缘 → 贴左展开（不自动收起）
             else if (Left <= work.Left + 80)
             {
+                _isLeftAnchored = true;
                 Left = work.Left;
+                _expandedLeft = work.Left;
                 Top = Math.Max(work.Top, Math.Min(work.Bottom - Height, Top));
                 if (!_isExpanded)
                 {
@@ -438,7 +442,7 @@ public partial class MainWindow : Window
                     MainPanel.RenderTransform = null;
                     TriggerBar.Opacity = 0.4;
                 }
-                Logger.Run("Snap: left edge, Left={0}", Left);
+                Logger.Run("Snap: left edge (anchored, no auto-collapse), Left={0}", Left);
             }
         }
         catch (Exception ex)
@@ -475,6 +479,7 @@ public partial class MainWindow : Window
     private void CollapsePanel()
     {
         if (!_isExpanded) return;
+        if (_isLeftAnchored) return; // 左锚定：保持展开，不收起不跳右
         _isExpanded = false;
         var translate = new TranslateTransform();
         MainPanel.RenderTransform = translate;

@@ -146,6 +146,8 @@ class LanClient(
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                // 只处理「当前」WS 的回调（被替换的旧 WS 关闭不触发重连，防死循环）
+                if (webSocket !== ws) return
                 stopHeartbeat()
                 ws = null
                 if (!manuallyClosed) {
@@ -156,6 +158,8 @@ class LanClient(
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                // 只处理「当前」WS 的回调（被替换的旧 WS 失败不触发重连，防死循环）
+                if (webSocket !== ws) return
                 stopHeartbeat()
                 ws = null
                 if (!manuallyClosed) {
@@ -197,9 +201,12 @@ class LanClient(
                 delay(waitMs)
                 attempt++
                 if (manuallyClosed) break
+                if (state == State.Connected) break // 已连上就不重连
                 log("第 $attempt 次重连...")
                 val s = lastSettings ?: break
                 doConnect(s)
+                // 等连接结果再进入下轮（防 doConnect 后立即循环 → 重复创建 WS）
+                delay(8000)
             }
         }
     }
