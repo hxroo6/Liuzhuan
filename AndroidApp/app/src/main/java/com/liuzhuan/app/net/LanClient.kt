@@ -57,6 +57,10 @@ class LanClient(
         }
         manuallyClosed = false
         reconnectJob?.cancel()
+        // 关闭旧连接（防止多次 connect 叠加 WebSocket → 重复日志/握手）
+        ws?.close(1000, "reconnect")
+        ws = null
+        stopHeartbeat()
         doConnect(settings)
     }
 
@@ -105,6 +109,9 @@ class LanClient(
     }
 
     private fun doConnect(s: SettingsStore.Settings) {
+        // 关闭残留 WebSocket（防重连时叠加）
+        ws?.close(1000, "reconnect")
+        ws = null
         setState(State.Connecting)
         val url = "ws://${s.serverIp}:${s.serverPort}/ws"
         val request = Request.Builder().url(url).build()

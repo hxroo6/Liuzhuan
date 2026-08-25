@@ -142,6 +142,15 @@ public class WsHub
         }
 
         var sessionId = Guid.NewGuid().ToString("N");
+        // 同设备名重连 → 先清理旧 session（防止设备列表叠加）
+        var oldKey = _sessionDevices.FirstOrDefault(kv => kv.Value == device).Key;
+        if (oldKey != null)
+        {
+            try { _sessions[oldKey]?.Close(); } catch { }
+            _sessions.TryRemove(oldKey, out _);
+            _sessionDevices.TryRemove(oldKey, out _);
+            Logger.Run("Lan: replaced old session for device {0}", device);
+        }
         _sessions[sessionId] = socket;
         _sessionDevices[sessionId] = device;
         Send(socket, new LanMessage

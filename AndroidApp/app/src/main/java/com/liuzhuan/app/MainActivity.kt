@@ -52,6 +52,8 @@ class MainActivity : ComponentActivity() {
         }
 
         // 创建全局连接（供剪贴板服务共享）
+        // 先断开旧 client（防止 Activity 重建时残留多个 LanClient → 日志重复）
+        LanHub.client?.disconnect()
         val logLines = mutableStateListOf<String>()
         val stateText = mutableStateOf("未连接")
         val isConnected = mutableStateOf(false)
@@ -143,6 +145,12 @@ class MainActivity : ComponentActivity() {
         if (intent.action == Intent.ACTION_SEND) {
             handleShareIntent(intent)
         }
+    }
+
+    /** 返回键 → 缩进后台（不退出 App，保活连接不断） */
+    @Deprecated("Deprecated in Java")
+    override fun onBackPressed() {
+        moveTaskToBack(true)
     }
 
     private fun handleShareIntent(intent: Intent) {
@@ -470,7 +478,18 @@ fun MainScreen(
                 Card {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("📋 剪贴板监控", style = MaterialTheme.typography.titleSmall)
-                        val enabled = remember { isAccessibilityEnabled(context) }
+                        // 返回页面时重新检测（修复：系统开启了但 App 里显示未开启）
+                        var enabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
+                        val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
+                        androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
+                            val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                                if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                                    enabled = isAccessibilityEnabled(context)
+                                }
+                            }
+                            lifecycleOwner.lifecycle.addObserver(observer)
+                            onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                        }
                         Text(
                             if (enabled) "已开启：复制文字将自动同步到电脑"
                             else "未开启：复制内容不会自动同步",
