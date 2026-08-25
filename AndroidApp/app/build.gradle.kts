@@ -36,6 +36,13 @@ android {
     }
 
     buildTypes {
+        // debug 也用 release 签名：测试包可直接覆盖升级 v1.0.0（同签名），
+        // 避免卸载重装导致无障碍授权被系统清除（教训：签名不同 → 卸载 → 授权丢失）
+        debug {
+            if (keystoreProps.isNotEmpty()) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true

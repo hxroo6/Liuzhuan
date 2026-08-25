@@ -480,27 +480,35 @@ fun MainScreen(
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("📋 剪贴板监控", style = MaterialTheme.typography.titleSmall)
                         // 返回页面时重新检测（修复：系统开启了但 App 里显示未开启）
-                        var enabled by remember { mutableStateOf(isAccessibilityEnabled(context)) }
+                        // 三态检测：开关/服务进程/系统绑定，防止 Settings 残留字符串误报
+                        var accState by remember { mutableStateOf(accessibilityState(context)) }
                         val lifecycleOwner = androidx.compose.ui.platform.LocalLifecycleOwner.current
                         androidx.compose.runtime.DisposableEffect(lifecycleOwner) {
                             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                                 if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-                                    enabled = isAccessibilityEnabled(context)
+                                    accState = accessibilityState(context)
                                 }
                             }
                             lifecycleOwner.lifecycle.addObserver(observer)
                             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                         }
+                        val (switchOn, serviceRunning, systemBound) = accState
                         Text(
-                            if (enabled) "已开启：复制文字将自动同步到电脑"
-                            else "未开启：复制内容不会自动同步",
+                            when {
+                                serviceRunning || systemBound ->
+                                    "✅ 运行中：复制文字将自动同步到电脑"
+                                switchOn ->
+                                    "⚠️ 开关已开但服务未运行（重装后授权丢失），请到无障碍设置关闭后重新开启"
+                                else ->
+                                    "未开启：复制内容不会自动同步"
+                            },
                             style = MaterialTheme.typography.bodySmall
                         )
                         Button(
                             onClick = {
                                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                             }
-                        ) { Text(if (enabled) "管理" else "开启监控（无障碍）") }
+                        ) { Text(if (serviceRunning || systemBound) "管理" else "开启监控（无障碍）") }
                     }
                 }
 
@@ -749,15 +757,43 @@ private fun mimeFor(name: String): String {
     }
 }
 
-/** 检测无障碍服务是否已启用（兼容不同 Android 版本的格式差异） */
-private fun isAccessibilityEnabled(context: Context): Boolean {
+/**
+ * 无障碍状态三态检测（区分「开关开了但服务没跑」和「开关没开」）
+ *
+ * @return Triple(开关已开, 服务真实运行中, 框架绑定列表里是否存在)
+ * - serviceRunning：ClipMonitorService.onServiceConnected 已触发（本轮进程内真实状态）
+ * - systemBound：AccessibilityManager 框架层面已注册本服务（比读 Settings 字符串可靠，
+ *   Settings 字符串在卸载重装后可能是残留，导致误显示「已开启」）
+ */
+private fun accessibilityState(context: Context): Triple<Boolean, Boolean, Boolean> {
+    // 1) 服务进程内真实运行标志
+    val serviceRunning = com.liuzhuan.app.clipboard.ClipMonitorService.isRunning
+
+    // 2) 框架真实绑定列表（反映 AccessibilityManagerService 当前已绑定的服务）
+    val am = context.getSystemService(Context.ACCESSIBILITY_SERVICE)
+        as? android.view.accessibility.AccessibilityManager
+    val systemBound = am?.getEnabledAccessibilityServiceList(
+        android.accessibilityservice.AccessibilityServiceInfo.FEEDBACK_GENERIC
+    )?.any {
+        it.resolveInfo?.serviceInfo?.packageName == context.packageName &&
+                it.resolveInfo?.serviceInfo?.name?.contains("ClipMonitorService") == true
+    } ?: false
+
+    // 3) Settings 字符串（可能残留，仅作兜底显示）
     val enabled = Settings.Secure.getString(
         context.contentResolver,
         Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
-    ) ?: return false
-    // 不同 Android 版本格式：短格式 pkg/.Svc、全格式 pkg/pkg.Svc、FlatString
-    return enabled.split(':').any {
+    ) ?: ""
+    val switchOn = enabled.split(':').any {
         (it.contains("com.liuzhuan.app") && it.contains("ClipMonitorService")) ||
         it.contains("com.liuzhuan.app.clipboard.ClipMonitorService")
     }
+
+    return Triple(switchOn, serviceRunning, systemBound)
+}
+
+/** 兼容旧调用：任一信号为真即视为已启用 */
+private fun isAccessibilityEnabled(context: Context): Boolean {
+    val (switchOn, serviceRunning, systemBound) = accessibilityState(context)
+    return switchOn || serviceRunning || systemBound
 }

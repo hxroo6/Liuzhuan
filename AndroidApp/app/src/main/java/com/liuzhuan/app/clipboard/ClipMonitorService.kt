@@ -1,13 +1,21 @@
 package com.liuzhuan.app.clipboard
 
 import android.accessibilityservice.AccessibilityService
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.ClipboardManager
 import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import com.liuzhuan.app.LanHub
+import com.liuzhuan.app.MainActivity
+import com.liuzhuan.app.R
 import com.liuzhuan.app.core.SettingsStore
 import com.liuzhuan.app.net.LanClient
 import kotlinx.coroutines.flow.first
@@ -24,6 +32,12 @@ import kotlinx.coroutines.runBlocking
  * 去重：内容与上次相同 → 跳过（有差异才发送）。
  */
 class ClipMonitorService : AccessibilityService() {
+
+    companion object {
+        /** 服务真实运行标志（onServiceConnected=true / onDestroy=false），供 UI 检测 */
+        @Volatile
+        var isRunning: Boolean = false
+    }
 
     private val prefs by lazy { getSharedPreferences("clip", Context.MODE_PRIVATE) }
     private val settingsStore by lazy { SettingsStore(applicationContext) }
@@ -49,6 +63,9 @@ class ClipMonitorService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        isRunning = true
+        Toast.makeText(this, "🔌 剪贴板监控已启动", Toast.LENGTH_SHORT).show()
+        notifyStatus("流转剪贴板监控", "✅ 服务已启动（正在监听复制）")
         readClipboardAndPush("service_connected")
         handler.postDelayed(pollRunnable, 2_000L)
         android.util.Log.d("ClipMonitor", "服务已连接，轮询每2s启动")
@@ -74,6 +91,7 @@ class ClipMonitorService : AccessibilityService() {
     }
 
     override fun onDestroy() {
+        isRunning = false
         handler.removeCallbacks(pollRunnable)
         super.onDestroy()
     }
@@ -103,13 +121,18 @@ class ClipMonitorService : AccessibilityService() {
 
         android.util.Log.d("ClipMonitor", "检测到新剪贴板 (trigger=$trigger, len=${text.length})")
 
-        // 未连接电脑则不推送
-        val client = LanHub.client ?: run {
+        // 未连接电脑则不推送（并弹诊断 Toast，方便定位）
+        val client = LanHub.client
+        if (client == null) {
             android.util.Log.d("ClipMonitor", "SKIP: LanHub.client is null")
+            Toast.makeText(this, "⚠️ 检测到剪贴板，但连接未初始化", Toast.LENGTH_LONG).show()
+            notifyStatus("流转", "⚠️ 检测到剪贴板，但连接未初始化")
             return
         }
         if (client.state !is LanClient.State.Connected) {
             android.util.Log.d("ClipMonitor", "SKIP: client state = ${client.state}")
+            Toast.makeText(this, "⚠️ 检测到剪贴板，但未连接(${client.state})", Toast.LENGTH_LONG).show()
+            notifyStatus("流转", "⚠️ 检测到剪贴板，但未连接(${client.state})")
             return
         }
 
@@ -117,6 +140,37 @@ class ClipMonitorService : AccessibilityService() {
         android.util.Log.d("ClipMonitor", "pushClipboard result: $ok")
         if (ok) {
             Toast.makeText(this, "⚡ 流转已复制", Toast.LENGTH_SHORT).show()
+            notifyStatus("流转", "⚡ 已复制并发送到电脑")
+        } else {
+            Toast.makeText(this, "❌ 推送失败", Toast.LENGTH_LONG).show()
+            notifyStatus("流转", "❌ 推送失败")
+        }
+    }
+
+    /** 发诊断通知（Toast 在部分 ROM 可能被吞，通知栏更可靠） */
+    private fun notifyStatus(title: String, content: String) {
+        try {
+            val channelId = "clip_diag"
+            val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            if (Build.VERSION.SDK_INT >= 26) {
+                nm.createNotificationChannel(
+                    NotificationChannel(channelId, "剪贴板监控诊断", NotificationManager.IMPORTANCE_DEFAULT)
+                )
+            }
+            val pi = PendingIntent.getActivity(
+                this, 0, Intent(this, MainActivity::class.java),
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+            )
+            val n = Notification.Builder(this, channelId)
+                .setContentTitle(title)
+                .setContentText(content)
+                .setSmallIcon(R.drawable.ic_notification)
+                .setContentIntent(pi)
+                .setAutoCancel(true)
+                .build()
+            nm.notify(2001, n)
+        } catch (e: Exception) {
+            android.util.Log.d("ClipMonitor", "notify failed: ${e.message}")
         }
     }
 }
