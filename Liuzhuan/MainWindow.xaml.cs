@@ -7,6 +7,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
 using System.Windows.Shell;
@@ -47,6 +48,8 @@ public partial class MainWindow : Window
 
     private double _expandedLeft;
     private double _collapsedLeft;
+    private HwndSource? _mainSource;
+    private const int WM_DISPLAYCHANGE = 0x007E;
 
     public MainWindow()
     {
@@ -76,6 +79,7 @@ public partial class MainWindow : Window
         PositionWindowRightEdge();
         SetupCollapseTimer();
         StartHotspotTimer();
+        SetupDragSnap();
         UpdateStatusText();
         UpdateUndoButton();
         SetupTrayIcon();
@@ -110,7 +114,34 @@ public partial class MainWindow : Window
             _lanServer.ListProvider = () => _dataStore.GetRecentSummaries(50);
             _lanServer.ItemLookup = id => _dataStore.Items.FirstOrDefault(x => x.Id == id);
             _dataStore.ItemAdded += OnDataStoreItemAdded;
-            if (!LanConfig.Enabled) return;
+            if (!LanConfig.Enabled)
+            {
+                // lan.json 被系统锁占用读取失败 → 后台重试加载，成功后再启动服务器
+                if (LanConfig.LoadFailed)
+                {
+                    Logger.Error("LAN: config load failed (file locked?), retrying in background...");
+                    _ = Task.Run(async () =>
+                    {
+                        for (int attempt = 1; attempt <= 10; attempt++)
+                        {
+                            await Task.Delay(3000);
+                            LanConfig.Load();
+                            if (LanConfig.Enabled) break;
+                        }
+                        if (!LanConfig.Enabled)
+                        {
+                            Logger.Error("LAN: config still unavailable after retries");
+                            return;
+                        }
+                        Dispatcher.Invoke(() =>
+                        {
+                            try { _lanServer.Start(); Logger.Run("LAN: delayed start (config recovered)"); }
+                            catch (Exception ex) { Logger.Error("LAN: delayed start failed: {0}", ex.Message); }
+                        });
+                    });
+                }
+                return;
+            }
 
             _lanServer.Start();
             // 自检 + 重试（后台，不阻塞 UI）
@@ -268,7 +299,7 @@ public partial class MainWindow : Window
             menu.Items.Add(toggleItem);
             menu.Items.Add(new Separator());
             var exitItem = new MenuItem { Header = "退出流转", Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B)) };
-            exitItem.Click += (s, e) => { Logger.Run("User clicked exit from tray"); Application.Current.Shutdown(); };
+            exitItem.Click += (s, e) => { Logger.Run("User clicked exit from tray"); QuickExit(); };
             menu.Items.Add(exitItem);
             _trayIcon.ContextMenu = menu;
 
@@ -330,6 +361,90 @@ public partial class MainWindow : Window
             }
         };
         _hotspotTimer.Start();
+    }
+
+    /// <summary>
+    /// 拖动 + 贴边吸附：窗口可自由拖动，松开时靠近屏幕边缘自动吸附。
+    /// 右缘吸附 → 贴右并缩进（收起态，鼠标靠近展开）；左缘吸附 → 贴左展开。
+    /// 另挂 WM_DISPLAYCHANGE：分辨率/多屏变化时自动重新吸附到当前右侧。
+    /// </summary>
+    private void SetupDragSnap()
+    {
+        // 显示变化监听（分辨率/多屏拔插）
+        _mainSource = HwndSource.FromHwnd(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+        _mainSource?.AddHook(MainWndProc);
+
+        MouseLeftButtonDown += (s, e) =>
+        {
+            // 排除交互控件（按钮/输入框/素材项），空白区域才能拖动
+            if (e.OriginalSource is System.Windows.Controls.Button or
+                System.Windows.Controls.Primitives.ToggleButton or
+                System.Windows.Controls.TextBox or
+                System.Windows.Controls.ListBoxItem or
+                System.Windows.Controls.CheckBox) return;
+            try { DragMove(); }
+            catch { /* 非左键或系统限制时忽略 */ }
+        };
+
+        MouseLeftButtonUp += (s, e) => SnapToEdge();
+        Logger.Run("DragSnap: enabled (drag to edges to snap)");
+    }
+
+    private IntPtr MainWndProc(IntPtr hwnd, int msg, IntPtr wParam, IntPtr lParam, ref bool handled)
+    {
+        if (msg == WM_DISPLAYCHANGE)
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                PositionWindowRightEdge();
+                Left = _isExpanded ? _expandedLeft : _collapsedLeft;
+                Logger.Run("Display changed, repositioned: Left={0}", Left);
+            });
+        }
+        return IntPtr.Zero;
+    }
+
+    /// <summary>拖动释放后贴边吸附（左右各 80px 触发）</summary>
+    private void SnapToEdge()
+    {
+        try
+        {
+            if (!GetCursorPos(out var pt)) return;
+            var hMon = MonitorFromPoint(pt, 2 /* MONITOR_DEFAULTTONEAREST */);
+            var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+            if (!GetMonitorInfo(hMon, ref mi)) return;
+            var work = mi.rcWork;
+            var w = ActualWidth;
+
+            // 窗口右边界贴近屏幕右缘 → 贴右 + 缩进
+            if (Left + w >= work.Right - 80)
+            {
+                _expandedLeft = work.Right - PanelWidth;
+                _collapsedLeft = work.Right - CollapsedVisible;
+                Left = _expandedLeft;
+                Top = Math.Max(work.Top, Math.Min(work.Bottom - Height, Top));
+                CollapsePanel();
+                Logger.Run("Snap: right edge (collapsed), Left={0}", Left);
+            }
+            // 窗口贴近屏幕左缘 → 贴左展开
+            else if (Left <= work.Left + 80)
+            {
+                Left = work.Left;
+                Top = Math.Max(work.Top, Math.Min(work.Bottom - Height, Top));
+                if (!_isExpanded)
+                {
+                    _isExpanded = true;
+                    Width = PanelWidth;
+                    MainPanel.RenderTransform = null;
+                    TriggerBar.Opacity = 0.4;
+                }
+                Logger.Run("Snap: left edge, Left={0}", Left);
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("SnapToEdge failed: {0}", ex.Message);
+        }
     }
 
     #endregion
@@ -1235,9 +1350,8 @@ public partial class MainWindow : Window
         var exitItem = new MenuItem { Header = "退出流转", Foreground = new SolidColorBrush(Color.FromRgb(0xFF, 0x6B, 0x6B)) };
         exitItem.Click += (s, e) =>
         {
-            _dataStore.Dispose();
             Logger.Run("User clicked exit");
-            Application.Current.Shutdown();
+            QuickExit();
         };
         menu.Items.Add(exitItem);
 
@@ -1341,6 +1455,25 @@ public partial class MainWindow : Window
         _dataStore.Dispose();
         _trayIcon?.Dispose();
         Logger.Run("MainWindow closing, data saved");
+        Application.Current.Shutdown();
+    }
+
+    /// <summary>
+    /// 快速退出：看门狗 1.5s 强制结束进程，防止长时间运行后清理（LAN/托盘）卡死。
+    /// 正常路径：同步保存数据 → 停止服务器 → 清理托盘 → Shutdown；看门狗兜底。
+    /// </summary>
+    private void QuickExit()
+    {
+        var watchdog = new System.Threading.Thread(() =>
+        {
+            System.Threading.Thread.Sleep(1500);
+            Environment.Exit(0);
+        }) { IsBackground = true };
+        watchdog.Start();
+
+        try { _lanServer.Stop(); } catch (Exception ex) { Logger.Error("QuickExit: lan stop {0}", ex.Message); }
+        try { _dataStore.Dispose(); } catch (Exception ex) { Logger.Error("QuickExit: datastore {0}", ex.Message); }
+        try { _trayIcon?.Dispose(); } catch (Exception ex) { Logger.Error("QuickExit: tray {0}", ex.Message); }
         Application.Current.Shutdown();
     }
 

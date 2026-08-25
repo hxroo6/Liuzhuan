@@ -24,13 +24,16 @@ public static class LanConfig
     /// <summary>口令哈希（认证用）</summary>
     public static string PasswordHash => AuthService.HashPassword(Password);
 
+    /// <summary>配置读取是否失败（lan.json 被系统锁占用时）— 供启动时后台重试</summary>
+    public static bool LoadFailed { get; private set; } = false;
+
     static LanConfig() => Load();
 
     public static void Load()
     {
         try
         {
-            if (!File.Exists(ConfigFile)) return;
+            if (!File.Exists(ConfigFile)) { LoadFailed = false; return; }
             var json = File.ReadAllText(ConfigFile);
             var cfg = JsonSerializer.Deserialize<Dictionary<string, object?>>(json, JsonOpts);
             if (cfg == null) return;
@@ -40,10 +43,12 @@ public static class LanConfig
                 Port = p;
             if (cfg.TryGetValue("Password", out var pw) && pw is JsonElement pwj && pwj.ValueKind == System.Text.Json.JsonValueKind.String)
                 Password = pwj.GetString() ?? "";
+            LoadFailed = false;
         }
         catch (Exception ex)
         {
-            Logger.Error("LanConfig.Load failed: {0}", ex.Message);
+            LoadFailed = true;
+            Logger.Error("LanConfig.Load failed (file locked?): {0}", ex.Message);
         }
     }
 

@@ -305,22 +305,34 @@ public class DataStore : IDisposable
     {
         lock (_saveLock)
         {
-            try
+            // 系统临时文件锁（杀毒扫描等）可能瞬时占用 → 重试 3 次，防数据丢失
+            for (int attempt = 1; attempt <= 3; attempt++)
             {
-                var json = JsonSerializer.Serialize(_items.ToList(), JsonOpts);
-                // 先写临时文件再替换，防止写入中断损坏数据
-                var tempFile = DataFile + ".tmp";
-                File.WriteAllText(tempFile, json);
-                if (File.Exists(DataFile))
-                    File.Replace(tempFile, DataFile, null);
-                else
-                    File.Move(tempFile, DataFile);
+                try
+                {
+                    var json = JsonSerializer.Serialize(_items.ToList(), JsonOpts);
+                    // 先写临时文件再替换，防止写入中断损坏数据
+                    var tempFile = DataFile + ".tmp";
+                    File.WriteAllText(tempFile, json);
+                    if (File.Exists(DataFile))
+                        File.Replace(tempFile, DataFile, null);
+                    else
+                        File.Move(tempFile, DataFile);
 
-                Logger.Run("DataStore: saved {0} items to {1}", _items.Count, DataFile);
-            }
-            catch (Exception ex)
-            {
-                Logger.Error("DataStore.Save failed: {0}", ex.Message);
+                    Logger.Run("DataStore: saved {0} items to {1}", _items.Count, DataFile);
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    if (attempt >= 3)
+                    {
+                        Logger.Error("DataStore.Save failed after {0} attempts: {1}", attempt, ex.Message);
+                    }
+                    else
+                    {
+                        System.Threading.Thread.Sleep(800);
+                    }
+                }
             }
         }
     }
