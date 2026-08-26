@@ -115,6 +115,8 @@ public partial class MainWindow : Window
             _lanServer.ListProvider = () => _dataStore.GetRecentSummaries(50);
             _lanServer.ItemLookup = id => _dataStore.Items.FirstOrDefault(x => x.Id == id);
             _dataStore.ItemAdded += OnDataStoreItemAdded;
+            _dataStore.ItemRemoved += OnDataStoreItemRemoved;
+            _dataStore.ItemCleared += OnDataStoreItemCleared;
             if (!LanConfig.Enabled)
             {
                 // lan.json 被系统锁占用读取失败 → 后台重试加载，成功后再启动服务器
@@ -230,12 +232,39 @@ public partial class MainWindow : Window
                 Type = item.Type.ToString(),
                 Name = item.DisplayName,
                 Size = item.Size,
-                AddedTime = new DateTimeOffset(item.AddedTime).ToUnixTimeSeconds()
+                AddedTime = new DateTimeOffset(item.AddedTime).ToUnixTimeSeconds(),
+                Sequence = _dataStore.CurrentSequence
             });
         }
         catch (Exception ex)
         {
             Logger.Error("Broadcast item failed: {0}", ex.Message);
+        }
+    }
+
+    /// <summary>电脑端删除素材 → 广播删除给已连接手机</summary>
+    private void OnDataStoreItemRemoved(string id)
+    {
+        try
+        {
+            _lanServer.BroadcastItemDeleted(id, _dataStore.CurrentSequence);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Broadcast item_deleted failed: {0}", ex.Message);
+        }
+    }
+
+    /// <summary>电脑端清空素材 → 广播清空给已连接手机</summary>
+    private void OnDataStoreItemCleared()
+    {
+        try
+        {
+            _lanServer.BroadcastItemCleared(_dataStore.CurrentSequence);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Broadcast item_cleared failed: {0}", ex.Message);
         }
     }
 

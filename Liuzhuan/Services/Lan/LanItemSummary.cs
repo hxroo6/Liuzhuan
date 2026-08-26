@@ -10,4 +10,5 @@ public class LanItemSummary
     public string Name { get; set; } = "";
     public long Size { get; set; }
     public long AddedTime { get; set; } // Unix 秒
+    public long Sequence { get; set; } // 服务器自增序号（去重 / gap 检测 / 保序）
 }

@@ -64,6 +64,12 @@ public class LanServer : IDisposable
     /// <summary>广播素材摘要给所有已连接设备（接收页实时同步）</summary>
     public void BroadcastItemAdded(LanItemSummary item) => _hub.BroadcastItemAdded(item);
 
+    /// <summary>广播素材删除给所有已连接设备</summary>
+    public void BroadcastItemDeleted(string id, long sequence) => _hub.BroadcastItemDeleted(id, sequence);
+
+    /// <summary>广播素材清空给所有已连接设备</summary>
+    public void BroadcastItemCleared(long sequence) => _hub.BroadcastItemCleared(sequence);
+
     public void Start()
     {
         if (_running) return;

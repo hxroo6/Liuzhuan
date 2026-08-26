@@ -26,7 +26,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.liuzhuan.app.core.SettingsStore
+import com.liuzhuan.app.data.toMaterialItem
 import com.liuzhuan.app.net.LanClient
 import com.liuzhuan.app.net.LanDiscovery
 import com.liuzhuan.app.net.Proto
@@ -60,7 +62,6 @@ class MainActivity : ComponentActivity() {
         val stateText = mutableStateOf("未连接")
         val isConnected = mutableStateOf(false)
         val isReconnecting = mutableStateOf(false)
-        val remoteItems = mutableStateListOf<Proto.ItemSummary>()
         val client = LanClient(
             onState = { s ->
                 stateText.value = when (s) {
@@ -90,16 +91,23 @@ class MainActivity : ComponentActivity() {
                 if (logLines.size > 50) logLines.removeAt(0)
                 logLines.add(msg)
             },
-            // 接收页：全量拉取 → 替换
-            onListData = { items ->
-                remoteItems.clear()
-                remoteItems.addAll(items.take(50))
+            // 接收页：全量快照 → 单一事实源（Repository）
+            onListData = { items, seq ->
+                com.liuzhuan.app.data.MaterialRepository.replaceAll(
+                    items.map { it.toMaterialItem() }, seq
+                )
             },
-            // 接收页：新增广播 → 去重插入最前
+            // 接收页：增量新增 → Repository（去重/保序在 Repository 内）
             onItemAdded = { item ->
-                if (remoteItems.any { it.id == item.id }) return@LanClient
-                remoteItems.add(0, item)
-                while (remoteItems.size > 50) remoteItems.removeAt(remoteItems.size - 1)
+                com.liuzhuan.app.data.MaterialRepository.add(item.toMaterialItem())
+            },
+            // 接收页：增量删除 → Repository
+            onItemDeleted = { id ->
+                com.liuzhuan.app.data.MaterialRepository.delete(id)
+            },
+            // 接收页：清空 → Repository
+            onItemCleared = {
+                com.liuzhuan.app.data.MaterialRepository.clear()
             },
             // 接收页：点击素材 → 文字复制 / 文件下载
             onItemData = { data ->
@@ -126,6 +134,10 @@ class MainActivity : ComponentActivity() {
                 }
             }
         )
+        // sequence gap 检测 → 触发重新快照（resync）
+        com.liuzhuan.app.data.MaterialRepository.onSequenceGap = {
+            client.requestSnapshot()
+        }
         LanHub.client = client
 
         setContent {
@@ -136,8 +148,7 @@ class MainActivity : ComponentActivity() {
                     stateText = stateText.value,
                     isConnected = isConnected.value,
                     isReconnecting = isReconnecting.value,
-                    logLines = logLines,
-                    remoteItems = remoteItems
+                    logLines = logLines
                 )
             }
         }
@@ -232,11 +243,14 @@ fun MainScreen(
     stateText: String,
     isConnected: Boolean,
     isReconnecting: Boolean,
-    logLines: androidx.compose.runtime.snapshots.SnapshotStateList<String>,
-    remoteItems: androidx.compose.runtime.snapshots.SnapshotStateList<Proto.ItemSummary>
+    logLines: androidx.compose.runtime.snapshots.SnapshotStateList<String>
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+
+    // 接收页数据单一事实源：Repository → StateFlow → collectAsStateWithLifecycle
+    val materials by com.liuzhuan.app.data.MaterialRepository.materials.collectAsStateWithLifecycle()
+    val syncState by com.liuzhuan.app.data.MaterialRepository.syncState.collectAsStateWithLifecycle()
 
     // 自动发现状态
     var searching by remember { mutableStateOf(false) }
@@ -641,7 +655,7 @@ fun MainScreen(
                     }
                 }
             } else {
-                // ===== 接收页（与电脑端流转最近素材同步，WS 推送增量）=====
+                // ===== 接收页（单一事实源：Repository → StateFlow，WS 推送增量）=====
                 Card {
                     Column(Modifier.padding(16.dp)) {
                         Row(
@@ -651,25 +665,41 @@ fun MainScreen(
                         ) {
                             Text("📥 电脑端最近素材", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "${remoteItems.size} 条",
+                                "${materials.size} 条",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF9E9E9E)
                             )
                         }
+                        // 轻量同步状态（一眼看出卡在哪）
+                        Text(
+                            when (syncState) {
+                                com.liuzhuan.app.data.MaterialRepository.SyncState.SYNCED ->
+                                    "● 已同步 · ${materials.size} 项"
+                                com.liuzhuan.app.data.MaterialRepository.SyncState.SYNCING ->
+                                    "● 同步中…"
+                                com.liuzhuan.app.data.MaterialRepository.SyncState.RESYNCING ->
+                                    "● 重新同步中…"
+                                com.liuzhuan.app.data.MaterialRepository.SyncState.ERROR ->
+                                    "● 同步异常"
+                                else -> "● 未同步"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF4CAF50)
+                        )
                         Text(
                             "实时同步：电脑流转新增素材会即时显示（仅元信息，省电省流量）",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFF757575)
                         )
                         Spacer(Modifier.height(8.dp))
-                        if (remoteItems.isEmpty()) {
+                        if (materials.isEmpty()) {
                             Text(
                                 "暂无素材\n提示：连接后自动拉取，电脑端新增会实时推送",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = Color(0xFF616161)
                             )
                         } else {
-                            remoteItems.take(50).forEach { item ->
+                            materials.take(50).forEach { item ->
                                 Row(
                                     Modifier
                                         .fillMaxWidth()

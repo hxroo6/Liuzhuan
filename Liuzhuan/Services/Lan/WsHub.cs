@@ -182,12 +182,13 @@ public class WsHub
         TextReceived?.Invoke(content, device);
     }
 
-    /// <summary>处理最近素材列表同步请求（返回最近 50 条摘要）</summary>
+    /// <summary>处理最近素材列表同步请求（返回最近 50 条摘要 + 快照序号）</summary>
     private void HandleListSync(IWebSocketConnection socket)
     {
         try
         {
             var items = ListProvider?.Invoke() ?? new List<LanItemSummary>();
+            var snapshotSeq = items.FirstOrDefault()?.Sequence ?? 0;
             Send(socket, new LanMessage
             {
                 Type = "list_data",
@@ -199,11 +200,13 @@ public class WsHub
                         ["type"] = i.Type,
                         ["name"] = i.Name,
                         ["size"] = i.Size,
-                        ["time"] = i.AddedTime
-                    }).ToList()
+                        ["time"] = i.AddedTime,
+                        ["sequence"] = i.Sequence
+                    }).ToList(),
+                    ["sequence"] = snapshotSeq
                 }
             });
-            Logger.Run("Lan: list_sync sent {0} items", items.Count);
+            Logger.Run("Lan: list_sync sent {0} items (sequence={1})", items.Count, snapshotSeq);
         }
         catch (Exception ex)
         {
@@ -223,9 +226,37 @@ public class WsHub
                 ["type"] = item.Type,
                 ["name"] = item.Name,
                 ["size"] = item.Size,
-                ["time"] = item.AddedTime
+                ["time"] = item.AddedTime,
+                ["sequence"] = item.Sequence
             }
         });
+        Logger.Run("Lan: broadcast item_added id={0} sequence={1}", item.Id, item.Sequence);
+    }
+
+    /// <summary>广播删除素材给所有已连接设备</summary>
+    public void BroadcastItemDeleted(string id, long sequence)
+    {
+        Broadcast(new LanMessage
+        {
+            Type = "item_deleted",
+            Data = new Dictionary<string, object?>
+            {
+                ["id"] = id,
+                ["sequence"] = sequence
+            }
+        });
+        Logger.Run("Lan: broadcast item_deleted id={0} sequence={1}", id, sequence);
+    }
+
+    /// <summary>广播清空素材给所有已连接设备</summary>
+    public void BroadcastItemCleared(long sequence)
+    {
+        Broadcast(new LanMessage
+        {
+            Type = "item_cleared",
+            Data = new Dictionary<string, object?> { ["sequence"] = sequence }
+        });
+        Logger.Run("Lan: broadcast item_cleared sequence={0}", sequence);
     }
 
     /// <summary>处理素材详情请求：文字返回全文，文件返回下载地址</summary>

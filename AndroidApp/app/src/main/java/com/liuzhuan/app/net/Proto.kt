@@ -73,7 +73,8 @@ object Proto {
         val type: String,
         val name: String,
         val size: Long,
-        val time: Long
+        val time: Long,
+        val sequence: Long = 0
     )
 
     /** 解析 list_data 消息 → 素材摘要列表 */
@@ -87,7 +88,8 @@ object Proto {
                 type = it.optString("type", "Text"),
                 name = it.optString("name", ""),
                 size = it.optLong("size", 0),
-                time = it.optLong("time", 0)
+                time = it.optLong("time", 0),
+                sequence = it.optLong("sequence", 0)
             ))
         }
         return out
@@ -99,8 +101,15 @@ object Proto {
         type = data.optString("type", "Text"),
         name = data.optString("name", ""),
         size = data.optLong("size", 0),
-        time = data.optLong("time", 0)
+        time = data.optLong("time", 0),
+        sequence = data.optLong("sequence", 0)
     )
+
+    /** 解析消息携带的服务器序号（snapshot / added / deleted / cleared 通用） */
+    fun parseSequence(data: JSONObject): Long = data.optLong("sequence", 0)
+
+    /** 解析 item_deleted 消息 → 素材 id */
+    fun parseItemDeletedId(data: JSONObject): String = data.optString("id", "")
 
     /** 请求素材详情（文字全文 / 文件下载地址） */
     fun buildGetItem(id: String): String = JSONObject()

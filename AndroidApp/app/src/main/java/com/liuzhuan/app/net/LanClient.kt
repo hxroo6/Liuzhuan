@@ -22,8 +22,10 @@ class LanClient(
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
     private val onState: (State) -> Unit = {},
     private val onLog: (String) -> Unit = {},
-    private val onListData: (List<Proto.ItemSummary>) -> Unit = {},
+    private val onListData: (List<Proto.ItemSummary>, Long) -> Unit = { _, _ -> },
     private val onItemAdded: (Proto.ItemSummary) -> Unit = {},
+    private val onItemDeleted: (String) -> Unit = {},
+    private val onItemCleared: () -> Unit = {},
     private val onItemData: (Proto.ItemData) -> Unit = {}
 ) {
     sealed class State {
@@ -108,6 +110,13 @@ class LanClient(
         ws?.send(Proto.buildGetItem(id))
     }
 
+    /** 请求重新全量快照（sequence gap 检测触发 resync 时调用） */
+    fun requestSnapshot() {
+        if (state != State.Connected) return
+        log("[SYNC] resync requested")
+        ws?.send(Proto.buildListSync())
+    }
+
     private fun doConnect(s: SettingsStore.Settings) {
         // 关闭残留 WebSocket（防重连时叠加）
         ws?.close(1000, "reconnect")
@@ -129,7 +138,8 @@ class LanClient(
                     "welcome" -> {
                         setState(State.Connected)
                         log("✅ 已连接电脑端流转")
-                        // 连接成功后拉取最近素材列表（接收页初始化）
+                        log("[SYNC] request snapshot")
+                        // 连接成功后拉取最近素材全量快照（接收页初始化）
                         webSocket.send(Proto.buildListSync())
                     }
                     "auth_fail" -> {
@@ -139,8 +149,26 @@ class LanClient(
                         webSocket.close(1000, "auth_fail")
                     }
                     "heartbeat" -> { /* 心跳回执，无需处理 */ }
-                    "list_data" -> onListData(Proto.parseListData(data))
-                    "item_added" -> onItemAdded(Proto.parseItemAdded(data))
+                    "list_data" -> {
+                        val seq = Proto.parseSequence(data)
+                        val items = Proto.parseListData(data)
+                        log("[SYNC] snapshot received count=${items.size} sequence=$seq")
+                        onListData(items, seq)
+                    }
+                    "item_added" -> {
+                        val item = Proto.parseItemAdded(data)
+                        log("[SYNC] material added id=${item.id.take(8)} sequence=${item.sequence}")
+                        onItemAdded(item)
+                    }
+                    "item_deleted" -> {
+                        val id = Proto.parseItemDeletedId(data)
+                        log("[SYNC] material deleted id=${id.take(8)} sequence=${Proto.parseSequence(data)}")
+                        onItemDeleted(id)
+                    }
+                    "item_cleared" -> {
+                        log("[SYNC] materials cleared")
+                        onItemCleared()
+                    }
                     "item_data" -> onItemData(Proto.parseItemData(data))
                 }
             }

@@ -34,12 +34,21 @@ public class DataStore : IDisposable
     private readonly List<List<MaterialItem>> _undoStack = new();
     private const int MaxUndoSteps = 50;
 
+    // 变更序号（用于 LAN 增量同步的 gap 检测；内存计数，重启归零）
+    private long _sequence;
+
+    /// <summary>当前变更序号</summary>
+    public long CurrentSequence => _sequence;
+
+    private long NextSequence() => System.Threading.Interlocked.Increment(ref _sequence);
+
     /// <summary>所有素材的 observable 集合</summary>
     public ObservableCollection<MaterialItem> Items => _items;
 
     /// <summary>最近 N 条素材摘要（LAN 列表同步用，轻量不传内容）</summary>
     public List<Services.Lan.LanItemSummary> GetRecentSummaries(int count)
     {
+        var seq = _sequence;
         return _items
             .Take(count)
             .Select(x => new Services.Lan.LanItemSummary
@@ -48,7 +57,8 @@ public class DataStore : IDisposable
                 Type = x.Type.ToString(),
                 Name = x.DisplayName,
                 Size = x.Size,
-                AddedTime = new DateTimeOffset(x.AddedTime).ToUnixTimeSeconds()
+                AddedTime = new DateTimeOffset(x.AddedTime).ToUnixTimeSeconds(),
+                Sequence = seq
             })
             .ToList();
     }
@@ -62,9 +72,16 @@ public class DataStore : IDisposable
     /// <summary>素材新增/置顶事件（用于 LAN 广播）</summary>
     public event Action<MaterialItem>? ItemAdded;
 
+    /// <summary>素材删除事件（用于 LAN 广播 item_deleted）</summary>
+    public event Action<string>? ItemRemoved;
+
+    /// <summary>素材清空事件（用于 LAN 广播 item_cleared）</summary>
+    public event Action? ItemCleared;
+
     /// <summary>添加素材（去重：同路径/同文本内容不重复添加）</summary>
     public MaterialItem Add(MaterialItem item)
     {
+        NextSequence(); // 每次变更递增序号（去重置顶也算一次变更）
         // 去重检查
         if (item.IsFile)
         {
@@ -110,10 +127,12 @@ public class DataStore : IDisposable
         var item = _items.FirstOrDefault(x => x.Id == id);
         if (item != null)
         {
+            NextSequence();
             PushUndo(new List<MaterialItem> { item });
             _items.Remove(item);
             ScheduleSave();
             Logger.Run("DataStore: removed item Id={0} Name={1}", id, item.DisplayName);
+            ItemRemoved?.Invoke(id);
         }
     }
 
@@ -132,9 +151,12 @@ public class DataStore : IDisposable
         }
         if (removed.Count > 0)
         {
+            NextSequence();
             PushUndo(removed);
             ScheduleSave();
             Logger.Run("DataStore: removed {0} items (batch)", removed.Count);
+            foreach (var item in removed)
+                ItemRemoved?.Invoke(item.Id);
         }
     }
 
@@ -179,11 +201,13 @@ public class DataStore : IDisposable
         var toRemove = _items.Where(x => x.Type == type && !x.IsFavorite).ToList();
         if (toRemove.Count > 0)
         {
+            NextSequence();
             PushUndo(toRemove);
             foreach (var item in toRemove)
                 _items.Remove(item);
             ScheduleSave();
             Logger.Run("DataStore: cleared type={0}, count={1} (favorites kept)", type, toRemove.Count);
+            ItemCleared?.Invoke();
         }
     }
 
@@ -193,11 +217,13 @@ public class DataStore : IDisposable
         var toRemove = _items.Where(x => !x.IsFavorite).ToList();
         if (toRemove.Count > 0)
         {
+            NextSequence();
             PushUndo(toRemove);
             foreach (var item in toRemove)
                 _items.Remove(item);
             ScheduleSave();
             Logger.Run("DataStore: cleared all, count={0} (favorites kept)", toRemove.Count);
+            ItemCleared?.Invoke();
         }
     }
 
