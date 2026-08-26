@@ -72,7 +72,9 @@ class LanClient(
         stopHeartbeat()
         ws?.close(1000, "bye")
         ws = null
-        setState(State.Disconnected)
+        // 用户主动断开 → Paused（不重连），与「意外断开 Disconnected（自动重连中）」区分。
+        // 否则 UI 层会把主动断开也当成 Disconnected，进而误停前台服务/保活锁。
+        setState(State.Paused)
         log("已断开连接")
     }
 

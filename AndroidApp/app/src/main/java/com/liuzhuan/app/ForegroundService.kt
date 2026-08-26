@@ -28,9 +28,15 @@ class ForegroundService : Service() {
 
     override fun onBind(intent: Intent?): IBinder? = null
 
+    override fun onCreate() {
+        super.onCreate()
+        android.util.Log.d("ForegroundService", "[FGS] created")
+    }
+
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         startForeground(NOTIF_ID, buildNotification("流转已连接电脑，后台运行中"))
         acquireKeepAliveLocks()
+        android.util.Log.d("ForegroundService", "[FGS] startCommand + startForeground success")
         return START_STICKY
     }
 

@@ -64,6 +64,7 @@ class MainActivity : ComponentActivity() {
         val isReconnecting = mutableStateOf(false)
         val client = LanClient(
             onState = { s ->
+                android.util.Log.d("LanClient", "[WS] state=$s")
                 stateText.value = when (s) {
                     LanClient.State.Idle -> "未连接"
                     LanClient.State.Connecting -> "连接中..."
@@ -75,7 +76,10 @@ class MainActivity : ComponentActivity() {
                 isConnected.value = s == LanClient.State.Connected
                 // 是否处于「断开后自动重连」状态（供暂停按钮显示）
                 isReconnecting.value = s == LanClient.State.Disconnected || s == LanClient.State.Connecting
-                // 前台服务保活：连接成功 → 启动；断开/失败/暂停 → 停止
+                // 前台服务保活：连接成功 → 启动；认证失败/主动暂停 → 停止。
+                // ⚠️ 关键：Disconnected（意外断开，自动重连中）绝不能停前台服务——
+                // 否则释放 Wi-Fi/CPU 保活锁，后台重连失败，后台复制事件只能积压、
+                // 直到切回前台才 flush（这正是「后台复制失效、切前台才发送」的根因）。
                 if (s == LanClient.State.Connected) {
                     ContextCompat.startForegroundService(
                         this,
@@ -83,7 +87,7 @@ class MainActivity : ComponentActivity() {
                     )
                     // WS 恢复连接 → 补发断线期间积压的剪贴板事件（FIFO）
                     com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.onWsConnected()
-                } else if (s is LanClient.State.AuthFailed || s == LanClient.State.Disconnected || s == LanClient.State.Paused) {
+                } else if (s is LanClient.State.AuthFailed || s == LanClient.State.Paused) {
                     stopService(Intent(this, ForegroundService::class.java))
                 }
             },
