@@ -30,6 +30,11 @@ object ClipboardMonitorCoordinator {
     val queue = ClipboardEventQueue()
     val pipeline = ClipboardActionPipeline()
 
+    /** App 前台/后台状态（进程级追踪，供链路诊断标注 appState） */
+    @Volatile
+    var appInForeground: Boolean = true
+        private set
+
     /** 实时诊断信息（供 UI 显示，避免依赖 logcat） */
     private val _diagnostic = MutableStateFlow("等待复制事件…")
     val diagnostic: StateFlow<String> = _diagnostic.asStateFlow()
@@ -45,6 +50,9 @@ object ClipboardMonitorCoordinator {
         Log.d(TAG, msg)
     }
 
+    /** appState 标签（FOREGROUND/BACKGROUND） */
+    fun appStateTag(): String = if (appInForeground) "FOREGROUND" else "BACKGROUND"
+
     /** 幂等装配（无障碍服务 onCreate 调用；可能被系统多次创建） */
     fun init(context: Context) {
         if (initialized) return
@@ -53,8 +61,40 @@ object ClipboardMonitorCoordinator {
             initialized = true
             captureManager = ClipboardCaptureManagerImpl(context.applicationContext)
             pipeline.add(PushToPcAction(queue))
+            trackAppVisibility(context.applicationContext)
             Log.d(TAG, "已装配：capture + dedup + queue + pipeline + PushToPc")
         }
+    }
+
+    /** 用 ActivityLifecycleCallbacks 追踪进程前台/后台（不依赖单个 Activity 存活） */
+    private fun trackAppVisibility(app: Context) {
+        val application = app as? android.app.Application ?: return
+        application.registerActivityLifecycleCallbacks(
+            object : android.app.Application.ActivityLifecycleCallbacks {
+                private var startedCount = 0
+                override fun onActivityStarted(activity: android.app.Activity) {
+                    startedCount++
+                    val now = startedCount > 0
+                    if (now != appInForeground) {
+                        appInForeground = now
+                        Log.d(TAG, "[VIS] appState=FOREGROUND (started=$startedCount)")
+                    }
+                }
+                override fun onActivityStopped(activity: android.app.Activity) {
+                    startedCount = (startedCount - 1).coerceAtLeast(0)
+                    val now = startedCount > 0
+                    if (now != appInForeground) {
+                        appInForeground = now
+                        Log.d(TAG, "[VIS] appState=BACKGROUND (started=$startedCount)")
+                    }
+                }
+                override fun onActivityCreated(a: android.app.Activity, b: android.os.Bundle?) {}
+                override fun onActivityResumed(a: android.app.Activity) {}
+                override fun onActivityPaused(a: android.app.Activity) {}
+                override fun onActivitySaveInstanceState(a: android.app.Activity, b: android.os.Bundle) {}
+                override fun onActivityDestroyed(a: android.app.Activity) {}
+            }
+        )
     }
 
     fun onAccessibilityConnected() {
@@ -78,11 +118,13 @@ object ClipboardMonitorCoordinator {
         if (client.state !is LanClient.State.Connected) return
         val pending = queue.drain()
         if (pending.isEmpty()) return
-        Log.d(TAG, "WS 恢复，补发 ${pending.size} 条积压")
+        Log.d(TAG, "[OUT_QUEUE] flush start size=${pending.size} appState=${appStateTag()}")
         pending.forEach { ev ->
             val text = ev.text ?: return@forEach
+            Log.d(TAG, "[OUT_QUEUE] flush send id=${ev.diagnosticId}")
             client.pushClipboard(text, ev.sourcePackage ?: "android")
         }
+        Log.d(TAG, "[OUT_QUEUE] flush complete")
     }
 
     private const val TAG = "ClipCoord"

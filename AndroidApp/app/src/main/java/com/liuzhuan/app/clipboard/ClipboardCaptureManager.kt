@@ -94,7 +94,14 @@ class ClipboardCaptureManagerImpl(
 
     override fun captureOnForeground() {
         scope.launch {
-            tryReadClipboard("app_foreground")?.let { ClipboardEventDispatcher.dispatch(it) }
+            val ev = tryReadClipboard("app_foreground")
+            if (ev != null) {
+                Log.d(TAG, "[CAPTURE][FG-fore] 前台重读剪贴板成功 len=${ev.text?.length}")
+                ClipboardMonitorCoordinator.setDiagnostic("前台重读剪贴板成功 len=${ev.text?.length}")
+                ClipboardEventDispatcher.dispatch(ev)
+            } else {
+                Log.d(TAG, "[CAPTURE][FG-fore] 前台重读剪贴板为空")
+            }
         }
     }
 

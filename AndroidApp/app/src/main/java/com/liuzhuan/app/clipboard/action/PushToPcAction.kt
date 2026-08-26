@@ -20,6 +20,8 @@ class PushToPcAction(
 
     override suspend fun execute(event: ClipboardEvent) {
         val client = LanHub.client
+        val id = event.diagnosticId
+        val appState = com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.appStateTag()
         if (client?.state is LanClient.State.Connected) {
             // 已连接：先补发积压，再发当前（FIFO 保序）
             if (queue.isNotEmpty()) {
@@ -28,9 +30,12 @@ class PushToPcAction(
             send(client, event)
         } else {
             queue.enqueue(event)
-            Log.d(TAG, "未连接，事件入队（队列长度=${queue.size()}）")
+            Log.d(
+                TAG,
+                "[OUT_QUEUE][$id] enqueue size=${queue.size()} appState=$appState reason=disconnected"
+            )
             com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic(
-                "未连接，事件入队（队列=${queue.size()}）"
+                "[$id] 未连接，事件入队（队列=${queue.size()}）"
             )
         }
     }

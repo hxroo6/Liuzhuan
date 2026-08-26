@@ -28,13 +28,20 @@ class ClipMonitorService : AccessibilityService() {
         /** 服务真实运行标志（onServiceConnected=true / onDestroy=false），供 UI 检测 */
         @Volatile
         var isRunning: Boolean = false
+
+        /** 服务实例序号（区分系统是否重建了服务实例） */
+        private val instanceCounter = java.util.concurrent.atomic.AtomicLong(0)
     }
+
+    /** 本实例 ID（证明后台服务是否被系统重建/断开） */
+    private var instanceId: String = ""
 
     override fun onCreate() {
         super.onCreate()
+        instanceId = "SVC-${instanceCounter.incrementAndGet()}"
         // 幂等装配剪贴板监控各组件（可能被系统多次创建服务实例）
         ClipboardMonitorCoordinator.init(applicationContext)
-        android.util.Log.d("ClipMonitor", "onCreate")
+        android.util.Log.d("ClipMonitor", "[ACC-SVC][$instanceId] onCreate")
     }
 
     override fun onServiceConnected() {
@@ -42,21 +49,34 @@ class ClipMonitorService : AccessibilityService() {
         isRunning = true
         ClipboardMonitorCoordinator.onAccessibilityConnected()
         notifyStatus("流转剪贴板监控", "✅ 服务已启动（正在监听复制）")
-        android.util.Log.d("ClipMonitor", "服务已连接")
+        android.util.Log.d("ClipMonitor", "[ACC-SVC][$instanceId] connected")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
+        // 只对复制相关事件打日志（证明后台是否收到），避免刷屏
+        val t = event.eventType
+        if (t == AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED ||
+            t == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            t == AccessibilityEvent.TYPE_VIEW_LONG_CLICKED
+        ) {
+            android.util.Log.d(
+                "ClipMonitor",
+                "[ACC][$instanceId] event type=0x${Integer.toHexString(t)} " +
+                    "pkg=${event.packageName} appState=${ClipboardMonitorCoordinator.appStateTag()}"
+            )
+        }
         // 统一入口：检测 → 短延迟捕获 → 分发（不在此做任何业务逻辑）
         ClipboardMonitorCoordinator.captureManager.onAccessibilityEvent(event)
     }
 
     override fun onInterrupt() {
-        // 服务被系统中断
+        android.util.Log.d("ClipMonitor", "[ACC-SVC][$instanceId] interrupt")
     }
 
     override fun onDestroy() {
         isRunning = false
+        android.util.Log.d("ClipMonitor", "[ACC-SVC][$instanceId] destroyed")
         ClipboardMonitorCoordinator.onAccessibilityDisconnected()
         super.onDestroy()
     }
