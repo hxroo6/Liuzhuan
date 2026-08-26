@@ -33,6 +33,8 @@ class ProcessTextActivity : ComponentActivity() {
         try {
             val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
             cm.setPrimaryClip(android.content.ClipData.newPlainText("liuzhuan", text))
+            // 循环回写防护：标记本 App 写入的内容，避免被无障碍捕获后回推 PC
+            com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.markLocalText(text)
         } catch (_: Exception) {
             // 写剪贴板失败不影响发送
         }

@@ -45,6 +45,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SettingsStore(this)
+        // 幂等装配剪贴板监控组件（无障碍服务未启动时也要可用，供前台捕获/测试）
+        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.init(applicationContext)
 
         // Android 13+ 通知权限（前台服务通知需要）
         if (Build.VERSION.SDK_INT >= 33) {
@@ -78,6 +80,8 @@ class MainActivity : ComponentActivity() {
                         this,
                         Intent(this, ForegroundService::class.java)
                     )
+                    // WS 恢复连接 → 补发断线期间积压的剪贴板事件（FIFO）
+                    com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.onWsConnected()
                 } else if (s is LanClient.State.AuthFailed || s == LanClient.State.Disconnected || s == LanClient.State.Paused) {
                     stopService(Intent(this, ForegroundService::class.java))
                 }
@@ -487,11 +491,10 @@ fun MainScreen(
                             val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
                                 if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
                                     accState = accessibilityState(context)
-                                    // 切回流转前台（获得焦点）→ 立即检查剪贴板推送。
-                                    // Android 10+ 仅焦点应用可读剪贴板，ON_RESUME 读取必然成功，
-                                    // 比依赖无障碍事件更可靠（无障碍方案受平台焦点限制）
+                                    // 前台捕获：切回流转（获得焦点）→ 立即读剪贴板并走统一分发
                                     try {
-                                        com.liuzhuan.app.clipboard.ClipPusher.checkAndPush(context, "app_resume")
+                                        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+                                            .captureManager.captureOnForeground()
                                     } catch (_: Exception) {
                                     }
                                 }
@@ -516,6 +519,31 @@ fun MainScreen(
                                 context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
                             }
                         ) { Text(if (serviceRunning || systemBound) "管理" else "开启监控（无障碍）") }
+
+                        // ===== 立即测试剪贴板监听 =====
+                        var testResult by remember { mutableStateOf("") }
+                        OutlinedButton(
+                            onClick = {
+                                // 写入测试文本（markLocal 防止真实推送到 PC），再前台读取验证捕获链路
+                                val testText = "流转剪贴板测试 ${System.currentTimeMillis()}"
+                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
+                                        as android.content.ClipboardManager
+                                cm.setPrimaryClip(android.content.ClipData.newPlainText("test", testText))
+                                com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.markLocalText(testText)
+                                scope.launch {
+                                    val ev = com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+                                        .captureManager.tryReadClipboard("manual_test")
+                                    testResult = if (ev != null && ev.text?.contains("流转剪贴板测试") == true) {
+                                        "✅ 捕获成功 | 方式=${ev.source} | 长度=${ev.text?.length} | 来源=${ev.sourcePackage ?: "本机"}"
+                                    } else {
+                                        "❌ 捕获失败（前台应可读；若失败请检查系统剪贴板限制）"
+                                    }
+                                }
+                            }
+                        ) { Text("立即测试剪贴板监听") }
+                        if (testResult.isNotEmpty()) {
+                            Text(testResult, style = MaterialTheme.typography.bodySmall, color = Color(0xFF9E9E9E))
+                        }
                     }
                 }
 
@@ -714,6 +742,8 @@ private fun toast(context: Context, msg: String) {
 private fun copyToClipboard(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("liuzhuan", text))
+    // 循环回写防护：本 App 写入的内容标记为已处理，避免再被捕获回推 PC
+    com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.markLocalText(text)
 }
 
 /** 下载文件到 MediaStore（Android 10+ 免存储权限） */

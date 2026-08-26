@@ -8,22 +8,16 @@ import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.os.Build
-import android.os.Handler
-import android.os.Looper
-import android.widget.Toast
 import android.view.accessibility.AccessibilityEvent
 import com.liuzhuan.app.MainActivity
 import com.liuzhuan.app.R
 
 /**
- * 剪贴板监控（后台自动发送）
+ * 剪贴板监控无障碍服务（薄触发器）
  *
- * 触发路径：无障碍事件（窗口切换/内容变化/聚焦/点击）+ 2s 轮询兜底。
- * 实际读取/去重/推送统一走 [ClipPusher]。
- *
- * ⚠️ Android 10+ 焦点限制（平台行为，非 bug）：流转在后台时
- * primaryClip 读取被系统拒绝 → 只有流转切到前台（获得焦点）瞬间才能读到。
- * 「零切换发送」请用文本选择菜单（ProcessTextActivity）。
+ * 职责收敛为：接收 AccessibilityEvent → 交给 ClipboardCaptureManager 检测/捕获/分发。
+ * 不再：轮询剪贴板、去重、直接调用 WebSocket（这些职责分别由
+ * CopyEventDetector / ClipboardCaptureManager / ClipboardEventDispatcher / ActionPipeline 承担）。
  *
  * ⚠️ 严禁在字段初始化（构造期）访问 Context：mBase 尚未 attach 会 NPE，
  * 导致服务创建即崩溃、系统绑定失败（详见 2026-08-26 排查记录）。
@@ -36,46 +30,25 @@ class ClipMonitorService : AccessibilityService() {
         var isRunning: Boolean = false
     }
 
-    // 轮询兜底
-    private val handler = Handler(Looper.getMainLooper())
-    private val pollRunnable = object : Runnable {
-        override fun run() {
-            if (ClipPusher.checkAndPush(this@ClipMonitorService, "poll")) {
-                onPushed()
-            }
-            handler.postDelayed(this, 2_000L)
-        }
-    }
-
     override fun onCreate() {
         super.onCreate()
+        // 幂等装配剪贴板监控各组件（可能被系统多次创建服务实例）
+        ClipboardMonitorCoordinator.init(applicationContext)
         android.util.Log.d("ClipMonitor", "onCreate")
     }
 
     override fun onServiceConnected() {
         super.onServiceConnected()
         isRunning = true
-        Toast.makeText(this, "🔌 剪贴板监控已启动", Toast.LENGTH_SHORT).show()
+        ClipboardMonitorCoordinator.onAccessibilityConnected()
         notifyStatus("流转剪贴板监控", "✅ 服务已启动（正在监听复制）")
-        if (ClipPusher.checkAndPush(this, "service_connected")) {
-            onPushed()
-        }
-        handler.postDelayed(pollRunnable, 2_000L)
-        android.util.Log.d("ClipMonitor", "服务已连接，轮询每2s启动")
+        android.util.Log.d("ClipMonitor", "服务已连接")
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         event ?: return
-        when (event.eventType) {
-            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED,
-            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED,
-            AccessibilityEvent.TYPE_VIEW_FOCUSED,
-            AccessibilityEvent.TYPE_VIEW_CLICKED -> {
-                if (ClipPusher.checkAndPush(this, "event_${event.eventType}")) {
-                    onPushed()
-                }
-            }
-        }
+        // 统一入口：检测 → 短延迟捕获 → 分发（不在此做任何业务逻辑）
+        ClipboardMonitorCoordinator.captureManager.onAccessibilityEvent(event)
     }
 
     override fun onInterrupt() {
@@ -84,17 +57,8 @@ class ClipMonitorService : AccessibilityService() {
 
     override fun onDestroy() {
         isRunning = false
-        handler.removeCallbacks(pollRunnable)
+        ClipboardMonitorCoordinator.onAccessibilityDisconnected()
         super.onDestroy()
-    }
-
-    /** 推送成功的用户反馈 */
-    private fun onPushed() {
-        try {
-            Toast.makeText(this, "⚡ 流转已复制", Toast.LENGTH_SHORT).show()
-            notifyStatus("流转", "⚡ 已复制并发送到电脑")
-        } catch (_: Exception) {
-        }
     }
 
     /** 发诊断通知（Toast 在部分 ROM 可能被吞，通知栏更可靠） */
