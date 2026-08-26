@@ -6,6 +6,9 @@ import com.liuzhuan.app.LanHub
 import com.liuzhuan.app.clipboard.action.ClipboardActionPipeline
 import com.liuzhuan.app.clipboard.action.PushToPcAction
 import com.liuzhuan.app.net.LanClient
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 
 /**
  * 剪贴板监控协调器 —— 进程级单例，装配所有组件，统一管理生命周期与状态。
@@ -27,11 +30,20 @@ object ClipboardMonitorCoordinator {
     val queue = ClipboardEventQueue()
     val pipeline = ClipboardActionPipeline()
 
+    /** 实时诊断信息（供 UI 显示，避免依赖 logcat） */
+    private val _diagnostic = MutableStateFlow("等待复制事件…")
+    val diagnostic: StateFlow<String> = _diagnostic.asStateFlow()
+
     lateinit var captureManager: ClipboardCaptureManager
         private set
 
     @Volatile
     private var initialized = false
+
+    fun setDiagnostic(msg: String) {
+        _diagnostic.value = msg
+        Log.d(TAG, msg)
+    }
 
     /** 幂等装配（无障碍服务 onCreate 调用；可能被系统多次创建） */
     fun init(context: Context) {

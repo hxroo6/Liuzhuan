@@ -46,6 +46,9 @@ class ClipboardCaptureManagerImpl(
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
         val hint = detector.shouldCapture(event) ?: return
+        ClipboardMonitorCoordinator.setDiagnostic(
+            "检测到疑似复制 (${hint.confidence}) pkg=${event.packageName}"
+        )
         scope.launch {
             when (hint.confidence) {
                 CopyEventDetector.Confidence.HIGH -> {
@@ -76,10 +79,20 @@ class ClipboardCaptureManagerImpl(
             delay(step)
             waited += step
             // 策略 B：selection（优先，不依赖焦点）
-            tryCaptureSelection(event)?.let { return it }
+            tryCaptureSelection(event)?.let { ev ->
+                Log.d(TAG, "capture success source=${ev.source} len=${ev.text?.length} fp=${ev.fingerprint.take(8)}")
+                ClipboardMonitorCoordinator.setDiagnostic("捕获成功 len=${ev.text?.length} source=${ev.source}")
+                return ev
+            }
             // 策略 C：clipboard（前台/焦点时成功）
-            tryReadClipboard("after_copy_${waited}ms")?.let { return it }
+            tryReadClipboard("after_copy_${waited}ms")?.let { ev ->
+                Log.d(TAG, "capture success source=${ev.source} len=${ev.text?.length} fp=${ev.fingerprint.take(8)}")
+                ClipboardMonitorCoordinator.setDiagnostic("捕获成功 len=${ev.text?.length} source=${ev.source}")
+                return ev
+            }
         }
+        Log.d(TAG, "capture failed after ${waited}ms (selection/clipboard 均未读到)")
+        ClipboardMonitorCoordinator.setDiagnostic("捕获失败（selection/剪贴板均未读到，可能后台焦点限制）")
         return null
     }
 

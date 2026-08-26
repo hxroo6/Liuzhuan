@@ -20,13 +20,17 @@ object ClipboardEventDispatcher {
         if (text.length < 2) return
 
         // filter：后台自动发送开关（@Volatile，MainActivity 实时同步）
-        if (!LanHub.autoSendClipboard) return
+        if (!LanHub.autoSendClipboard) {
+            ClipboardMonitorCoordinator.setDiagnostic("已忽略（自动发送开关关闭）")
+            return
+        }
 
         val normalized = event.copy(text = text)
 
         // deduplicate
         if (!ClipboardMonitorCoordinator.deduplicator.shouldProcess(normalized)) {
             Log.d(TAG, "去重跳过 fp=${normalized.fingerprint.take(8)}")
+            ClipboardMonitorCoordinator.setDiagnostic("去重跳过（短时间重复）")
             return
         }
 
@@ -36,6 +40,7 @@ object ClipboardEventDispatcher {
             "source=${normalized.source} type=${normalized.type} len=${text.length} " +
                 "fp=${normalized.fingerprint.take(8)} pkg=${normalized.sourcePackage}"
         )
+        ClipboardMonitorCoordinator.setDiagnostic("dispatcher 已接受，进入发送管线")
 
         // action pipeline
         ClipboardMonitorCoordinator.pipeline.process(normalized)

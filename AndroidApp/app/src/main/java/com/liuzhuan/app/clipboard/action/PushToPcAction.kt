@@ -29,6 +29,9 @@ class PushToPcAction(
         } else {
             queue.enqueue(event)
             Log.d(TAG, "未连接，事件入队（队列长度=${queue.size()}）")
+            com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic(
+                "未连接，事件入队（队列=${queue.size()}）"
+            )
         }
     }
 
@@ -38,6 +41,9 @@ class PushToPcAction(
         Log.d(
             TAG,
             "source=${event.source} type=${event.type} len=${text.length} fp=${event.fingerprint.take(8)} ok=$ok"
+        )
+        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic(
+            if (ok) "已发送到电脑 len=${text.length}" else "发送失败（pushClipboard 返回 false）"
         )
     }
 

@@ -24,7 +24,7 @@ object CopyEventDetector {
     private val COPY_LABELS = listOf("复制", "拷贝", "copy")
 
     fun shouldCapture(event: AccessibilityEvent): Hint? {
-        return when (event.eventType) {
+        val hint = when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED ->
                 Hint(Confidence.HIGH, preferSelection = true)
 
@@ -38,7 +38,17 @@ object CopyEventDetector {
 
             else -> null
         }
+        if (hint != null) {
+            android.util.Log.d(
+                TAG,
+                "copy candidate type=0x${Integer.toHexString(event.eventType)} " +
+                    "pkg=${event.packageName} confidence=${hint.confidence}"
+            )
+        }
+        return hint
     }
+
+    private const val TAG = "CopyDetect"
 
     /** 点击目标是否疑似「复制」按钮（text / contentDescription / viewId 含复制关键词） */
     private fun looksLikeCopyAction(node: AccessibilityNodeInfo?): Boolean {

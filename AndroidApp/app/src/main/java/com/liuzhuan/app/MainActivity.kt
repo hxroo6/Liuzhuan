@@ -536,6 +536,8 @@ fun MainScreen(
 
                         // ===== 立即测试剪贴板监听 =====
                         var testResult by remember { mutableStateOf("") }
+                        val clipDiagnostic by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+                            .diagnostic.collectAsStateWithLifecycle()
                         OutlinedButton(
                             onClick = {
                                 // 写入测试文本（markLocal 防止真实推送到 PC），再前台读取验证捕获链路
@@ -558,6 +560,11 @@ fun MainScreen(
                         if (testResult.isNotEmpty()) {
                             Text(testResult, style = MaterialTheme.typography.bodySmall, color = Color(0xFF9E9E9E))
                         }
+                        Text(
+                            "链路诊断：$clipDiagnostic",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFFFFB74D)
+                        )
                     }
                 }
 
