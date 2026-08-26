@@ -37,13 +37,15 @@ class PushToPcAction(
 
     private fun send(client: LanClient, event: ClipboardEvent) {
         val text = event.text ?: return
+        val id = event.diagnosticId
+        Log.d(TAG, "[ACTION][$id] PushToPcAction.execute connected=${client.state is LanClient.State.Connected}")
         val ok = client.pushClipboard(text, event.sourcePackage ?: "android")
         Log.d(
             TAG,
-            "source=${event.source} type=${event.type} len=${text.length} fp=${event.fingerprint.take(8)} ok=$ok"
+            "[WS][$id] sent=$ok source=${event.source} type=${event.type} len=${text.length} fp=${event.fingerprint.take(8)}"
         )
         com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic(
-            if (ok) "已发送到电脑 len=${text.length}" else "发送失败（pushClipboard 返回 false）"
+            if (ok) "[$id] 已发送到电脑 len=${text.length}" else "[$id] 发送失败（pushClipboard 返回 false）"
         )
     }
 

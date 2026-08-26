@@ -13,6 +13,7 @@ import com.liuzhuan.app.LanHub
 object ClipboardEventDispatcher {
 
     fun dispatch(event: ClipboardEvent) {
+        val id = event.diagnosticId
         // normalize
         val text = event.text?.trim() ?: return
 
@@ -29,7 +30,7 @@ object ClipboardEventDispatcher {
 
         // deduplicate
         if (!ClipboardMonitorCoordinator.deduplicator.shouldProcess(normalized)) {
-            Log.d(TAG, "去重跳过 fp=${normalized.fingerprint.take(8)}")
+            Log.d(TAG, "[DISPATCH][$id] rejected reason=duplicate fp=${normalized.fingerprint.take(8)}")
             ClipboardMonitorCoordinator.setDiagnostic("去重跳过（短时间重复）")
             return
         }
@@ -37,10 +38,10 @@ object ClipboardEventDispatcher {
         // 敏感信息不打日志：只打 source/type/length/fingerprint/pkg
         Log.d(
             TAG,
-            "source=${normalized.source} type=${normalized.type} len=${text.length} " +
-                "fp=${normalized.fingerprint.take(8)} pkg=${normalized.sourcePackage}"
+            "[DISPATCH][$id] accepted source=${normalized.source} type=${normalized.type} " +
+                "len=${text.length} fp=${normalized.fingerprint.take(8)} pkg=${normalized.sourcePackage}"
         )
-        ClipboardMonitorCoordinator.setDiagnostic("dispatcher 已接受，进入发送管线")
+        ClipboardMonitorCoordinator.setDiagnostic("[$id] dispatcher 已接受，进入发送管线")
 
         // action pipeline
         ClipboardMonitorCoordinator.pipeline.process(normalized)

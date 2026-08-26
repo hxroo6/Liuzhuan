@@ -24,17 +24,17 @@ import kotlinx.coroutines.launch
  * 失败降级：读不到就结束本次捕获，继续监听下一次事件，绝不 crash / 无限重试 / 高频轮询。
  */
 interface ClipboardCaptureManager {
-    /** 无障碍事件入口：检测 + 短延迟捕获 + 分发 */
+    /** 无障碍事件入口：来源分类 + 检测 + 短延迟捕获 + 分发 */
     fun onAccessibilityEvent(event: AccessibilityEvent)
 
     /** 前台主动捕获入口（App 获得焦点时调用，读取剪贴板合法且成功率高） */
     fun captureOnForeground()
 
-    /** 疑似复制后：短延迟多尝试捕获 */
-    suspend fun tryCaptureAfterCopy(event: AccessibilityEvent): ClipboardEvent?
+    /** 疑似复制后：短延迟多尝试捕获（diagnosticId 用于端到端日志串联） */
+    suspend fun tryCaptureAfterCopy(event: AccessibilityEvent, diagnosticId: String): ClipboardEvent?
 
     /** 直接读剪贴板（best-effort，可能因焦点限制返回 null） */
-    suspend fun tryReadClipboard(reason: String): ClipboardEvent?
+    suspend fun tryReadClipboard(reason: String, diagnosticId: String = ""): ClipboardEvent?
 }
 
 class ClipboardCaptureManagerImpl(
@@ -44,30 +44,50 @@ class ClipboardCaptureManagerImpl(
 
     private val detector = CopyEventDetector
 
+    private val idCounter = java.util.concurrent.atomic.AtomicLong(0)
+    private fun nextId() = "COPY-${String.format("%06d", idCounter.incrementAndGet())}"
+
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
-        // 第一优先级：来源校验。自身 App 事件（接收页刷新/输入框/设置/测试按钮）
-        // 永不进入复制检测，从源头阻断「PC→Android→自身 UI 事件→误判复制→回推 PC」回环。
+        val category = AccessibilitySourcePolicy.classify(context, event)
+
+        // 第一优先级：来源过滤（自身 App / 来源未知 → 直接忽略）
         if (!AccessibilitySourcePolicy.shouldInspect(context, event)) {
             Log.d(TAG, "[DETECT] ignored reason=self_package/unknown pkg=${event.packageName}")
             return
         }
 
-        val hint = detector.shouldCapture(event) ?: return
-        ClipboardMonitorCoordinator.setDiagnostic(
-            "检测到疑似复制 (${hint.confidence}/${hint.reason}) pkg=${event.packageName}"
-        )
-        scope.launch {
-            when (hint.confidence) {
-                CopyEventDetector.Confidence.HIGH -> {
-                    val ev = tryCaptureAfterCopy(event)
-                    ev?.let { ClipboardEventDispatcher.dispatch(it) }
+        val candidate = detector.evaluate(event, category)
+
+        when (candidate.level) {
+            CopyEventDetector.Level.NONE -> {
+                // 弱信号 / 系统 UI 事件 → 静默忽略（不刷诊断，不触发 capture）
+                return
+            }
+
+            CopyEventDetector.Level.LOW -> {
+                // 弱信号（第三方 window_content_changed 等）：不单独触发 capture，
+                // 避免高频无意义读取；只在强信号出现时才走完整 capture。
+                return
+            }
+
+            CopyEventDetector.Level.HIGH -> {
+                val id = nextId()
+                val pkg = event.packageName
+                val cls = event.className
+                Log.d(
+                    TAG,
+                    "[ACCESS][$id] type=0x${Integer.toHexString(event.eventType)} pkg=$pkg class=$cls"
+                )
+                Log.d(TAG, "[DETECT][$id] candidate level=HIGH reason=${candidate.reason} pkg=$pkg")
+                ClipboardMonitorCoordinator.setDiagnostic("[$id] 复制候选(${candidate.reason}) pkg=$pkg")
+                scope.launch {
+                    val ev = tryCaptureAfterCopy(event, id)
+                    if (ev != null) {
+                        ClipboardEventDispatcher.dispatch(ev)
+                    } else {
+                        Log.d(TAG, "[CAPTURE][$id] failed（selection/剪贴板均未读到）")
+                    }
                 }
-                CopyEventDetector.Confidence.MEDIUM -> {
-                    // 窗口内容变化较频繁：仅做 selection 捕获，不读剪贴板，避免高频隐私读取
-                    val ev = tryCaptureSelection(event)
-                    ev?.let { ClipboardEventDispatcher.dispatch(it) }
-                }
-                else -> Unit
             }
         }
     }
@@ -79,31 +99,32 @@ class ClipboardCaptureManagerImpl(
     }
 
     /** 短延迟多尝试：80ms → 160ms → 260ms，给系统剪贴板极短的更新时间 */
-    override suspend fun tryCaptureAfterCopy(event: AccessibilityEvent): ClipboardEvent? {
+    override suspend fun tryCaptureAfterCopy(event: AccessibilityEvent, diagnosticId: String): ClipboardEvent? {
+        Log.d(TAG, "[CAPTURE][$diagnosticId] start")
         var waited = 0L
         val steps = longArrayOf(80L, 80L, 100L)
         for (step in steps) {
             delay(step)
             waited += step
             // 策略 B：selection（优先，不依赖焦点）
-            tryCaptureSelection(event)?.let { ev ->
-                Log.d(TAG, "capture success source=${ev.source} len=${ev.text?.length} fp=${ev.fingerprint.take(8)}")
-                ClipboardMonitorCoordinator.setDiagnostic("捕获成功 len=${ev.text?.length} source=${ev.source}")
+            tryCaptureSelection(event, diagnosticId)?.let { ev ->
+                Log.d(TAG, "[CAPTURE][$diagnosticId] success source=${ev.source} len=${ev.text?.length} fp=${ev.fingerprint.take(8)}")
+                ClipboardMonitorCoordinator.setDiagnostic("[$diagnosticId] 捕获成功 len=${ev.text?.length} source=${ev.source}")
                 return ev
             }
             // 策略 C：clipboard（前台/焦点时成功）
-            tryReadClipboard("after_copy_${waited}ms")?.let { ev ->
-                Log.d(TAG, "capture success source=${ev.source} len=${ev.text?.length} fp=${ev.fingerprint.take(8)}")
-                ClipboardMonitorCoordinator.setDiagnostic("捕获成功 len=${ev.text?.length} source=${ev.source}")
+            tryReadClipboard("after_copy_${waited}ms", diagnosticId)?.let { ev ->
+                Log.d(TAG, "[CAPTURE][$diagnosticId] success source=${ev.source} len=${ev.text?.length} fp=${ev.fingerprint.take(8)}")
+                ClipboardMonitorCoordinator.setDiagnostic("[$diagnosticId] 捕获成功 len=${ev.text?.length} source=${ev.source}")
                 return ev
             }
         }
-        Log.d(TAG, "capture failed after ${waited}ms (selection/clipboard 均未读到)")
-        ClipboardMonitorCoordinator.setDiagnostic("捕获失败（selection/剪贴板均未读到，可能后台焦点限制）")
+        Log.d(TAG, "[CAPTURE][$diagnosticId] failed（selection/剪贴板均未读到）")
+        ClipboardMonitorCoordinator.setDiagnostic("[$diagnosticId] 捕获失败（后台焦点限制或 selection 未暴露）")
         return null
     }
 
-    override suspend fun tryReadClipboard(reason: String): ClipboardEvent? {
+    override suspend fun tryReadClipboard(reason: String, diagnosticId: String): ClipboardEvent? {
         return try {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
                 ?: return null
@@ -114,7 +135,7 @@ class ClipboardCaptureManagerImpl(
             val text = item.coerceToText(context)?.toString()?.trim() ?: return null
             if (text.length < 2) return null
             val mimeTypes = extractMimeTypes(clip)
-            buildEvent(text, ClipboardCaptureSource.ACCESSIBILITY_CLIPBOARD, null, mimeTypes)
+            buildEvent(text, ClipboardCaptureSource.ACCESSIBILITY_CLIPBOARD, null, mimeTypes, diagnosticId)
         } catch (e: Exception) {
             // 焦点限制 / OEM 差异导致的读取失败：优雅降级
             Log.d(TAG, "readClipboard[$reason] 失败: ${e.javaClass.simpleName}")
@@ -123,7 +144,7 @@ class ClipboardCaptureManagerImpl(
     }
 
     /** 策略 B：从 AccessibilityNodeInfo 提取选中文本（不依赖剪贴板焦点） */
-    private fun tryCaptureSelection(event: AccessibilityEvent): ClipboardEvent? {
+    private fun tryCaptureSelection(event: AccessibilityEvent, diagnosticId: String): ClipboardEvent? {
         val node = event.source ?: return null
         try {
             val text = extractSelectedText(node, depth = 0) ?: return null
@@ -133,7 +154,8 @@ class ClipboardCaptureManagerImpl(
                 text,
                 ClipboardCaptureSource.ACCESSIBILITY_SELECTION,
                 pkg,
-                listOf("text/plain")
+                listOf("text/plain"),
+                diagnosticId
             )
         } catch (e: Exception) {
             return null
@@ -191,7 +213,8 @@ class ClipboardCaptureManagerImpl(
         text: String,
         source: ClipboardCaptureSource,
         sourcePackage: String?,
-        mimeTypes: List<String>
+        mimeTypes: List<String>,
+        diagnosticId: String = ""
     ): ClipboardEvent {
         val ts = System.currentTimeMillis()
         return ClipboardEvent(
@@ -201,7 +224,8 @@ class ClipboardCaptureManagerImpl(
             source = source,
             mimeTypes = mimeTypes,
             fingerprint = fingerprintOf(text, mimeTypes),
-            type = ClipboardContentType.TEXT
+            type = ClipboardContentType.TEXT,
+            diagnosticId = diagnosticId
         )
     }
 

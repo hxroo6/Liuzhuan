@@ -42,7 +42,8 @@ data class ClipboardEvent(
     val source: ClipboardCaptureSource,
     val mimeTypes: List<String>,
     val fingerprint: String,
-    val type: ClipboardContentType = ClipboardContentType.TEXT
+    val type: ClipboardContentType = ClipboardContentType.TEXT,
+    val diagnosticId: String = "" // 端到端链路 ID（COPY-xxxxxx），贯穿 capture→dispatch→action→ws
 )
 
 /**
