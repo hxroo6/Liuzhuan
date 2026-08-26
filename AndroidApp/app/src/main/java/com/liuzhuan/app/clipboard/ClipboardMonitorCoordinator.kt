@@ -39,6 +39,10 @@ object ClipboardMonitorCoordinator {
     private val _diagnostic = MutableStateFlow("等待复制事件…")
     val diagnostic: StateFlow<String> = _diagnostic.asStateFlow()
 
+    /** 诊断历史（最近几条，切前台后可回看后台发生了什么） */
+    private val _diagnosticHistory = MutableStateFlow<List<String>>(emptyList())
+    val diagnosticHistory: StateFlow<List<String>> = _diagnosticHistory.asStateFlow()
+
     lateinit var captureManager: ClipboardCaptureManager
         private set
 
@@ -47,6 +51,7 @@ object ClipboardMonitorCoordinator {
 
     fun setDiagnostic(msg: String) {
         _diagnostic.value = msg
+        _diagnosticHistory.value = (_diagnosticHistory.value + msg).takeLast(6)
         Log.d(TAG, msg)
     }
 

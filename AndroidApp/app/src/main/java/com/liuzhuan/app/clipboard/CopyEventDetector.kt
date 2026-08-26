@@ -18,7 +18,7 @@ import android.view.accessibility.AccessibilityNodeInfo
  */
 object CopyEventDetector {
 
-    enum class Level { NONE, LOW, HIGH }
+    enum class Level { NONE, LOW, MEDIUM, HIGH }
 
     data class Candidate(val level: Level, val reason: String, val preferSelection: Boolean)
 
@@ -49,10 +49,13 @@ object CopyEventDetector {
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> {
                 when (category) {
+                    // 第三方 App 的窗口内容变化（可能是复制菜单弹出）→ MEDIUM：
+                    // 触发轻量 selection 捕获（这是 M6 后台自动发送生效的关键路径，
+                    // M10 误降级为 LOW 导致微信复制时 capture 不执行）
                     AccessibilitySourcePolicy.AppCategory.THIRD_PARTY ->
-                        Candidate(Level.LOW, "window_content_changed", preferSelection = true)
+                        Candidate(Level.MEDIUM, "window_content_changed", preferSelection = true)
                     else ->
-                        // SystemUI / Launcher 的高频弱事件 → 明确忽略，不再误判为复制
+                        // SystemUI / Launcher 的高频弱事件 → 明确忽略（保留假阳性过滤）
                         Candidate(Level.NONE, "weak_system_ui_event", preferSelection = false)
                 }
             }

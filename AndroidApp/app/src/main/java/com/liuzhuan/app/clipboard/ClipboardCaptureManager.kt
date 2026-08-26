@@ -65,9 +65,29 @@ class ClipboardCaptureManagerImpl(
             }
 
             CopyEventDetector.Level.LOW -> {
-                // 弱信号（第三方 window_content_changed 等）：不单独触发 capture，
-                // 避免高频无意义读取；只在强信号出现时才走完整 capture。
+                // 弱信号（系统 UI selection 等）：不单独触发 capture，避免高频无意义读取。
                 return
+            }
+
+            CopyEventDetector.Level.MEDIUM -> {
+                // 第三方窗口内容变化（可能是复制菜单弹出）→ 轻量 selection 捕获（不读剪贴板）。
+                // 这是 M6 后台自动发送生效的关键路径：微信等 App 复制时只产生
+                // WINDOW_CONTENT_CHANGED（不暴露 TEXT_SELECTION_CHANGED），
+                // 通过 selection 捕获能在后台拿到选中文本。
+                val id = nextId()
+                val pkg = event.packageName
+                Log.d(TAG, "[DETECT][$id] candidate level=MEDIUM reason=${candidate.reason} pkg=$pkg")
+                ClipboardMonitorCoordinator.setDiagnostic("[$id] 复制候选(${candidate.reason}) pkg=$pkg")
+                scope.launch {
+                    val ev = tryCaptureSelection(event, id)
+                    if (ev != null) {
+                        Log.d(TAG, "[CAPTURE][$id] success source=${ev.source} len=${ev.text?.length}")
+                        ClipboardMonitorCoordinator.setDiagnostic("[$id] 捕获成功 len=${ev.text?.length} source=${ev.source}")
+                        ClipboardEventDispatcher.dispatch(ev)
+                    } else {
+                        Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection）")
+                    }
+                }
             }
 
             CopyEventDetector.Level.HIGH -> {

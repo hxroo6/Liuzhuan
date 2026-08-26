@@ -542,6 +542,8 @@ fun MainScreen(
                         var testResult by remember { mutableStateOf("") }
                         val clipDiagnostic by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
                             .diagnostic.collectAsStateWithLifecycle()
+                        val diagnosticHistory by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+                            .diagnosticHistory.collectAsStateWithLifecycle()
                         OutlinedButton(
                             onClick = {
                                 // 写入测试文本（markLocal 防止真实推送到 PC），再前台读取验证捕获链路
@@ -569,6 +571,20 @@ fun MainScreen(
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFFFB74D)
                         )
+                        if (diagnosticHistory.isNotEmpty()) {
+                            Text(
+                                "最近事件：",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF757575)
+                            )
+                            diagnosticHistory.reversed().forEach { line ->
+                                Text(
+                                    "· $line",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF9E9E9E)
+                                )
+                            }
+                        }
                     }
                 }
 
