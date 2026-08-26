@@ -18,7 +18,7 @@ object CopyEventDetector {
 
     enum class Confidence { HIGH, MEDIUM, NONE }
 
-    data class Hint(val confidence: Confidence, val preferSelection: Boolean)
+    data class Hint(val confidence: Confidence, val preferSelection: Boolean, val reason: String)
 
     /** 复制按钮的常见文案（点击目标命中即视为 HIGH） */
     private val COPY_LABELS = listOf("复制", "拷贝", "copy")
@@ -26,23 +26,24 @@ object CopyEventDetector {
     fun shouldCapture(event: AccessibilityEvent): Hint? {
         val hint = when (event.eventType) {
             AccessibilityEvent.TYPE_VIEW_TEXT_SELECTION_CHANGED ->
-                Hint(Confidence.HIGH, preferSelection = true)
+                Hint(Confidence.HIGH, preferSelection = true, reason = "text_selection_changed")
 
             AccessibilityEvent.TYPE_VIEW_CLICKED ->
                 if (looksLikeCopyAction(event.source))
-                    Hint(Confidence.HIGH, preferSelection = true)
+                    Hint(Confidence.HIGH, preferSelection = true, reason = "copy_action_clicked")
                 else null
 
             AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED ->
-                Hint(Confidence.MEDIUM, preferSelection = true)
+                Hint(Confidence.MEDIUM, preferSelection = true, reason = "window_content_changed")
 
             else -> null
         }
         if (hint != null) {
             android.util.Log.d(
                 TAG,
-                "copy candidate type=0x${Integer.toHexString(event.eventType)} " +
-                    "pkg=${event.packageName} confidence=${hint.confidence}"
+                "candidate level=${hint.confidence} reason=${hint.reason} " +
+                    "type=0x${Integer.toHexString(event.eventType)} pkg=${event.packageName} " +
+                    "class=${event.className}"
             )
         }
         return hint

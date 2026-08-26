@@ -45,9 +45,16 @@ class ClipboardCaptureManagerImpl(
     private val detector = CopyEventDetector
 
     override fun onAccessibilityEvent(event: AccessibilityEvent) {
+        // 第一优先级：来源校验。自身 App 事件（接收页刷新/输入框/设置/测试按钮）
+        // 永不进入复制检测，从源头阻断「PC→Android→自身 UI 事件→误判复制→回推 PC」回环。
+        if (!AccessibilitySourcePolicy.shouldInspect(context, event)) {
+            Log.d(TAG, "[DETECT] ignored reason=self_package/unknown pkg=${event.packageName}")
+            return
+        }
+
         val hint = detector.shouldCapture(event) ?: return
         ClipboardMonitorCoordinator.setDiagnostic(
-            "检测到疑似复制 (${hint.confidence}) pkg=${event.packageName}"
+            "检测到疑似复制 (${hint.confidence}/${hint.reason}) pkg=${event.packageName}"
         )
         scope.launch {
             when (hint.confidence) {
