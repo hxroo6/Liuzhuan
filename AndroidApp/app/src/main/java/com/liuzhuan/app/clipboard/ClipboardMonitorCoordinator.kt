@@ -115,6 +115,12 @@ object ClipboardMonitorCoordinator {
     /** 标记本 App 本地写入剪贴板的内容（循环回写防护：PC→手机复制后不再回推 PC） */
     fun markLocalText(text: String) {
         deduplicator.markLocal(text)
+        // 内容级已知状态同步：本 App 写入剪贴板后，读取层不再把该内容当「新内容」
+        // （防 30s 已知窗口外的 MEDIUM 兜底误发，与 dedup 的 markLocal 双层配合）。
+        // 防御：ProcessTextActivity 可能冷启动调用（无障碍服务未跑 → 未装配），此时跳过
+        if (this::captureManager.isInitialized) {
+            captureManager.updateLastKnownText(text)
+        }
     }
 
     /** WS 连接成功 → 补发断线期间积压的事件（FIFO） */
