@@ -172,6 +172,25 @@ class MainActivity : ComponentActivity() {
         moveTaskToBack(true)
     }
 
+    /**
+     * 窗口焦点建立 → 立即重读剪贴板（「切回流转秒发」的关键时机）。
+     *
+     * 为什么不在 onResume 里做（已有）：ColorOS 实测（M15 用户测试 + 图四诊断）
+     * onResume 时窗口焦点尚未建立，系统焦点检查仍拒绝剪贴板读取，
+     * 前台重读失败，要等界面事件（如截屏）触发的兜底才能读到——表现为
+     * 「切回流转好一会才发送」。onWindowFocusChanged(true) 是焦点确切就绪的信号。
+     */
+    override fun onWindowFocusChanged(hasFocus: Boolean) {
+        super.onWindowFocusChanged(hasFocus)
+        if (hasFocus) {
+            try {
+                com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+                    .captureManager.captureOnForeground()
+            } catch (_: Exception) {
+            }
+        }
+    }
+
     private fun handleShareIntent(intent: Intent) {
         val text = intent.getStringExtra(Intent.EXTRA_TEXT)
         val stream = if (android.os.Build.VERSION.SDK_INT >= 33)
