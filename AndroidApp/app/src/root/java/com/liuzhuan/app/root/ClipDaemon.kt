@@ -31,15 +31,23 @@ class ClipDaemon {
     companion object {
         @JvmStatic
         fun main(args: Array<String>) {
+            android.util.Log.d("ClipDaemon", "main entered uid=" + android.os.Process.myUid())
+            // 关键：必须先 prepareMainLooper，否则 systemMain() 内部 thread.attach 抛
+            // InvocationTargetException（Android 14+ 实测）
+            android.os.Looper.prepareMainLooper()
+            android.util.Log.d("ClipDaemon", "looper prepared")
             val ctx = try {
                 val atClass = Class.forName("android.app.ActivityThread")
                 val at = atClass.getMethod("systemMain").invoke(null)
                 atClass.getMethod("getSystemContext").invoke(at) as android.content.Context
             } catch (t: Throwable) {
-                println("LZERR:FATAL:ctx=${t.javaClass.simpleName}")
+                val cause = (t as? java.lang.reflect.InvocationTargetException)?.cause
+                android.util.Log.e("ClipDaemon", "systemMain FAILED " + t.javaClass.simpleName + ":" + cause?.javaClass?.simpleName + ":" + cause?.message)
+                println("LZERR:FATAL:ctx=${t.javaClass.simpleName}:${cause?.javaClass?.simpleName}:${cause?.message}")
                 System.out.flush()
                 return
             }
+            android.util.Log.d("ClipDaemon", "systemContext ok")
             val cm = ctx.getSystemService(android.content.ClipboardManager::class.java)
             if (cm == null) {
                 println("LZERR:FATAL:noclipboard")
@@ -47,8 +55,17 @@ class ClipDaemon {
                 return
             }
 
-            // 建立基线：启动时读一次（不输出），避免把历史旧内容当「新复制」误发
-            var last: String? = readClipText(cm, ctx)
+            // 建立基线：启动时读一次（不输出），避免把历史旧内容当「新复制」误发。
+            // 加 try-catch：ColorOS 可能对 uid0 也做 package 检查，读失败要显式上报而非崩溃
+            var last: String? = try {
+                readClipText(cm, ctx)
+            } catch (t: Throwable) {
+                android.util.Log.e("ClipDaemon", "init read FAILED uid=" + android.os.Process.myUid() + " err=" + t.javaClass.simpleName + ":" + t.message)
+                println("LZERR:init:read=${t.javaClass.simpleName}:${t.message}")
+                System.out.flush()
+                null
+            }
+            android.util.Log.d("ClipDaemon", "init read OK uid=" + android.os.Process.myUid() + " len=" + (last?.length ?: 0))
             println("LZREADY")
             System.out.flush()
 

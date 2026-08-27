@@ -183,8 +183,8 @@ class RootMonitorImpl(private val context: Context) {
             }
             val script = "pkill -f lzclipd 2>/dev/null; " +
                 "CLASSPATH=${context.applicationInfo.sourceDir} " +
-                "app_process --nice-name=lzclipd /system/bin com.liuzhuan.app.root.ClipDaemon"
-            log("启动守护：$su -c app_process --nice-name=lzclipd /system/bin ClipDaemon")
+                "app_process /system/bin --nice-name=lzclipd com.liuzhuan.app.root.ClipDaemon > /data/local/tmp/lzclipd.out 2>&1"
+            log("启动守护：$su -c app_process /system/bin --nice-name=lzclipd ClipDaemon")
             Runtime.getRuntime().exec(arrayOf(su, "-c", script))
         } catch (e: Exception) {
             log("守护启动失败 ${e.javaClass.simpleName}")
@@ -229,6 +229,10 @@ class RootMonitorImpl(private val context: Context) {
                     line.startsWith("LZERR") -> {
                         // 格式 LZERR:<id>:read=<异常>
                         log("root 读被拒（${line}）——ROM 可能未豁免 root 读取")
+                    }
+                    else -> {
+                        // app_process 启动失败/其他输出（脚本已 2>&1 合并 stderr）→ 全部 log 出来诊断
+                        if (line.isNotBlank()) log("守护输出: ${line.take(200)}")
                     }
                 }
             }
