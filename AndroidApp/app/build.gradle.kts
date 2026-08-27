@@ -93,4 +93,7 @@ dependencies {
     implementation(libs.kotlinx.coroutines.android)
     implementation(libs.androidx.datastore.preferences)
     implementation(libs.zxing.android.embedded)
+
+    // Xposed API stub（compileOnly：仅编译期引用，运行时由 LSPosed 框架注入真实实现，不打进 APK）
+    compileOnly(files("libs/xposed-api-stub.jar"))
 }
