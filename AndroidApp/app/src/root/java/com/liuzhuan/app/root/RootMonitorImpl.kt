@@ -183,8 +183,8 @@ class RootMonitorImpl(private val context: Context) {
             }
             val script = "pkill -f lzclipd 2>/dev/null; " +
                 "CLASSPATH=${context.applicationInfo.sourceDir} " +
-                "app_process /system/bin --nice-name=lzclipd com.liuzhuan.app.root.ClipDaemon"
-            log("启动守护：$su -c app_process --nice-name=lzclipd")
+                "app_process --nice-name=lzclipd /system/bin com.liuzhuan.app.root.ClipDaemon"
+            log("启动守护：$su -c app_process --nice-name=lzclipd /system/bin ClipDaemon")
             Runtime.getRuntime().exec(arrayOf(su, "-c", script))
         } catch (e: Exception) {
             log("守护启动失败 ${e.javaClass.simpleName}")
