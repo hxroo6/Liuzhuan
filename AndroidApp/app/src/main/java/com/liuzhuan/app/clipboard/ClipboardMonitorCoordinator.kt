@@ -51,7 +51,9 @@ object ClipboardMonitorCoordinator {
 
     fun setDiagnostic(msg: String) {
         _diagnostic.value = msg
-        _diagnosticHistory.value = (_diagnosticHistory.value + msg).takeLast(6)
+        // 12 条：一次复制操作的完整链路（候选→兜底读取→原因→发送）约占 4~5 条，
+        // 6 条会被冲掉看不到结果（M14 实测教训）
+        _diagnosticHistory.value = (_diagnosticHistory.value + msg).takeLast(12)
         Log.d(TAG, msg)
     }
 

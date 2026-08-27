@@ -8,6 +8,7 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -69,9 +70,8 @@ class ClipboardCaptureManagerImpl(
     @Volatile
     private var lastKnownClipAt = 0L
 
-    /** MEDIUM 剪贴板兜底读取的节流时间戳（WCC 事件高频，最小间隔内只允许一轮兜底） */
-    @Volatile
-    private var lastMediumFallbackAt = 0L
+    /** 待执行的兜底任务（debounce：连续 MEDIUM 事件只保留最后一轮） */
+    private var fallbackJob: Job? = null
 
     override fun updateLastKnownText(text: String) {
         lastKnownClipText = text
@@ -116,10 +116,10 @@ class ClipboardCaptureManagerImpl(
                         ClipboardMonitorCoordinator.setDiagnostic("[$id] 捕获成功 len=${ev.text?.length} source=${ev.source}")
                         ClipboardEventDispatcher.dispatch(ev)
                     } else {
-                        Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），尝试剪贴板兜底")
+                        Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底")
                         // 微信等 App 复制只产生 WINDOW_CONTENT_CHANGED 且不暴露 selection，
                         // selection 捕获必然失败——剪贴板兜底是后台自动发送的最后一条路
-                        mediumClipboardFallback(id)
+                        scheduleMediumFallback(id)
                     }
                 }
             }
@@ -160,46 +160,43 @@ class ClipboardCaptureManagerImpl(
     }
 
     /**
-     * MEDIUM 剪贴板兜底 —— 事件驱动的单轮短延迟读取（非轮询，无定时器）。
+     * MEDIUM 剪贴板兜底 —— debounce 模式的事件驱动读取（非轮询，无定时器）。
      *
-     * 背景：微信等 App 复制时只产生 WINDOW_CONTENT_CHANGED（MEDIUM）且不暴露 selection，
-     * selection 捕获必然失败，剪贴板是后台拿到内容的最后一条路。
-     * 历史实测（GitHub 轮询版在一加 ColorOS 上后台读剪贴板成功）表明 OEM 对
-     * 无障碍服务读取的限制可能比 AOSP 宽松：读得到 → 恢复后台自动发送；
-     * 读不到（返回 null）→ 行为与不加兜底完全一致，零副作用。
+     * M14 教训：WCC 事件串「长按→菜单弹出→点复制→菜单关闭」在 1~2 秒内连续到达，
+     * 按事件立即读取既高频又常读到旧值（复制尚未完成），固定节流还会把「复制完成」
+     * 那个事件拦掉（事件流随后安静，再无补读机会）。
      *
-     * 防误发三重保险：
-     * 1. 节流（FALLBACK_MIN_INTERVAL_MS）：WCC 高频，窗口内只允许一轮兜底读取；
-     * 2. 内容级已知比对（tryReadClipboard 内 checkKnown）：读到旧剪贴板内容不产生事件；
-     * 3. Dispatcher 指纹去重（原有）：短时间内同指纹拦截 + markLocal 回环防护。
+     * debounce：每个 MEDIUM 事件重置计时，等事件流安静 FALLBACK_DEBOUNCE_MS 后读一次
+     * ——天然合并整串事件（读取频率被事件流间隔限制），且读取时机在「复制已完成」之后。
+     *
+     * 历史实测（GitHub 轮询版在一加 ColorOS 上后台读剪贴板成功）表明 OEM 对无障碍服务
+     * 读取的限制可能比 AOSP 宽松：读得到 → 恢复后台自动发送；
+     * 读不到 → 行为与不加兜底完全一致，零副作用。
      */
-    private suspend fun mediumClipboardFallback(diagnosticId: String) {
-        val now = System.currentTimeMillis()
-        if (now - lastMediumFallbackAt < FALLBACK_MIN_INTERVAL_MS) {
-            Log.d(TAG, "[CAPTURE][$diagnosticId] medium_fallback throttled（近期已尝试）")
-            return
-        }
-        lastMediumFallbackAt = now
-
-        var waited = 0L
-        val steps = longArrayOf(80L, 80L, 100L)
-        for (step in steps) {
-            delay(step)
-            waited += step
-            val ev = tryReadClipboard("medium_fallback_${waited}ms", diagnosticId)
-            if (ev != null) {
-                Log.d(
-                    TAG,
-                    "[CAPTURE][$diagnosticId] medium_fallback 命中（剪贴板新内容 len=${ev.text?.length}）"
-                )
-                ClipboardMonitorCoordinator.setDiagnostic(
-                    "[$diagnosticId] 剪贴板兜底命中 len=${ev.text?.length}（后台自动发送恢复）"
-                )
-                ClipboardEventDispatcher.dispatch(ev)
-                return
+    private fun scheduleMediumFallback(diagnosticId: String) {
+        fallbackJob?.cancel()
+        fallbackJob = scope.launch {
+            delay(FALLBACK_DEBOUNCE_MS)
+            Log.d(TAG, "[CAPTURE][$diagnosticId] medium_fallback start（debounce 后读取）")
+            ClipboardMonitorCoordinator.setDiagnostic("[$diagnosticId] 兜底读取剪贴板中…")
+            repeat(2) { attempt ->
+                if (attempt > 0) delay(200)
+                val ev = tryReadClipboard("medium_fallback_${attempt + 1}", diagnosticId)
+                if (ev != null) {
+                    Log.d(
+                        TAG,
+                        "[CAPTURE][$diagnosticId] medium_fallback 命中（剪贴板新内容 len=${ev.text?.length}）"
+                    )
+                    ClipboardMonitorCoordinator.setDiagnostic(
+                        "[$diagnosticId] 剪贴板兜底命中 len=${ev.text?.length}"
+                    )
+                    ClipboardEventDispatcher.dispatch(ev)
+                    return@launch
+                }
             }
+            Log.d(TAG, "[CAPTURE][$diagnosticId] medium_fallback 未命中（原因见上一条诊断）")
+            ClipboardMonitorCoordinator.setDiagnostic("[$diagnosticId] 兜底未读到新内容（原因见上一条）")
         }
-        Log.d(TAG, "[CAPTURE][$diagnosticId] medium_fallback 未读到（无新内容或被系统焦点限制拒绝）")
     }
 
     /** 短延迟多尝试：80ms → 160ms → 260ms，给系统剪贴板极短的更新时间 */
@@ -233,11 +230,22 @@ class ClipboardCaptureManagerImpl(
         diagnosticId: String,
         checkKnown: Boolean
     ): ClipboardEvent? {
+        // 失败原因上 UI 诊断（仅 diagnosticId 非空的调用：兜底/HIGH 路径；
+        // 前台重读与手动测试按钮传空 id，各自已有结果展示，避免重复刷屏）
+        fun diag(msg: String) {
+            if (diagnosticId.isNotEmpty()) {
+                ClipboardMonitorCoordinator.setDiagnostic("[$diagnosticId] $msg")
+            }
+        }
         return try {
             val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
-                ?: return null
-            if (!cm.hasPrimaryClip()) return null
-            val clip = cm.primaryClip ?: return null
+                ?: run { diag("剪贴板服务不可用"); return null }
+            if (!cm.hasPrimaryClip()) {
+                // 后台焦点限制的典型表现：系统对非焦点 App 直接不提供剪贴板
+                diag("系统未提供剪贴板（后台读取被拒或为空）")
+                return null
+            }
+            val clip = cm.primaryClip ?: run { diag("剪贴板内容为空"); return null }
             if (clip.itemCount == 0) return null
             val item = clip.getItemAt(0) ?: return null
             val text = item.coerceToText(context)?.toString()?.trim() ?: return null
@@ -247,6 +255,8 @@ class ClipboardCaptureManagerImpl(
             if (checkKnown && text == lastKnownClipText) {
                 val age = System.currentTimeMillis() - lastKnownClipAt
                 if (age < KNOWN_STALE_WINDOW_MS) {
+                    // 注：能走到这里说明剪贴板读取本身成功（未被后台限制拒绝）
+                    diag("读到旧内容（${age / 1000}s 前已处理过相同内容，跳过）")
                     Log.d(TAG, "readClipboard[$reason] 已知旧内容，跳过（${age}ms 内重复）")
                     return null
                 }
@@ -257,6 +267,7 @@ class ClipboardCaptureManagerImpl(
             buildEvent(text, ClipboardCaptureSource.ACCESSIBILITY_CLIPBOARD, null, mimeTypes, diagnosticId)
         } catch (e: Exception) {
             // 焦点限制 / OEM 差异导致的读取失败：优雅降级
+            diag("读取异常 ${e.javaClass.simpleName}（可能是后台限制的表现）")
             Log.d(TAG, "readClipboard[$reason] 失败: ${e.javaClass.simpleName}")
             null
         }
@@ -351,8 +362,9 @@ class ClipboardCaptureManagerImpl(
     private companion object {
         const val TAG = "ClipCapture"
 
-        /** MEDIUM 剪贴板兜底的最小尝试间隔（WCC 事件高频，控制读取频率） */
-        const val FALLBACK_MIN_INTERVAL_MS = 1_000L
+        /** MEDIUM 剪贴板兜底的 debounce 安静期：WCC 事件流停止该时长后才执行读取
+         *  （合并「长按→菜单→复制」整串事件，读取时机落在复制完成之后） */
+        const val FALLBACK_DEBOUNCE_MS = 500L
 
         /** 内容级已知比对的生效窗口：窗口内同内容不重复发，超窗后允许（重复复制语义） */
         const val KNOWN_STALE_WINDOW_MS = 30_000L
