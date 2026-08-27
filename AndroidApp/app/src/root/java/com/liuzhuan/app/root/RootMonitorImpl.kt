@@ -66,14 +66,15 @@ class RootMonitorImpl(private val context: Context) {
         }
     }
 
-    /** 主动触发 su 授权（发送页「获取 Root 权限」按钮；首次弹 Magisk 授权框） */
+    /** 主动触发 su 授权（发送页「获取 Root 权限」按钮；force 强制重探，首次弹授权框） */
     fun requestPermission() {
         scope.launch {
-            val ok = ensureRoot()
+            log("手动触发 root 权限请求…")
+            val ok = ensureRoot(force = true)
             log(
                 when (ok) {
-                    true -> "root 已授权（uid 0 可用）"
-                    false -> "root 未授权 / 被拒 / 设备未 root"
+                    true -> "root 已授权（uid 0 可用），守护即将自动拉起"
+                    false -> "root 未授权 / 被拒，详见上一条「探测失败」日志"
                     null -> "root 检测中（等待用户授权）"
                 }
             )
@@ -115,32 +116,49 @@ class RootMonitorImpl(private val context: Context) {
         }
     }
 
-    /** su 探针：能以 uid 0 执行 id 即视为可用（首次会弹 Magisk 授权框，10s 超时视为拒绝） */
-    private fun ensureRoot(): Boolean? {
-        rootOk?.let { return it }
+    /**
+     * su 探针：能以 uid 0 执行 id 即视为可用（首次弹授权框，10s 超时视为拒绝）。
+     *
+     * 关键：只有「成功(true)」才缓存；失败不缓存 → supervise 与手动按钮都能重试。
+     * （M19 首版曾把 false 也缓存，导致「KernelSU 里授权后点按钮仍 no-op」——重蹈教训）
+     * force=true 时绕过缓存强制重探（发送页「获取 Root 权限」按钮用）。
+     * stderr 一并读取：KernelSU/Magisk 拒绝时会输出具体原因，用于诊断。
+     */
+    private fun ensureRoot(force: Boolean = false): Boolean? {
+        if (!force) rootOk?.let { return it }
         log("探测 root 权限（su -c id -u）…")
-        rootOk = try {
+        val result = try {
             val p = Runtime.getRuntime().exec(arrayOf("su", "-c", "id -u"))
-            // 后台线程读 stdout（避免输出缓冲满导致 waitFor 死锁）；主线程 waitFor 带超时
+            // 后台线程读 stdout/stderr（避免输出缓冲满导致 waitFor 死锁）；主线程 waitFor 带超时
             val outFuture = java.util.concurrent.CompletableFuture.supplyAsync {
-                try {
-                    p.inputStream.bufferedReader().use { it.readText().trim() }
-                } catch (_: Exception) {
-                    ""
-                }
+                try { p.inputStream.bufferedReader().use { it.readText().trim() } } catch (_: Exception) { "" }
+            }
+            val errFuture = java.util.concurrent.CompletableFuture.supplyAsync {
+                try { p.errorStream.bufferedReader().use { it.readText().trim() } } catch (_: Exception) { "" }
             }
             val finished = p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
             if (!finished) {
                 p.destroyForcibly()
-                log("root 探测超时（10s 未响应，可能授权框未确认）")
+                log("root 探测超时（10s 无响应，su 可能卡住或授权框未确认）")
                 false
             } else {
-                outFuture.get(2, java.util.concurrent.TimeUnit.SECONDS) == "0"
+                val exit = p.exitValue()
+                val out = outFuture.get(2, java.util.concurrent.TimeUnit.SECONDS)
+                val err = errFuture.get(2, java.util.concurrent.TimeUnit.SECONDS)
+                val ok = exit == 0 && out == "0"
+                if (ok) {
+                    log("root 探测成功（uid=0）")
+                } else {
+                    log("root 探测失败 exit=$exit stdout=\"$out\" stderr=\"${err.take(120)}\"")
+                }
+                ok
             }
-        } catch (_: Exception) {
+        } catch (e: Exception) {
+            log("root 探测异常 ${e.javaClass.simpleName}: ${e.message}")
             false
         }
-        return rootOk
+        if (result) rootOk = true // 仅成功才缓存
+        return result
     }
 
     private fun spawnDaemon(): Process? {
