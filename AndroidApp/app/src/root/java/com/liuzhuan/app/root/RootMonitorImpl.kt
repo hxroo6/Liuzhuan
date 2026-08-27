@@ -39,6 +39,10 @@ class RootMonitorImpl(private val context: Context) {
     private var rootOk: Boolean? = null
     private var proc: Process? = null
 
+    /** 成功探测到的 su 绝对路径（spawnDaemon 复用，避免重复探测） */
+    @Volatile
+    private var suPath: String? = null
+
     @Volatile
     private var daemonReady = false
 
@@ -119,21 +123,30 @@ class RootMonitorImpl(private val context: Context) {
     /**
      * su 探针：能以 uid 0 执行 id 即视为可用（首次弹授权框，10s 超时视为拒绝）。
      *
-     * 关键：只有「成功(true)」才缓存；失败不缓存 → supervise 与手动按钮都能重试。
-     * （M19 首版曾把 false 也缓存，导致「KernelSU 里授权后点按钮仍 no-op」——重蹈教训）
-     * force=true 时绕过缓存强制重探（发送页「获取 Root 权限」按钮用）。
-     * stderr 一并读取：KernelSU/Magisk 拒绝时会输出具体原因，用于诊断。
+     * 关键修正（KernelSU）：**不依赖 File.exists() 探测**。KernelSU 的 sucompat 是内核
+     * 对 /system/bin/su 的 execve 拦截（stat 探测可能不被拦截 → 误判「找不到 su」），
+     * 所以必须直接尝试执行每个候选路径，能返回 uid=0 的就是可用 su。
+     * 只有「成功(true)」才缓存；失败不缓存 → supervise 与手动按钮都能重试。
      */
     private fun ensureRoot(force: Boolean = false): Boolean? {
         if (!force) rootOk?.let { return it }
-        val suPath = findSu()
-        if (suPath == null) {
-            log("未找到 su 二进制（已试 KernelSU /data/adb/ksu/bin/su 及 Magisk /system/bin/su 等路径）")
-            return false
+        log("探测 root 权限…")
+        for (candidate in SU_CANDIDATES) {
+            if (tryExecSu(candidate)) {
+                rootOk = true
+                suPath = candidate
+                log("root 探测成功（uid=0，su=$candidate）")
+                return true
+            }
         }
-        log("探测 root 权限（$suPath -c id -u）…")
-        val result = try {
-            val p = Runtime.getRuntime().exec(arrayOf(suPath, "-c", "id -u"))
+        log("所有 su 路径均不可用（未授权或 su 不存在）")
+        return false
+    }
+
+    /** 直接尝试以 candidate 执行 `id -u`，返回是否拿到 uid=0（不先 File.exists 探测） */
+    private fun tryExecSu(candidate: String): Boolean {
+        return try {
+            val p = Runtime.getRuntime().exec(arrayOf(candidate, "-c", "id -u"))
             // 后台线程读 stdout/stderr（避免输出缓冲满导致 waitFor 死锁）；主线程 waitFor 带超时
             val outFuture = java.util.concurrent.CompletableFuture.supplyAsync {
                 try { p.inputStream.bufferedReader().use { it.readText().trim() } } catch (_: Exception) { "" }
@@ -144,54 +157,35 @@ class RootMonitorImpl(private val context: Context) {
             val finished = p.waitFor(10, java.util.concurrent.TimeUnit.SECONDS)
             if (!finished) {
                 p.destroyForcibly()
-                log("root 探测超时（10s 无响应，su 可能卡住或授权框未确认）")
+                log("$candidate 超时（可能授权框未确认）")
                 false
             } else {
                 val exit = p.exitValue()
                 val out = outFuture.get(2, java.util.concurrent.TimeUnit.SECONDS)
                 val err = errFuture.get(2, java.util.concurrent.TimeUnit.SECONDS)
                 val ok = exit == 0 && out == "0"
-                if (ok) {
-                    log("root 探测成功（uid=0，su=$suPath）")
-                } else {
-                    log("root 探测失败 su=$suPath exit=$exit stdout=\"$out\" stderr=\"${err.take(120)}\"")
+                if (!ok) {
+                    log("$candidate 执行失败 exit=$exit stderr=\"${err.take(100)}\"")
                 }
                 ok
             }
-        } catch (e: Exception) {
-            log("root 探测异常 ${e.javaClass.simpleName}: ${e.message}")
+        } catch (_: Exception) {
+            // IOException（No such file / Permission denied）= 该路径无 su，静默试下一个
             false
         }
-        if (result) rootOk = true // 仅成功才缓存
-        return result
-    }
-
-    /**
-     * 探测 su 绝对路径。KernelSU/Magisk 的 su 不在 App 默认 PATH（`Runtime.exec("su")` 会报
-     * "No such file or directory"），必须用绝对路径：KernelSU 官方路径 /data/adb/ksu/bin/su，
-     * Magisk 挂 /system/bin/su（老版 /sbin/su、/system/xbin/su）。
-     */
-    private fun findSu(): String? {
-        for (c in SU_CANDIDATES) {
-            try {
-                if (java.io.File(c).exists()) return c
-            } catch (_: Exception) {
-            }
-        }
-        return null
     }
 
     private fun spawnDaemon(): Process? {
         return try {
-            val suPath = findSu() ?: run {
-                log("未找到 su，无法启动守护")
+            val su = suPath ?: run {
+                log("尚未确定 su 路径，无法启动守护")
                 return null
             }
             val script = "pkill -f lzclipd 2>/dev/null; " +
                 "CLASSPATH=${context.applicationInfo.sourceDir} " +
                 "app_process /system/bin --nice-name=lzclipd com.liuzhuan.app.root.ClipDaemon"
-            log("启动守护：$suPath -c app_process --nice-name=lzclipd")
-            Runtime.getRuntime().exec(arrayOf(suPath, "-c", script))
+            log("启动守护：$su -c app_process --nice-name=lzclipd")
+            Runtime.getRuntime().exec(arrayOf(su, "-c", script))
         } catch (e: Exception) {
             log("守护启动失败 ${e.javaClass.simpleName}")
             null
@@ -290,12 +284,12 @@ class RootMonitorImpl(private val context: Context) {
     private companion object {
         const val TAG = "ClipRoot"
 
-        /** su 候选绝对路径（App 默认 PATH 不含 KernelSU 路径，必须逐个探测） */
+        /** su 候选绝对路径（App 默认 PATH 不含 KernelSU 路径，必须逐个直接尝试执行） */
         private val SU_CANDIDATES = arrayOf(
-            "/data/adb/ksu/bin/su",  // KernelSU 官方路径
-            "/system/bin/su",        // Magisk / 系统 su
+            "/system/bin/su",        // KernelSU sucompat 内核拦截点 + Magisk
             "/system/xbin/su",       // 老 root
             "/sbin/su",              // 老 Magisk
+            "/data/adb/ksu/bin/su",  // KernelSU 官方路径（目录 700，App 常无法访问，仅兜底）
             "/su/bin/su"             // 老 SuperSU
         )
     }
