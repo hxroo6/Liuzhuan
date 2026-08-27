@@ -26,3 +26,6 @@ AndroidApp/keystore/
 *.suo
 Thumbs.db
 .DS_Store
+
+# ===== 历史会话交接（含内网信息，不入库）=====
+会话交接.md

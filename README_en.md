@@ -22,17 +22,21 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 - Hotspot expand + self-healing: panel expands when the mouse nears the screen edge; auto-repositions after monitor changes
 - Tray menu: local IP, password management, connected devices, auto-start
 
-### Android (Kotlin + Compose)
-- **Copy-to-PC in seconds**: with accessibility + foreground service enabled, copy text in any app → auto-pushed to the PC (always-on background)
+### Android (Kotlin + Compose, Android 16+)
+- **Copy to PC**: with accessibility + foreground service enabled —
+  - Copy while Liuzhuan is in the foreground → pushed instantly; **copy elsewhere then switch back to Liuzhuan → the latest clipboard content is pushed the moment the window gains focus** (zero taps needed)
+  - Apps that expose text selections (browsers, system editors…) → background copies are pushed automatically
+  - Restricted apps (e.g. WeChat): use the text-selection menu below, or copy then switch back
+- **Text-selection menu**: long-press to select text in any app → choose "Liuzhuan" (流转) in the system menu → sent directly without touching the clipboard (the compliant way around background clipboard restrictions)
 - **Background auto-send toggle**: turn off "auto-send clipboard" anytime from the Send tab (default on)
 - **Receive page**: realtime mirror of the PC's recent materials (WS incremental push, zero polling, battery-friendly)
+- **Pipeline diagnostics**: the Connect tab shows the live status and history of every stage (copy candidate → clipboard capture → send) — no adb needed
 - **Tap a material**: text → copy to clipboard; image/video/audio → save to gallery
 - **Share-to-upload**: share text/files from any app → Liuzhuan → auto-uploaded to the PC
 - **Scan-to-connect**: scan the QR code on the PC screen to connect in one step
 - **Auto-discovery**: scan for PCs on the LAN, tap to fill the IP
 - **Pause reconnect**: stop the auto-reconnect loop anytime while it is retrying
 - **Double-tap logs to copy**: double-tap the log area to copy all logs for debugging
-- **Quick enable**: tap the accessibility ⚡ icon to push the clipboard instantly
 - **Multi-device**: multiple phones/tablets can connect simultaneously; changes sync everywhere
 
 ### Security
@@ -72,14 +76,26 @@ After launch: tray menu → view local IP / generate password. Default ports: co
 
 Build requirements: see [BUILDING.md](BUILDING.md).
 
-1. Build and install the APK; allow notification permission on first run
+1. Build and install the APK; allow notification permission on first run (**requires Android 16+**)
 2. Connect tab: **Scan QR** (scan the pairing QR from the PC tray menu — one step) or **Discover** (auto-discovery list, tap to fill) or enter IP/port/password manually
 3. Tap Connect → follow the prompt to enable accessibility (clipboard monitor) → the app auto-reconnects
-4. Copy text in any app → it appears on the PC instantly; share a file → Liuzhuan receives it automatically
+4. Copy text anywhere, then switch back to Liuzhuan (or copy while it's in the foreground) → the PC receives it instantly; long-press selected text → "Liuzhuan" sends it directly; share a file → Liuzhuan receives it automatically
 
 > Both ends must be on the same LAN (same Wi-Fi, or a hotspot from the PC).
 >
 > 💡 On the PC: tray menu → "配对二维码" pops the pairing QR; enable "剪贴板监控" to auto-capture copies on the PC too.
+
+### A note on "background copy auto-send" (Android platform limitation)
+
+For security, **Android 10+ denies clipboard reads to apps without window focus** (enforcement varies by OEM; ColorOS, for example, rejects it outright — background reads return empty). Liuzhuan does not use any invasive workaround (no root / Shizuku / IME replacement / polling). Instead it offers three compliant paths:
+
+| Scenario | What to do | Experience |
+|---|---|---|
+| Copy, then switch back to Liuzhuan | Nothing — the latest clipboard content is pushed the moment you return | Recommended, most natural |
+| Restricted apps (e.g. WeChat) | Long-press to select text → "Liuzhuan" in the system menu | Direct send, bypasses the clipboard |
+| Browsers / editors | Background copies push automatically (these apps expose text selections to accessibility) | Fully automatic |
+
+The app has built-in pipeline diagnostics (Connect tab) showing the real status of every stage: copy candidate → clipboard capture → send.
 
 ## 🔌 Protocol (summary)
 

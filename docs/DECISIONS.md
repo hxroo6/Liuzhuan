@@ -29,10 +29,11 @@
 ## D04 评分模型基线（M10→M13 的教训固化为规格）
 
 - **决策**：
-  1. 第三方 App 的 `WINDOW_CONTENT_CHANGED` = **MEDIUM**（触发轻量 selection 捕获）；
+  1. 第三方 App 的 `WINDOW_CONTENT_CHANGED` = **MEDIUM**（触发 selection 捕获 + debounce 剪贴板兜底）；
   2. SystemUI/Launcher 的 `WINDOW_CONTENT_CHANGED` = **NONE**；
   3. 第三方 `TEXT_SELECTION_CHANGED` 与命中「复制」文案的点击 = HIGH。
-- **原因**：微信等 App 复制只产生 WINDOW_CONTENT_CHANGED（不暴露 selection 变化事件），MEDIUM 是后台捕获的唯一入口（M6 生效路径）；M10 曾把它降到 LOW 导致后台 capture 完全不执行，M13 恢复。SystemUI/Launcher 弱信号是高频假阳性主来源（反向教训同样成立）。
+- **原因**：微信等 App 复制只产生 WINDOW_CONTENT_CHANGED（不暴露 selection 变化事件），MEDIUM 是它们唯一的检测入口（M6 生效路径）；M10 曾把它降到 LOW 导致 capture 完全不执行，M13 恢复。SystemUI/Launcher 弱信号是高频假阳性主来源（反向教训同样成立）。
+- **实测边界（2026-08-27 adb 确认）**：MEDIUM 的捕获在本机 ColorOS 上仅前台有效（焦点就绪时 selection/剪贴板都可命中）；流转后台时 selection 不暴露 + 剪贴板被焦点检查拒绝，两条捕获路都被关死。「不切回流转的后台自动发送」在严格执行焦点限制的 ROM 上无解（见 KNOWN_ISSUES LIMIT-1），微信场景走文本选择菜单或切回流转发。MEDIUM 基线保留的意义：前台事件驱动路径 + 对焦点限制宽松 ROM 的兼容。
 - **锚点**：`CopyEventDetector.evaluate`。
 - **约束**：调优评分时两个方向的基线都不可动；消除假阳性只能加更精确的分类规则，不许整体降级。
 

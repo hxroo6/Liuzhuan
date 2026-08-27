@@ -101,10 +101,10 @@ class ClipboardCaptureManagerImpl(
             }
 
             CopyEventDetector.Level.MEDIUM -> {
-                // 第三方窗口内容变化（可能是复制菜单弹出）→ 轻量 selection 捕获（不读剪贴板）。
-                // 这是 M6 后台自动发送生效的关键路径：微信等 App 复制时只产生
-                // WINDOW_CONTENT_CHANGED（不暴露 TEXT_SELECTION_CHANGED），
-                // 通过 selection 捕获能在后台拿到选中文本。
+                // 第三方窗口内容变化（可能是复制菜单弹出）→ 先试 selection 捕获（不读剪贴板）。
+                // 流转前台时：selection 或剪贴板兜底均可能命中（焦点就绪）；
+                // 流转后台时：两条路都被系统关死（App 不暴露 selection + 焦点限制拒绝剪贴板），
+                // 只能等切回流转时由前台重读（onWindowFocusChanged）补发剪贴板里的最新内容。
                 val id = nextId()
                 val pkg = event.packageName
                 Log.d(TAG, "[DETECT][$id] candidate level=MEDIUM reason=${candidate.reason} pkg=$pkg")
@@ -117,8 +117,7 @@ class ClipboardCaptureManagerImpl(
                         ClipboardEventDispatcher.dispatch(ev)
                     } else {
                         Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底")
-                        // 微信等 App 复制只产生 WINDOW_CONTENT_CHANGED 且不暴露 selection，
-                        // selection 捕获必然失败——剪贴板兜底是后台自动发送的最后一条路
+                        // selection 读不到时尝试剪贴板（前台有效；后台被焦点限制拒绝，见方法注释）
                         scheduleMediumFallback(id)
                     }
                 }
@@ -162,17 +161,16 @@ class ClipboardCaptureManagerImpl(
     /**
      * MEDIUM 剪贴板兜底 —— debounce 模式的事件驱动读取（非轮询，无定时器）。
      *
-     * M14 教训：WCC 事件串「长按→菜单弹出→点复制→菜单关闭」在 1~2 秒内连续到达，
-     * 按事件立即读取既高频又常读到旧值（复制尚未完成），固定节流还会把「复制完成」
-     * 那个事件拦掉（事件流随后安静，再无补读机会）。
+     * 适用范围（2026-08-27 adb 实测定论）：前台/焦点就绪时有效——流转在前台期间，
+     * 任意第三方 App 的界面事件（含其他 App 的浮动窗如截屏）触发本兜底即可读到剪贴板新内容；
+     * 流转在后台时被系统焦点检查拒绝（hasPrimaryClip=false），「不切回流转的后台自动发送」
+     * 在严格执行该限制的 ROM（如本机 ColorOS）上无解，可靠路径为文本选择菜单或切回流转发。
      *
      * debounce：每个 MEDIUM 事件重置计时，等事件流安静 FALLBACK_DEBOUNCE_MS 后读一次
-     * ——天然合并整串事件（读取频率被事件流间隔限制），且读取时机在「复制已完成」之后。
-     *
-     * 历史实测（GitHub 轮询版在一加 ColorOS 上后台读剪贴板成功）表明 OEM 对无障碍服务
-     * 读取的限制可能比 AOSP 宽松：读得到 → 恢复后台自动发送；
-     * 读不到 → 行为与不加兜底完全一致，零副作用。
+     * ——天然合并「长按→菜单→复制」整串事件（读取频率被事件流间隔限制），
+     * 且读取时机落在「复制已完成」之后（M14 固定节流会漏掉复制完成事件，已废弃）。
      */
+    @Synchronized
     private fun scheduleMediumFallback(diagnosticId: String) {
         fallbackJob?.cancel()
         fallbackJob = scope.launch {
