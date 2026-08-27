@@ -9,10 +9,10 @@
 ## 一、平台限制（代码无法绕过）
 
 ### LIMIT-1 微信等不暴露 selection 的 App 后台复制无法自动捕获
-- **复现**：流转退后台 → 微信复制 → PC 收不到；切回前台 → 最后一条经 ON_RESUME 前台重读补发。
-- **根因**：Android 10+ 剪贴板焦点限制（后台 `getPrimaryClip()` 返回 null）＋ 微信自定义 View 不向无障碍暴露 textSelectionStart/End（selection 捕获返回 null），两条路都断。
-- **替代路径**：文本选择菜单（选中 → 系统菜单「流转」）——【待确认】微信的文本选择菜单是否实际显示「流转」入口（用户待测）；若 adb 可连，拉 logcat 确认 selection 失败的具体环节。
-- **排错警示**：后台复制失败 ≠ 代码 bug。先确认 `[DETECT] candidate level=MEDIUM/HIGH` 后有无 `[CAPTURE] success`：有 DETECT 无 CAPTURE=App 不暴露/焦点限制；连 DETECT 都没有才是代码问题。
+- **复现**：流转退后台 → 微信复制 → PC 收不到；切回流转 → 内容经前台重读补发（M16 起为焦点建立后立即发送）。
+- **根因（2026-08-27 无线 adb 实测坐实）**：ColorOS 严格执行 Android 10+ 焦点检查——`appops` 显示流转 `READ_CLIPBOARD: allow`（权限层不拦），但非焦点 App 读剪贴板时 `hasPrimaryClip()` 返回 false（M14/M15 兜底实测「系统未提供剪贴板」）。加上微信不暴露 textSelectionStart/End，两条路都断。**剪贴板兜底方案（M14/M15）在此设备仅前台生效，后台无解。**
+- **可靠替代路径**：文本选择菜单（选中 → 系统菜单「流转」）——【待确认】微信的文本选择菜单是否实际显示「流转」入口；「切回流转立即发送」（M16 已修复延迟）。
+- **排错警示**：后台复制失败 ≠ 代码 bug。诊断历史里「系统未提供剪贴板（后台读取被拒或为空）」= 焦点限制的确凿证据；前台出现该提示则可能是 onResume 时焦点未就绪（M16 已用 onWindowFocusChanged 修复主路径）。
 
 ## 二、缺陷（源码核实，尚未修复）
 
