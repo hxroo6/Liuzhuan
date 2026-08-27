@@ -47,6 +47,8 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = SettingsStore(this)
+        // root 变体设备名加「·R」后缀：PC 端对同名设备会替换旧 session，避免标准版/root 版互踢
+        Proto.deviceLabel = if (packageName.endsWith(".root")) "${Build.MODEL}·R" else Build.MODEL
         // 幂等装配剪贴板监控组件（无障碍服务未启动时也要可用，供前台捕获/测试）
         com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.init(applicationContext)
 
@@ -143,6 +145,8 @@ class MainActivity : ComponentActivity() {
             client.requestSnapshot()
         }
         LanHub.client = client
+        // root 变体：启动后台剪贴板守护（标准版为空实现，见 RootBridge 注释）
+        RootBridge.init(applicationContext)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
@@ -286,6 +290,7 @@ fun MainScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
     var autoSend by remember { mutableStateOf(true) }
+    var rootSync by remember { mutableStateOf(false) }
 
     // 读取已保存配置
     LaunchedEffect(Unit) {
@@ -296,6 +301,8 @@ fun MainScreen(
             password = s.password
             autoSend = s.autoSendClipboard
             LanHub.autoSendClipboard = s.autoSendClipboard // 同步给无障碍服务
+            rootSync = s.rootClipboardSync
+            LanHub.rootClipboardSync = s.rootClipboardSync // 同步给 root 守护
         }
     }
 
@@ -696,6 +703,47 @@ fun MainScreen(
                                     }
                                     toast(context, if (checked) "已开启自动发送" else "已关闭自动发送")
                                 }
+                            )
+                        }
+                        // ===== Root 后台读取开关（仅 root flavor 显示）=====
+                        if (context.packageName.endsWith(".root")) {
+                            HorizontalDivider()
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Column(Modifier.weight(1f)) {
+                                    Text("Root 后台读取剪贴板", style = MaterialTheme.typography.bodyMedium)
+                                    Text(
+                                        "root 版专用：后台复制也能读取并发送（需已 root，事件驱动零轮询）",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = Color(0xFF757575)
+                                    )
+                                }
+                                Switch(
+                                    checked = rootSync,
+                                    onCheckedChange = { checked ->
+                                        rootSync = checked
+                                        LanHub.rootClipboardSync = checked // 立即同步给 root 守护
+                                        scope.launch {
+                                            store.save(
+                                                settings?.copy(rootClipboardSync = checked)
+                                                    ?: SettingsStore.Settings(rootClipboardSync = checked)
+                                            )
+                                        }
+                                        toast(context, if (checked) "已开启 Root 后台读取" else "已关闭 Root 后台读取")
+                                    }
+                                )
+                            }
+                            OutlinedButton(
+                                onClick = { com.liuzhuan.app.RootBridge.requestPermission() },
+                                modifier = Modifier.fillMaxWidth()
+                            ) { Text("获取 Root 权限") }
+                            Text(
+                                "开启后自动探测并拉起 root 守护，链路日志见「剪贴板监控」卡片最近事件",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF9E9E9E)
                             )
                         }
                     }

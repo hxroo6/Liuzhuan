@@ -24,6 +24,19 @@ android {
         versionName = "1.0.0"
     }
 
+    // standard = 现行稳定版；root = 实验变体（root 守护后台读剪贴板，见 docs/DECISIONS.md D16）
+    flavorDimensions.add("mode")
+    productFlavors {
+        create("standard") {
+            dimension = "mode"
+        }
+        create("root") {
+            dimension = "mode"
+            applicationIdSuffix = ".root"     // 可与标准版并存，便于 A/B 测试
+            versionNameSuffix = "-root"
+        }
+    }
+
     signingConfigs {
         if (keystoreProps.isNotEmpty()) {
             create("release") {

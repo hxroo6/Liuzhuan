@@ -19,6 +19,7 @@ class SettingsStore(private val context: Context) {
         private val KEY_PASSWORD = stringPreferencesKey("password")
         private val KEY_DEVICE_NAME = stringPreferencesKey("device_name")
         private val KEY_AUTO_SEND = booleanPreferencesKey("auto_send_clipboard")
+        private val KEY_ROOT_SYNC = booleanPreferencesKey("root_clipboard_sync")
     }
 
     data class Settings(
@@ -26,7 +27,8 @@ class SettingsStore(private val context: Context) {
         val serverPort: String = "8899",
         val password: String = "",
         val deviceName: String = android.os.Build.MODEL,
-        val autoSendClipboard: Boolean = true
+        val autoSendClipboard: Boolean = true,
+        val rootClipboardSync: Boolean = false
     )
 
     val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
@@ -35,7 +37,8 @@ class SettingsStore(private val context: Context) {
             serverPort = prefs[KEY_PORT] ?: "8899",
             password = prefs[KEY_PASSWORD] ?: "",
             deviceName = prefs[KEY_DEVICE_NAME] ?: android.os.Build.MODEL,
-            autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true
+            autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true,
+            rootClipboardSync = prefs[KEY_ROOT_SYNC] ?: false
         )
     }
 
@@ -46,6 +49,7 @@ class SettingsStore(private val context: Context) {
             prefs[KEY_PASSWORD] = s.password
             prefs[KEY_DEVICE_NAME] = s.deviceName
             prefs[KEY_AUTO_SEND] = s.autoSendClipboard
+            prefs[KEY_ROOT_SYNC] = s.rootClipboardSync
         }
     }
 }

@@ -18,8 +18,11 @@ enum class ClipboardCaptureSource {
     ACCESSIBILITY_COPY_ACTION,
 
     /** 手动动作：文本选择菜单 / 分享 / 立即测试按钮 */
-    MANUAL
-    // 预留：IME, ROOT, SHIZUKU（本次不实现）
+    MANUAL,
+
+    /** root 变体专用：su 守护进程（app_process, uid 0）后台轮询读取——仅存在于 root flavor */
+    ROOT_DAEMON
+    // 预留：IME, ROOT, SHIZUKU（ROOT_DAEMON 已随 root 变体实现）
 }
 
 /**

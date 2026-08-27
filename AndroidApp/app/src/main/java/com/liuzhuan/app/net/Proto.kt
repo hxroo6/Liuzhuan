@@ -10,6 +10,14 @@ import java.util.UUID
  */
 object Proto {
 
+    /**
+     * 设备名（hello/heartbeat 等消息的 device 字段）。
+     * root 变体在 MainActivity 启动时改为「机型·R」，避免与标准版同名设备互踢
+     * （PC 端 WsHub 对同名设备会替换旧 session）。
+     */
+    @Volatile
+    var deviceLabel: String = android.os.Build.MODEL
+
     fun sha256Hex(input: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
         return digest.joinToString("") { "%02x".format(it) }
@@ -20,7 +28,7 @@ object Proto {
         .put("type", "hello")
         .put("id", UUID.randomUUID().toString().replace("-", ""))
         .put("ts", System.currentTimeMillis() / 1000)
-        .put("device", android.os.Build.MODEL)
+        .put("device", deviceLabel)
         .put("data", JSONObject()
             .put("auth", authHash)
             .put("ts", System.currentTimeMillis() / 1000))
@@ -31,7 +39,7 @@ object Proto {
         .put("type", "heartbeat")
         .put("id", UUID.randomUUID().toString().replace("-", ""))
         .put("ts", System.currentTimeMillis() / 1000)
-        .put("device", android.os.Build.MODEL)
+        .put("device", deviceLabel)
         .put("data", JSONObject().put("t", System.currentTimeMillis() / 1000))
         .toString()
 
@@ -40,7 +48,7 @@ object Proto {
         .put("type", "sync_text")
         .put("id", UUID.randomUUID().toString().replace("-", ""))
         .put("ts", System.currentTimeMillis() / 1000)
-        .put("device", android.os.Build.MODEL)
+        .put("device", deviceLabel)
         .put("data", JSONObject()
             .put("content", content)
             .put("source", source))
@@ -51,7 +59,7 @@ object Proto {
         .put("type", "clipboard_push")
         .put("id", UUID.randomUUID().toString().replace("-", ""))
         .put("ts", System.currentTimeMillis() / 1000)
-        .put("device", android.os.Build.MODEL)
+        .put("device", deviceLabel)
         .put("data", JSONObject()
             .put("content", content)
             .put("app", app))
@@ -63,7 +71,7 @@ object Proto {
         .put("type", "list_sync")
         .put("id", UUID.randomUUID().toString().replace("-", ""))
         .put("ts", System.currentTimeMillis() / 1000)
-        .put("device", android.os.Build.MODEL)
+        .put("device", deviceLabel)
         .put("data", JSONObject())
         .toString()
 
@@ -117,7 +125,7 @@ object Proto {
         .put("type", "get_item")
         .put("id", UUID.randomUUID().toString().replace("-", ""))
         .put("ts", System.currentTimeMillis() / 1000)
-        .put("device", android.os.Build.MODEL)
+        .put("device", deviceLabel)
         .put("data", JSONObject().put("id", id))
         .toString()
 

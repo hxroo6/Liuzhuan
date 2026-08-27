@@ -46,6 +46,10 @@ object ClipboardMonitorCoordinator {
     lateinit var captureManager: ClipboardCaptureManager
         private set
 
+    /** captureManager 是否已装配（跨包访问 backing field 不可行，提供属性判断） */
+    val isCaptureReady: Boolean
+        get() = this::captureManager.isInitialized
+
     @Volatile
     private var initialized = false
 

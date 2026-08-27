@@ -41,6 +41,8 @@ class ClipMonitorService : AccessibilityService() {
         instanceId = "SVC-${instanceCounter.incrementAndGet()}"
         // 幂等装配剪贴板监控各组件（可能被系统多次创建服务实例）
         ClipboardMonitorCoordinator.init(applicationContext)
+        // root 变体：无障碍重绑/进程被杀后重启时恢复后台守护（标准版空实现）
+        com.liuzhuan.app.RootBridge.init(applicationContext)
         android.util.Log.d("ClipMonitor", "[ACC-SVC][$instanceId] onCreate")
     }
 
