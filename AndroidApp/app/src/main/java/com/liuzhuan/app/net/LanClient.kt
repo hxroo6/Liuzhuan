@@ -7,11 +7,17 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import okhttp3.Call
+import okhttp3.Callback
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import java.io.IOException
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 /**
@@ -104,6 +110,27 @@ class LanClient(
         ws?.send(Proto.buildClipboardPush(content, app))
         log("剪贴板已推送（${content.length} 字）")
         return true
+    }
+
+    /** 上传文件/图片到电脑（HTTP POST 到 /upload 端点，复用 PC 端 FileHttpServer） */
+    fun pushFile(bytes: ByteArray, name: String, mime: String) {
+        val s = lastSettings ?: run { log("未连接，无法上传文件"); return }
+        val filePort = (s.serverPort.toIntOrNull() ?: 8899) + 1
+        val auth = Proto.sha256Hex(s.password)
+        val encodedName = URLEncoder.encode(name, "UTF-8")
+        val url = "http://${s.serverIp}:$filePort/upload?name=$encodedName&auth=$auth"
+        val body = bytes.toRequestBody(mime.toMediaTypeOrNull())
+        val req = Request.Builder().url(url).post(body).build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) {
+                log("文件上传失败: ${e.message}")
+            }
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    log(if (response.isSuccessful) "文件上传成功（${bytes.size} 字节）" else "文件上传失败 HTTP ${response.code}")
+                }
+            }
+        })
     }
 
     /** 请求素材详情（文字全文 / 文件下载地址） */
