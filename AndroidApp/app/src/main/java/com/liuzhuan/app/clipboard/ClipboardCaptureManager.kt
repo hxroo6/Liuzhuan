@@ -116,12 +116,9 @@ class ClipboardCaptureManagerImpl(
                         ClipboardMonitorCoordinator.setDiagnostic("[$id] 捕获成功 len=${ev.text?.length} source=${ev.source}")
                         ClipboardEventDispatcher.dispatch(ev)
                     } else {
-                        Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底 + root 读")
+                        Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底")
                         // selection 读不到时尝试剪贴板（前台有效；后台被焦点限制拒绝，见方法注释）
                         scheduleMediumFallback(id)
-                        // root 旁路兜底（方案 B 事件驱动）：root flavor 下请求 daemon 读一次剪贴板，
-                        // 能绕过焦点限制在后台读到；标准版 RootBridge 反射不到则 no-op
-                        com.liuzhuan.app.RootBridge.requestRead(id)
                     }
                 }
             }
@@ -141,9 +138,7 @@ class ClipboardCaptureManagerImpl(
                     if (ev != null) {
                         ClipboardEventDispatcher.dispatch(ev)
                     } else {
-                        Log.d(TAG, "[CAPTURE][$id] failed（selection/剪贴板均未读到），触发 root 读兜底")
-                        // root 旁路兜底（方案 B）：root flavor 请求 daemon 读一次剪贴板；标准版 no-op
-                        com.liuzhuan.app.RootBridge.requestRead(id)
+                        Log.d(TAG, "[CAPTURE][$id] failed（selection/剪贴板均未读到）")
                     }
                 }
             }

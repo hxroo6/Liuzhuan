@@ -68,6 +68,7 @@ class ClipHook : IXposedHookLoadPackage {
                     .putExtra(EXTRA_TEXT, text)
                     .putExtra(EXTRA_PKG, sourcePkg)
                     .putExtra(EXTRA_TS, System.currentTimeMillis())
+                    .putExtra(EXTRA_TOKEN, TOKEN)
                     .setPackage(host)
                 ctx.sendBroadcast(intent)
                 Log.d(TAG, "broadcast sent to $host len=${text.length}")
@@ -94,6 +95,9 @@ class ClipHook : IXposedHookLoadPackage {
         const val EXTRA_TEXT = "text"
         const val EXTRA_PKG = "pkg"
         const val EXTRA_TS = "ts"
-        private val HOST_PACKAGES = listOf("com.liuzhuan.app.root", "com.liuzhuan.app")
+        const val EXTRA_TOKEN = "token"
+        /** 握手 token：与 ClipReceiver 校验一致，防止其他 App 伪造复制广播 */
+        const val TOKEN = "liuzhuan-cliphook-2026-v1-9f3a7c2e"
+        private val HOST_PACKAGES = listOf("com.liuzhuan.app")
     }
 }

@@ -22,6 +22,8 @@ class ClipReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_CLIP) return
+        // 握手 token 校验：非 ClipHook 发来的广播（伪造）直接丢弃
+        if (intent.getStringExtra(EXTRA_TOKEN) != TOKEN) return
         val text = intent.getStringExtra(EXTRA_TEXT) ?: return
         val pkg = intent.getStringExtra(EXTRA_PKG)
         val ts = intent.getLongExtra(EXTRA_TS, System.currentTimeMillis())
@@ -48,6 +50,9 @@ class ClipReceiver : BroadcastReceiver() {
         const val EXTRA_TEXT = "text"
         const val EXTRA_PKG = "pkg"
         const val EXTRA_TS = "ts"
+        const val EXTRA_TOKEN = "token"
+        /** 握手 token：与 ClipHook 一致（硬编码，不引用 ClipHook 类避免标准版 ClassNotFound） */
+        const val TOKEN = "liuzhuan-cliphook-2026-v1-9f3a7c2e"
         private val idCounter = AtomicLong(0)
     }
 }

@@ -8,11 +8,6 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
-    <!-- 后台读剪贴板权限（Android 10+ 官方 signature|privileged 权限）。
-         声明后需 root 授予（pm grant 或改 packages.xml），App 才能在后台通过
-         ClipboardManager.getPrimaryClip() 读到剪贴板，绕开焦点限制。
-         标准版未授予时此声明无害（系统不授予，行为不变）。 -->
-    <uses-permission android:name="android.permission.READ_CLIPBOARD_IN_BACKGROUND" />
 
     <application
         android:allowBackup="true"

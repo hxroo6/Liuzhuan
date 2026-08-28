@@ -11,8 +11,4 @@ object LanHub {
     /** 后台自动发送剪贴板开关（@Volatile 供无障碍服务非阻塞读取） */
     @Volatile
     var autoSendClipboard: Boolean = true
-
-    /** Root 后台读取开关（@Volatile 供 RootMonitorImpl 非阻塞读取；仅 root flavor 生效） */
-    @Volatile
-    var rootClipboardSync: Boolean = false
 }

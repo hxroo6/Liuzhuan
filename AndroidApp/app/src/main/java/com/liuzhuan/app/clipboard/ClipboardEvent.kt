@@ -20,12 +20,8 @@ enum class ClipboardCaptureSource {
     /** 手动动作：文本选择菜单 / 分享 / 立即测试按钮 */
     MANUAL,
 
-    /** root 变体专用：su 守护进程（app_process, uid 0）后台轮询读取——仅存在于 root flavor */
-    ROOT_DAEMON,
-
     /** LSPosed hook 截获：在第三方 App 写剪贴板那一刻直接拿到内容（事件驱动，不读剪贴板） */
     XPOSED_HOOK
-    // 预留：IME, ROOT, SHIZUKU（ROOT_DAEMON 已随 root 变体实现）
 }
 
 /**
