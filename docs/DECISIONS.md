@@ -75,11 +75,12 @@
 - **已登记例外**：`ProcessTextActivity`（选中文本直发）与分享菜单文字（`sendText`）是用户显式动作直连 LanClient，不经 Pipeline —— 属于「用户指令优先于自动链路开关」，不是缺陷模式；但改造它们时应并入统一管线而非扩散第三条直连路径。
 - **约束**：给 Dispatcher 加过滤条件时明确它不影响上述直连路径（例如 autoSend 开关目前拦不住 ProcessText 直发，这是接受的行为还是 bug 见 KNOWN_ISSUES DEF-5）。
 
-## D11 平台限制应对策略：合规绕行，不侵入系统
+## D11 后台复制秒达的唯一解：LSPosed hook 剪贴板写入路径
 
-- **决策**：接受 Android 10+ 后台剪贴板焦点限制；替代路径为文本选择菜单（ACTION_PROCESS_TEXT，选中即达，不经剪贴板）+ 切回前台时主动重读剪贴板兜底。禁止 Shizuku/Root/输入法注入/轮询等侵入式方案。
-- **原因**：AOSP ClipboardService 读豁免链不含无障碍服务（仅 IME/焦点 App/SystemUI），代码层无法正当地绕过；用户明确排除 Root 类方案。
-- **锚点**：`ProcessTextActivity`、`captureOnForeground`。
+- **决策**：接受 Android 10+ 后台剪贴板「读取」焦点限制（ColorOS 豁免链仅 IME/焦点 App/SystemUI/privileged/READ_CLIPBOARD_IN_BACKGROUND）。**后台复制秒达靠 LSPosed hook 剪贴板「写入」路径**（`ClipHook` hook `ClipboardManager.setPrimaryClip`，事件驱动、不读剪贴板、绕开全部读取豁免链）；前台主动重读 + 文本选择菜单（ACTION_PROCESS_TEXT）作无 LSPosed 环境的兜底。
+- **原因**：ColorOS 对「读」做了 checkPackage/焦点多重拦截（root daemon 也被 `SecurityException: Package android does not belong to 2000` 拒死），但「写」不受这些限制——hook 写入路径是唯一能 100% 捕获任意 App 后台复制的方案。
+- **锚点**：`xposed/ClipHook`、`ClipReceiver`、`ProcessTextActivity`、`captureOnForeground`。
+- **约束**：LSPosed 需用户装框架（KernelSU + Zygisk + LSPosed，本机为 Irena fork）；ClipHook 只旁路观察、不改返回值、不抛异常；ClipReceiver 的 intent-filter（action=com.liuzhuan.app.ACTION_CLIPHOOK）不可删。
 
 ## D12 Hub 信任模型：口令即权限，明文局域网
 

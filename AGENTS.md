@@ -8,7 +8,7 @@
 
 ## 一、项目速览
 
-「流转」= 纯局域网跨设备素材中转站。PC 端（WPF/.NET 7，位于 `Liuzhuan/`）是服务器；Android 端（Kotlin + Compose，minSdk 36，位于 `AndroidApp/`）是客户端。两条核心链路必须同时可用：手机复制自动推电脑（无障碍+WS）；电脑素材实时同步手机接收页（WS 快照+增量）。
+「流转」= 纯局域网跨设备素材中转站。PC 端（WPF/.NET 7，位于 `Liuzhuan/`）是服务器；Android 端（Kotlin + Compose，minSdk 36，位于 `AndroidApp/`）是客户端。两条核心链路必须同时可用：手机复制自动推电脑（**后台复制秒达靠 LSPosed hook 剪贴板写入路径**，前台靠无障碍）；电脑素材实时同步手机接收页（WS 快照+增量）。
 
 ## 二、环境（全部已装于 F 盘，勿重复安装，详见 ENV.md）
 
@@ -26,7 +26,7 @@
 2. **先读代码再动手**：理解调用方后再修改；不许凭现象直接下结论改代码。
 3. **改完必编译**：Android 改动 → 同步到 `F:/LiuzhuanApp` 后 `assembleDebug` 通过才算完成；PC 改动 → publish 前**先停掉运行中的 Liuzhuan.exe**（锁 dll），发布后检查残留 dotnet 进程（锁 obj 会报 MSB4018）。
 4. **不许凭现象宣布修好**：后台复制类问题先用诊断日志定位断点（ACC→DETECT→CAPTURE→DISPATCH→ACTION→WS）或做 A-B 对照（后台复制多条切前台：全发=队列积压，只发末条=平台焦点限制），再动手。
-5. **禁止引入**：Shizuku / Root / 默认输入法方案；剪贴板轮询（2s 定时读取已被 M6 移除，勿恢复）。
+5. **后台复制秒达的唯一可靠方案 = LSPosed hook 剪贴板写入路径**（`ClipHook` hook `ClipboardManager.setPrimaryClip`，事件驱动、不读剪贴板、绕开 ColorOS 的 checkPackage/焦点/READ_CLIPBOARD_IN_BACKGROUND 读取豁免链）。禁止引入：Shizuku / 默认输入法方案；剪贴板轮询（2s 定时读取已被 M6 移除，勿恢复）；**Root 读剪贴板方案**（root daemon 已被 ColorOS 的 `checkPackage` 拒死——`SecurityException: Package android does not belong to 2000`，勿重蹈）。
 
 ## 四、代码红线（改动前的强制检查项）
 
@@ -41,6 +41,8 @@
 7. **协议两端成对修改**：`Proto.kt` ↔ `WsHub.cs`/`LanMessage.cs` 的 type 与 data 字段必须同步，JSON 解析失败是静默的（optString 全给默认值）。
 8. **签名配置不动**：debug 使用 release 签名是刻意的（覆盖安装保住无障碍授权）。
 9. **无障碍配置 XML 的事件类型集合**（`accessibility_service_config.xml`）：增删事件类型需同时核对 `CopyEventDetector` 与 `ClipboardEventDispatcher` 行为，该文件是裸配置，编译期无从校验。
+10. **ClipHook 只旁路观察，绝不干扰原 App**：hook `setPrimaryClip` 后不得改返回值、不得抛异常（所有逻辑 try-catch 吞掉），否则会破坏微信等 App 的复制功能。
+11. **ClipReceiver 的 intent-filter 不可删**（`action=com.liuzhuan.app.ACTION_CLIPHOOK`）：删了广播路由不到，后台复制秒达静默失效；ClipHook 与 ClipReceiver 的 action 字符串必须一致。
 
 ## 五、Git 与交付
 

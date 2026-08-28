@@ -8,11 +8,11 @@
 
 ## 一、平台限制（代码无法绕过）
 
-### LIMIT-1 微信等不暴露 selection 的 App 后台复制无法自动捕获
-- **复现**：流转退后台 → 微信复制 → PC 收不到；切回流转 → 内容经前台重读补发（M16 起为焦点建立后立即发送）。
-- **根因（2026-08-27 无线 adb 实测坐实）**：ColorOS 严格执行 Android 10+ 焦点检查——`appops` 显示流转 `READ_CLIPBOARD: allow`（权限层不拦），但非焦点 App 读剪贴板时 `hasPrimaryClip()` 返回 false（M14/M15 兜底实测「系统未提供剪贴板」）。加上微信不暴露 textSelectionStart/End，两条路都断。**剪贴板兜底方案（M14/M15）在此设备仅前台生效，后台无解。**
-- **可靠替代路径**：文本选择菜单（选中 → 系统菜单「流转」）——【待确认】微信的文本选择菜单是否实际显示「流转」入口；「切回流转立即发送」（M16 已修复延迟）。
-- **排错警示**：后台复制失败 ≠ 代码 bug。诊断历史里「系统未提供剪贴板（后台读取被拒或为空）」= 焦点限制的确凿证据；前台出现该提示则可能是 onResume 时焦点未就绪（M16 已用 onWindowFocusChanged 修复主路径）。
+### LIMIT-1 后台复制：LSPosed 已解决，纯无障碍路径仍受限
+- **现状（2026-08-28 起）**：后台复制秒达已由 **LSPosed hook 剪贴板写入路径** 彻底解决（`ClipHook` hook `ClipboardManager.setPrimaryClip`，事件驱动、不读剪贴板、绕开焦点/读取豁免链）。无需切前台，微信/Chrome 等任意 App 后台复制均秒达电脑。
+- **纯无障碍路径的历史限制（仍真实，作为 LSPosed 未启用时的兜底认知）**：ColorOS 严格执行 Android 10+ 焦点检查——非焦点 App 读剪贴板时 `hasPrimaryClip()` 返回 false；微信又不暴露 textSelectionStart/End，两条路都断，后台无解。
+- **LSPosed 方案的前置与坑**：需用户装 LSPosed（KernelSU + Zygisk + LSPosed）；模块激活后须 force-stop 目标 App 再开（已运行进程不注入 hook）；ClipReceiver 的 intent-filter 不可删。
+- **排错警示**：后台复制失败 ≠ 代码 bug。诊断历史里「系统未提供剪贴板（后台读取被拒或为空）」= 焦点限制的确凿证据（纯无障碍路径）；LSPosed 路径的诊断 tag 是 `ClipHook`/`ClipReceiver`。
 
 ## 二、缺陷（源码核实，尚未修复）
 
