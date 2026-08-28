@@ -44,7 +44,6 @@ class LanClient(
     }
 
     private var ws: WebSocket? = null
-    private var heartbeatJob: Job? = null
     private var reconnectJob: Job? = null
     private var manuallyClosed = false
     private var lastSettings: SettingsStore.Settings? = null
@@ -68,14 +67,12 @@ class LanClient(
         // 关闭旧连接（防止多次 connect 叠加 WebSocket → 重复日志/握手）
         ws?.close(1000, "reconnect")
         ws = null
-        stopHeartbeat()
         doConnect(settings)
     }
 
     fun disconnect() {
         manuallyClosed = true
         reconnectJob?.cancel()
-        stopHeartbeat()
         ws?.close(1000, "bye")
         ws = null
         // 用户主动断开 → Paused（不重连），与「意外断开 Disconnected（自动重连中）」区分。
@@ -88,7 +85,6 @@ class LanClient(
     fun pause() {
         manuallyClosed = true
         reconnectJob?.cancel()
-        stopHeartbeat()
         ws?.close(1000, "paused")
         ws = null
         setState(State.Paused)
@@ -158,7 +154,6 @@ class LanClient(
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 log("TCP 已连通，发送握手...")
                 webSocket.send(Proto.buildHello(Proto.sha256Hex(s.password)))
-                startHeartbeat(webSocket)
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
@@ -174,7 +169,6 @@ class LanClient(
                     "auth_fail" -> {
                         setState(State.AuthFailed(data.optString("reason", "口令错误")))
                         log("❌ 认证失败: ${data.optString("reason")}")
-                        stopHeartbeat()
                         webSocket.close(1000, "auth_fail")
                     }
                     "heartbeat" -> { /* 心跳回执，无需处理 */ }
@@ -205,7 +199,6 @@ class LanClient(
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 // 只处理「当前」WS 的回调（被替换的旧 WS 关闭不触发重连，防死循环）
                 if (webSocket !== ws) return
-                stopHeartbeat()
                 ws = null
                 if (!manuallyClosed) {
                     setState(State.Disconnected)
@@ -217,7 +210,6 @@ class LanClient(
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 // 只处理「当前」WS 的回调（被替换的旧 WS 失败不触发重连，防死循环）
                 if (webSocket !== ws) return
-                stopHeartbeat()
                 ws = null
                 if (!manuallyClosed) {
                     setState(State.Disconnected)
@@ -227,24 +219,6 @@ class LanClient(
                 }
             }
         })
-    }
-
-    /** 心跳：每 30s 一次（M3 再做空闲升档到 5min） */
-    private fun startHeartbeat(webSocket: WebSocket) {
-        stopHeartbeat()
-        heartbeatJob = scope.launch {
-            while (true) {
-                delay(30_000)
-                if (state == State.Connected) {
-                    webSocket.send(Proto.buildHeartbeat())
-                }
-            }
-        }
-    }
-
-    private fun stopHeartbeat() {
-        heartbeatJob?.cancel()
-        heartbeatJob = null
     }
 
     /** 指数退避重连：1s→2s→4s→8s→…→上限 30s */

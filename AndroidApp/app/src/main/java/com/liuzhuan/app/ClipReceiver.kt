@@ -53,6 +53,11 @@ class ClipReceiver : BroadcastReceiver() {
             diagnosticId = id
         )
         ClipboardEventDispatcher.dispatch(event)
+        // 同步内容级已知状态：LSPosed 不经 tryReadClipboard，读取层的 30s 已知比对
+        // 感知不到此内容——不同步的话，30s 后 WCC 兜底重读剪贴板会把同内容再发一遍
+        // （PC 端同文本移顶、接收页顺序抖动）。
+        val coord = com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+        if (coord.isCaptureReady) coord.captureManager.updateLastKnownText(text)
         android.util.Log.d(TAG, "[$id] text dispatched")
     }
 

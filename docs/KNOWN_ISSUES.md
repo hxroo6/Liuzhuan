@@ -55,8 +55,7 @@ Windows 设备管理器完全看不到设备 = 线材（仅充电线）或端口
 |---|---|---|---|
 | DEBT-1 | PC `DataStore._sequence` 为内存计数器，重启归零 | 目前靠「重启→断线→重连→replaceAll 快照重置 lastSequence」自然兜底，可用但脆弱；序列号持久化才能根治 gap 检测跨重启语义 | `DataStore.cs` |
 | DEBT-2 | `CopyEventDetector.Candidate.preferSelection` 字段只生产不消费 | 无功能影响，纯遗留 | grep 全库仅在 Detector 内出现 |
-| DEBT-3 | 心跳双层冗余：OkHttp pingInterval 30s + 应用层 heartbeat 每 30s | 无功能影响 | 若去重保留一层即可 |
-| DEBT-4 | WakeLock/WifiLock acquire() 无超时 | 电量代价 + lint 告警 | 保活设计使然，改动需评估断连风险 |
+| DEBT-4 | WakeLock/WifiLock acquire() 无超时 | 电量代价 + lint 告警 | 保活设计使然；2026-08-28 已将 Wi-Fi 锁从 LOW_LATENCY 降为 FULL_HIGH_PERF 降耗，进一步需评估断连风险 |
 | DEBT-5 | 两端工程内零单元测试 | 回归靠真机手工 A-B 对照 | 纯函数区（Deduplicator 时间窗 / Proto 编解码对称性 / Detector 评分矩阵）成本最低 |
 | DEBT-6 | `LanDiscovery` 每次 discover 新建 DatagramSocket 且单次 socket 全程 150ms soTimeout 忙轮询收包 | 搜索体验略糙，功能正常 | 低优先级 |
 

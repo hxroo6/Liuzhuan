@@ -105,20 +105,27 @@ class ClipboardCaptureManagerImpl(
                 // 流转前台时：selection 或剪贴板兜底均可能命中（焦点就绪）；
                 // 流转后台时：两条路都被系统关死（App 不暴露 selection + 焦点限制拒绝剪贴板），
                 // 只能等切回流转时由前台重读（onWindowFocusChanged）补发剪贴板里的最新内容。
+                //
+                // 功耗/降噪（2026-08-28 审查）：WCC 是全系统最高频的无障碍事件——
+                // ① 无 source 的 WCC（多数 UI 变化）selection 必然读不到，直接安排剪贴板兜底，
+                //    省掉一次协程启动与节点遍历；② 候选不再写 UI 诊断（StateFlow+历史列表重建
+                //    在高频事件下是常驻开销），只留 logcat；UI 仅显示兜底/命中/发送等关键节点。
                 val id = nextId()
-                val pkg = event.packageName
-                Log.d(TAG, "[DETECT][$id] candidate level=MEDIUM reason=${candidate.reason} pkg=$pkg")
-                ClipboardMonitorCoordinator.setDiagnostic("[$id] 复制候选(${candidate.reason}) pkg=$pkg")
-                scope.launch {
-                    val ev = tryCaptureSelection(event, id)
-                    if (ev != null) {
-                        Log.d(TAG, "[CAPTURE][$id] success source=${ev.source} len=${ev.text?.length}")
-                        ClipboardMonitorCoordinator.setDiagnostic("[$id] 捕获成功 len=${ev.text?.length} source=${ev.source}")
-                        ClipboardEventDispatcher.dispatch(ev)
-                    } else {
-                        Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底")
-                        // selection 读不到时尝试剪贴板（前台有效；后台被焦点限制拒绝，见方法注释）
-                        scheduleMediumFallback(id)
+                Log.d(TAG, "[DETECT][$id] candidate level=MEDIUM reason=${candidate.reason} pkg=${event.packageName}")
+                if (event.source == null) {
+                    scheduleMediumFallback(id)
+                } else {
+                    scope.launch {
+                        val ev = tryCaptureSelection(event, id)
+                        if (ev != null) {
+                            Log.d(TAG, "[CAPTURE][$id] success source=${ev.source} len=${ev.text?.length}")
+                            ClipboardMonitorCoordinator.setDiagnostic("[$id] 捕获成功 len=${ev.text?.length} source=${ev.source}")
+                            ClipboardEventDispatcher.dispatch(ev)
+                        } else {
+                            Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底")
+                            // selection 读不到时尝试剪贴板（前台有效；后台被焦点限制拒绝，见方法注释）
+                            scheduleMediumFallback(id)
+                        }
                     }
                 }
             }

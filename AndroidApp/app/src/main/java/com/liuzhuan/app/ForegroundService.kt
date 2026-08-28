@@ -54,7 +54,10 @@ class ForegroundService : Service() {
         }
         try {
             val wm = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_LOW_LATENCY, "Liuzhuan::WifiLock").apply {
+            // FULL_HIGH_PERF：保持 Wi-Fi 高性能不省电休眠（防锁屏断连）即可；
+            // LOW_LATENCY 会强制 radio 持续最低延迟（Wi-Fi 锁里最耗电的模式），
+            // 对 30s 心跳/重连场景毫无必要——2026-08-28 功耗审查降级。
+            wifiLock = wm.createWifiLock(WifiManager.WIFI_MODE_FULL_HIGH_PERF, "Liuzhuan::WifiLock").apply {
                 acquire()
             }
             android.util.Log.d("ForegroundService", "wifiLock acquired")
