@@ -3,6 +3,7 @@ package com.liuzhuan.app.xposed
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.util.Log
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedHelpers
@@ -20,8 +21,10 @@ import de.robv.android.xposed.callbacks.XC_LoadPackage
  *   那套读取豁免链（它们只管「读」，管不到「写」）；
  * - 天然拿到 sourcePackage（lpparam.packageName）。
  *
- * 安全铁律：hook 副作用绝不能干扰原 App 的复制——所有逻辑 try-catch 静默吞掉，
+ * 安全铁律：hook 副作用绝不能干扰原 App 的复制——所有逻辑 try-catch 吞掉，
  * 只「旁路观察」，不改动返回值、不抛异常。
+ *
+ * 日志：只打长度/包名/阶段，不打完整剪贴板文本（敏感）。
  */
 class ClipHook : IXposedHookLoadPackage {
 
@@ -43,15 +46,17 @@ class ClipHook : IXposedHookLoadPackage {
                             val ctx = currentSystemContext() ?: return
                             val text = clip.getItemAt(0)?.coerceToText(ctx)?.toString()?.trim() ?: return
                             if (text.length < 2) return
+                            Log.d(TAG, "setPrimaryClip pkg=$pkg len=${text.length}")
                             notifyHost(ctx, pkg, text)
-                        } catch (_: Throwable) {
-                            // 静默：观察失败不影响原 App 复制
+                        } catch (t: Throwable) {
+                            Log.d(TAG, "afterHooked error pkg=$pkg err=${t.javaClass.simpleName}")
                         }
                     }
                 }
             )
-        } catch (_: Throwable) {
-            // 该 App 环境 hook 失败：静默
+            Log.d(TAG, "hook installed pkg=$pkg")
+        } catch (t: Throwable) {
+            Log.d(TAG, "hook install failed pkg=$pkg err=${t.javaClass.simpleName}")
         }
     }
 
@@ -65,7 +70,9 @@ class ClipHook : IXposedHookLoadPackage {
                     .putExtra(EXTRA_TS, System.currentTimeMillis())
                     .setPackage(host)
                 ctx.sendBroadcast(intent)
-            } catch (_: Throwable) {
+                Log.d(TAG, "broadcast sent to $host len=${text.length}")
+            } catch (t: Throwable) {
+                Log.d(TAG, "broadcast failed to $host err=${t.javaClass.simpleName}")
             }
         }
     }
@@ -82,6 +89,7 @@ class ClipHook : IXposedHookLoadPackage {
     }
 
     companion object {
+        const val TAG = "ClipHook"
         const val ACTION_CLIP = "com.liuzhuan.app.ACTION_CLIPHOOK"
         const val EXTRA_TEXT = "text"
         const val EXTRA_PKG = "pkg"

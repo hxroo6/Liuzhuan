@@ -74,7 +74,11 @@
         <!-- LSPosed 剪贴板写入 hook 的广播接收器（接收 ClipHook 截获的第三方复制内容） -->
         <receiver
             android:name=".ClipReceiver"
-            android:exported="true" />
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.liuzhuan.app.ACTION_CLIPHOOK" />
+            </intent-filter>
+        </receiver>
 
         <!-- LSPosed 模块声明（标准版也声明，未激活 LSPosed 时 hook 类不会被加载，无副作用） -->
         <meta-data

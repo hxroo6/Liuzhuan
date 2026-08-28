@@ -26,6 +26,7 @@ class ClipReceiver : BroadcastReceiver() {
         val pkg = intent.getStringExtra(EXTRA_PKG)
         val ts = intent.getLongExtra(EXTRA_TS, System.currentTimeMillis())
         val id = "HOOK-${String.format("%06d", idCounter.incrementAndGet())}"
+        android.util.Log.d(TAG, "[$id] received pkg=$pkg len=${text.length}")
 
         val event = ClipboardEvent(
             text = text,
@@ -38,9 +39,11 @@ class ClipReceiver : BroadcastReceiver() {
             diagnosticId = id
         )
         ClipboardEventDispatcher.dispatch(event)
+        android.util.Log.d(TAG, "[$id] dispatched")
     }
 
     companion object {
+        const val TAG = "ClipReceiver"
         const val ACTION_CLIP = "com.liuzhuan.app.ACTION_CLIPHOOK"
         const val EXTRA_TEXT = "text"
         const val EXTRA_PKG = "pkg"
