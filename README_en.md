@@ -23,14 +23,14 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 - Tray menu: local IP, password management, connected devices, auto-start
 
 ### Android (Kotlin + Compose, Android 16+)
-- **Copy to PC**: with accessibility + foreground service enabled —
-  - Copy while Liuzhuan is in the foreground → pushed instantly; **copy elsewhere then switch back to Liuzhuan → the latest clipboard content is pushed the moment the window gains focus** (zero taps needed)
-  - Apps that expose text selections (browsers, system editors…) → background copies are pushed automatically
-  - Restricted apps (e.g. WeChat): use the text-selection menu below, or copy then switch back
-- **Text-selection menu**: long-press to select text in any app → choose "Liuzhuan" (流转) in the system menu → sent directly without touching the clipboard (the compliant way around background clipboard restrictions)
+- **Background copy, instant push (LSPosed mode)**: copy in any app (WeChat included) → pushed straight to the PC, no app-switching, fully automatic. The module hooks the system clipboard **write path** (`setPrimaryClip`) — event-driven, never reads the clipboard, zero polling, purely observe-only (zero interference with the source app). Requires Root + LSPosed, see "Two modes" below
+- **Image/file copy sync**: copy an image or file → auto-uploaded to the PC material library
+- **Send files**: "Attach file" on the Send tab accepts any format/size → streamed over LAN (constant memory; a GB-sized file takes about a minute)
+- **Copy to PC (standard mode)**: copy anywhere, switch back to Liuzhuan → the latest clipboard content is pushed the moment the window gains focus; apps exposing text selections (browsers, editors) push background copies automatically
+- **Text-selection menu**: long-press to select text in any app → choose "Liuzhuan" (流转) in the system menu → sent directly without touching the clipboard
 - **Background auto-send toggle**: turn off "auto-send clipboard" anytime from the Send tab (default on)
 - **Receive page**: realtime mirror of the PC's recent materials (WS incremental push, zero polling, battery-friendly)
-- **Pipeline diagnostics**: the Connect tab shows the live status and history of every stage (copy candidate → clipboard capture → send) — no adb needed
+- **Pipeline diagnostics**: the Connect tab log area shows the live status and history of every stage (capture → send) — no adb needed
 - **Tap a material**: text → copy to clipboard; image/video/audio → save to gallery
 - **Share-to-upload**: share text/files from any app → Liuzhuan → auto-uploaded to the PC
 - **Scan-to-connect**: scan the QR code on the PC screen to connect in one step
@@ -79,15 +79,18 @@ Build requirements: see [BUILDING.md](BUILDING.md).
 1. Build and install the APK; allow notification permission on first run (**requires Android 16+**)
 2. Connect tab: **Scan QR** (scan the pairing QR from the PC tray menu — one step) or **Discover** (auto-discovery list, tap to fill) or enter IP/port/password manually
 3. Tap Connect → follow the prompt to enable accessibility (clipboard monitor) → the app auto-reconnects
-4. Copy text anywhere, then switch back to Liuzhuan (or copy while it's in the foreground) → the PC receives it instantly; long-press selected text → "Liuzhuan" sends it directly; share a file → Liuzhuan receives it automatically
+4. Send: copy anywhere and switch back to Liuzhuan for an instant push; long-press selected text → "Liuzhuan" sends directly; "Attach file" on the Send tab streams any file; or share to Liuzhuan
+5. (Optional, rooted users) LSPosed → enable the Liuzhuan module → check WeChat etc. → force-stop and reopen the target app → **background copies push instantly** (see "Two modes")
 
 > Both ends must be on the same LAN (same Wi-Fi, or a hotspot from the PC).
 >
 > 💡 On the PC: tray menu → "配对二维码" pops the pairing QR; enable "剪贴板监控" to auto-capture copies on the PC too.
 
-### A note on "background copy auto-send" (Android platform limitation)
+### Two modes of "background copy auto-send"
 
-For security, **Android 10+ denies clipboard reads to apps without window focus** (enforcement varies by OEM; ColorOS, for example, rejects it outright — background reads return empty). Liuzhuan does not use any invasive workaround (no root / Shizuku / IME replacement / polling). Instead it offers three compliant paths:
+**LSPosed mode (recommended, requires a rooted device)**: enable the Liuzhuan module in LSPosed Manager and check WeChat and other target apps — then **every background copy reaches the PC instantly**, in any app. How it works: the module hooks the system clipboard **write path** (`setPrimaryClip`) and captures content event-driven — it never reads the clipboard back and never polls, bypassing the Android 10+ focus restriction at its root; it is strictly observe-only (never modifies or blocks), so the source app's copy behavior is untouched. After enabling, force-stop the target app and reopen it (running processes are not injected).
+
+**Standard mode (no root needed)**: for security, Android 10+ denies clipboard reads to apps without window focus (enforcement varies by OEM; ColorOS, for example, rejects it outright). Liuzhuan offers three compliant paths:
 
 | Scenario | What to do | Experience |
 |---|---|---|
@@ -95,7 +98,7 @@ For security, **Android 10+ denies clipboard reads to apps without window focus*
 | Restricted apps (e.g. WeChat) | Long-press to select text → "Liuzhuan" in the system menu | Direct send, bypasses the clipboard |
 | Browsers / editors | Background copies push automatically (these apps expose text selections to accessibility) | Fully automatic |
 
-The app has built-in pipeline diagnostics (Connect tab) showing the real status of every stage: copy candidate → clipboard capture → send.
+The app has built-in pipeline diagnostics (Connect tab log area) showing the real status of every stage: capture → send.
 
 ## 🔌 Protocol (summary)
 
