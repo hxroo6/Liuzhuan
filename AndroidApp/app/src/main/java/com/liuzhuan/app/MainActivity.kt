@@ -35,9 +35,9 @@ import com.liuzhuan.app.net.Proto
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import okhttp3.RequestBody.Companion.toRequestBody
 import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
@@ -213,49 +213,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    /** 分享的文件 → HTTP POST 上传到电脑 */
+    /** 分享的文件 → HTTP POST 流式上传到电脑（大文件不整载内存，见 uploadFileStreaming） */
     private fun uploadSharedFile(uri: android.net.Uri) {
         toast(this, "⬆️ 正在上传...")
-        Thread {
-            try {
-                val resolver = contentResolver
-                // 文件名（ContentResolver 查询）
-                var name = "share_" + System.currentTimeMillis() + ".bin"
-                resolver.query(uri, null, null, null, null)?.use { c ->
-                    val idx = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
-                    if (idx >= 0 && c.moveToFirst()) c.getString(idx)?.let { name = it }
-                }
-                // 读取全部字节（基础版；大文件后续分块）
-                val bytes = resolver.openInputStream(uri)?.use { it.readBytes() }
-                    ?: throw Exception("无法读取文件")
-                if (bytes.isEmpty()) { toast(this, "❌ 空文件"); return@Thread }
-
-                // 电脑 IP + 口令哈希（从配置读取，下载/上传鉴权用）
-                val settings = runBlocking { store.settings.first() }
-                if (settings.serverIp.isBlank()) { toast(this, "❌ 未配置电脑 IP"); return@Thread }
-                val auth = Proto.sha256Hex(settings.password)
-
-                val url = "http://${settings.serverIp}:8900/upload?name=" +
-                    java.net.URLEncoder.encode(name, "UTF-8") + "&auth=$auth"
-                val client = OkHttpClient.Builder()
-                    .connectTimeout(10, TimeUnit.SECONDS)
-                    .writeTimeout(300, TimeUnit.SECONDS)
-                    .build()
-                val request = Request.Builder()
-                    .url(url)
-                    .post(bytes.toRequestBody())
-                    .build()
-                client.newCall(request).execute().use { resp ->
-                    if (resp.isSuccessful) {
-                        toast(this, "✅ 已上传到电脑")
-                    } else {
-                        toast(this, "❌ 上传失败 HTTP ${resp.code}")
-                    }
-                }
-            } catch (ex: Exception) {
-                toast(this, "❌ 上传失败: ${ex.message?.take(30)}")
+        uploadFileStreaming(
+            context = this,
+            uri = uri,
+            store = store,
+            onProgress = { _, _ -> /* 分享路径无进度 UI，完成/失败以 Toast 提示 */ },
+            onResult = { ok, msg ->
+                if (ok) toast(this, "✅ 已上传到电脑")
+                else toast(this, "❌ 上传失败: $msg")
             }
-        }.start()
+        )
     }
 }
 
@@ -276,6 +246,12 @@ fun MainScreen(
     val materials by com.liuzhuan.app.data.MaterialRepository.materials.collectAsStateWithLifecycle()
     val syncState by com.liuzhuan.app.data.MaterialRepository.syncState.collectAsStateWithLifecycle()
 
+    // 链路诊断 + 最近事件（渲染在下方日志卡片；2026-08-28 从剪贴板监控卡片归集迁移）
+    val clipDiagnostic by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+        .diagnostic.collectAsStateWithLifecycle()
+    val diagnosticHistory by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
+        .diagnosticHistory.collectAsStateWithLifecycle()
+
     // 自动发现状态
     var searching by remember { mutableStateOf(false) }
     val discoveredServers = remember { mutableStateListOf<LanDiscovery.Server>() }
@@ -287,6 +263,44 @@ fun MainScreen(
     var selectedTab by remember { mutableStateOf(0) }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
     var autoSend by remember { mutableStateOf(true) }
+
+    // 发送文件（任务：发送页加入文件按钮；流式上传，任意格式/大小）
+    var uploading by remember { mutableStateOf(false) }
+    var uploadStatus by remember { mutableStateOf("") }
+    var lastProgressPct by remember { mutableStateOf(-1) }
+
+    val filePicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        uploading = true
+        lastProgressPct = -1
+        uploadStatus = "⬆️ 准备上传…"
+        uploadFileStreaming(
+            context = context,
+            uri = uri,
+            store = store,
+            onProgress = { sent, total ->
+                val pct = if (total > 0) (sent * 100 / total).toInt() else -1
+                if (pct != lastProgressPct) { // 每变化 1% 才刷新，避免过度重组
+                    lastProgressPct = pct
+                    uploadStatus = if (pct >= 0)
+                        "⬆️ 上传中 $pct%（${formatSize(sent)}/${formatSize(total)}）"
+                    else "⬆️ 上传中 ${formatSize(sent)}"
+                }
+            },
+            onResult = { ok, msg ->
+                uploading = false
+                if (ok) {
+                    uploadStatus = "✅ $msg 已上传到电脑"
+                    toast(context, "✅ 已上传到电脑")
+                } else {
+                    uploadStatus = "❌ 上传失败：$msg"
+                    toast(context, "❌ 上传失败: $msg")
+                }
+            }
+        )
+    }
 
     // 读取已保存配置
     LaunchedEffect(Unit) {
@@ -558,53 +572,16 @@ fun MainScreen(
                             }
                         ) { Text(if (serviceRunning || systemBound) "管理" else "开启监控（无障碍）") }
 
-                        // ===== 立即测试剪贴板监听 =====
-                        var testResult by remember { mutableStateOf("") }
-                        val clipDiagnostic by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
-                            .diagnostic.collectAsStateWithLifecycle()
-                        val diagnosticHistory by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
-                            .diagnosticHistory.collectAsStateWithLifecycle()
-                        OutlinedButton(
-                            onClick = {
-                                // 写入测试文本（markLocal 防止真实推送到 PC），再前台读取验证捕获链路
-                                val testText = "流转剪贴板测试 ${System.currentTimeMillis()}"
-                                val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                        as android.content.ClipboardManager
-                                cm.setPrimaryClip(android.content.ClipData.newPlainText("test", testText))
-                                com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.markLocalText(testText)
-                                scope.launch {
-                                    val ev = com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
-                                        .captureManager.tryReadClipboard("manual_test")
-                                    testResult = if (ev != null && ev.text?.contains("流转剪贴板测试") == true) {
-                                        "✅ 捕获成功 | 方式=${ev.source} | 长度=${ev.text?.length} | 来源=${ev.sourcePackage ?: "本机"}"
-                                    } else {
-                                        "❌ 捕获失败（前台应可读；若失败请检查系统剪贴板限制）"
-                                    }
-                                }
-                            }
-                        ) { Text("立即测试剪贴板监听") }
-                        if (testResult.isNotEmpty()) {
-                            Text(testResult, style = MaterialTheme.typography.bodySmall, color = Color(0xFF9E9E9E))
-                        }
                         Text(
                             "链路诊断：$clipDiagnostic",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFFFB74D)
                         )
-                        if (diagnosticHistory.isNotEmpty()) {
-                            Text(
-                                "最近事件：",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF757575)
-                            )
-                            diagnosticHistory.reversed().forEach { line ->
-                                Text(
-                                    "· $line",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF9E9E9E)
-                                )
-                            }
-                        }
+                        Text(
+                            "诊断历史见下方「日志」卡片",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF757575)
+                        )
                     }
                 }
 
@@ -635,6 +612,23 @@ fun MainScreen(
                     ) {
                         Text("📜 日志（双击复制）", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
+                        // 最近事件：复制链路诊断历史（原连接页监控卡片，归集至此）
+                        if (diagnosticHistory.isNotEmpty()) {
+                            Text(
+                                "🩺 最近事件",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Color(0xFF757575)
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            diagnosticHistory.reversed().forEach { line ->
+                                Text(
+                                    "· $line",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Color(0xFF9E9E9E)
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                        }
                         logLines.takeLast(8).reversed().forEach { line ->
                             Text(
                                 line,
@@ -669,6 +663,26 @@ fun MainScreen(
                             enabled = isConnected,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text("发送") }
+                        HorizontalDivider()
+                        // ===== 发送文件到电脑（任意格式/大小，流式直传不经剪贴板）=====
+                        Text("📎 发送文件到电脑", style = MaterialTheme.typography.titleSmall)
+                        Button(
+                            onClick = { filePicker.launch(arrayOf("*/*")) },
+                            enabled = isConnected && !uploading,
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text(if (uploading) "⬆️ 上传中…" else "📎 加入文件（任意格式）") }
+                        if (uploadStatus.isNotEmpty()) {
+                            Text(
+                                uploadStatus,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Color(0xFF9E9E9E)
+                            )
+                        }
+                        Text(
+                            "文件经局域网直传电脑端素材库，不限格式与大小",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = Color(0xFF757575)
+                        )
                         HorizontalDivider()
                         // ===== 剪贴板自动发送开关 =====
                         Row(
@@ -821,6 +835,101 @@ private fun copyToClipboard(context: Context, text: String) {
     cm.setPrimaryClip(ClipData.newPlainText("liuzhuan", text))
     // 循环回写防护：本 App 写入的内容标记为已处理，避免再被捕获回推 PC
     com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.markLocalText(text)
+}
+
+/**
+ * 流式上传任意文件到电脑（POST /upload，PC 端 FileHttpServer 本就流式写盘）。
+ *
+ * 参考 LocalSend 等局域网传输实现的结论：同一可信局域网内，单条 HTTP 流式传输即可跑满
+ * Wi-Fi 带宽（GB 级文件约 1 分钟），无需分块/并行；分块+断点续传留作未来协议增强。
+ * 本端以 64KB buffer 从 ContentResolver 边读边发，内存占用恒定（旧版 readBytes() 整载
+ * 内存在大文件时会 OOM）。PC 端要求 Content-Length，SAF 未提供长度时先落缓存再传。
+ *
+ * 不经剪贴板/广播（M23 ClipHook 广播路径的 512KB Binder 限制与本路径无关），任意格式任意大小。
+ */
+private fun uploadFileStreaming(
+    context: Context,
+    uri: android.net.Uri,
+    store: SettingsStore,
+    onProgress: (sent: Long, total: Long) -> Unit,
+    onResult: (ok: Boolean, msg: String) -> Unit
+) {
+    Thread {
+        var tmp: java.io.File? = null
+        try {
+            val resolver = context.contentResolver
+            var name = "file_${System.currentTimeMillis()}.bin"
+            var size = -1L
+            resolver.query(uri, null, null, null, null)?.use { c ->
+                val iName = c.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                val iSize = c.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                if (c.moveToFirst()) {
+                    if (iName >= 0) c.getString(iName)?.let { name = it }
+                    if (iSize >= 0 && !c.isNull(iSize)) size = c.getLong(iSize)
+                }
+            }
+            if (name.isBlank()) name = "file_${System.currentTimeMillis()}.bin"
+
+            var readFrom = uri
+            if (size < 0) {
+                // 个别 DocumentsProvider 不报长度 → 先流式落缓存拿 Content-Length
+                val f = java.io.File(context.cacheDir, "lz_upload_${System.currentTimeMillis()}")
+                resolver.openInputStream(uri)?.use { input ->
+                    f.outputStream().use { input.copyTo(it, 64 * 1024) }
+                } ?: throw Exception("无法读取文件")
+                size = f.length()
+                readFrom = android.net.Uri.fromFile(f)
+                tmp = f
+            }
+            if (size <= 0L) { onResult(false, "空文件"); return@Thread }
+
+            val settings = runBlocking { store.settings.first() }
+            if (settings.serverIp.isBlank()) { onResult(false, "未配置电脑 IP"); return@Thread }
+            val auth = Proto.sha256Hex(settings.password)
+            val url = "http://${settings.serverIp}:8900/upload?name=" +
+                java.net.URLEncoder.encode(name, "UTF-8") + "&auth=$auth"
+
+            val body = object : okhttp3.RequestBody() {
+                override fun contentType(): okhttp3.MediaType? =
+                    "application/octet-stream".toMediaTypeOrNull()
+                override fun contentLength(): Long = size
+                override fun writeTo(sink: okio.BufferedSink) {
+                    resolver.openInputStream(readFrom)?.use { input ->
+                        val buf = ByteArray(64 * 1024)
+                        var sent = 0L
+                        while (true) {
+                            val n = input.read(buf)
+                            if (n <= 0) break
+                            sink.write(buf, 0, n)
+                            sent += n
+                            onProgress(sent, size)
+                        }
+                    } ?: throw Exception("无法读取文件")
+                }
+            }
+            val client = OkHttpClient.Builder()
+                .connectTimeout(10, TimeUnit.SECONDS)
+                .writeTimeout(300, TimeUnit.SECONDS)
+                .readTimeout(300, TimeUnit.SECONDS)
+                .build()
+            client.newCall(Request.Builder().url(url).post(body).build()).execute().use { resp ->
+                if (resp.isSuccessful) onResult(true, name)
+                else onResult(false, "HTTP ${resp.code}")
+            }
+        } catch (ex: Exception) {
+            onResult(false, ex.message?.take(40) ?: "未知错误")
+        } finally {
+            tmp?.delete()
+        }
+    }.start()
+}
+
+/** 字节数 → 人类可读大小 */
+private fun formatSize(bytes: Long): String = when {
+    bytes >= 1L shl 30 -> String.format("%.1f GB", bytes / 1073741824.0)
+    bytes >= 1L shl 20 -> String.format("%.1f MB", bytes / 1048576.0)
+    bytes >= 1L shl 10 -> String.format("%.1f KB", bytes / 1024.0)
+    else -> "$bytes B"
 }
 
 /** 下载文件到 MediaStore（Android 10+ 免存储权限） */
