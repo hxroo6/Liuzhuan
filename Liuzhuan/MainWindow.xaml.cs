@@ -196,6 +196,28 @@ public partial class MainWindow : Window
     /// <summary>手机上传文件 → 以本地新增方式进入流转</summary>
     private void OnLanFileUploaded(string filePath, string displayName)
     {
+        // HTTP 工作线程同步完成转换，再登记素材，保证手机同步到的是最终文件。
+        // WPF JPEG 白底绘制要求 STA，使用独立线程，不阻塞界面线程。
+        var mode = AppSettings.HeicConversion;
+        string? conversionError = null;
+        var conversionThread = new Thread(() =>
+        {
+            try
+            {
+                var originalPath = filePath;
+                (filePath, displayName) = HeicImageConverter.ConvertIfNeeded(filePath, displayName, mode);
+                if (filePath != originalPath)
+                    Logger.Run("HEIC converted: {0} -> {1}; original retained", originalPath, filePath);
+            }
+            catch (Exception ex)
+            {
+                conversionError = ex.Message;
+                Logger.Error("HEIC conversion failed, original retained: {0}: {1}", filePath, ex.Message);
+            }
+        }) { IsBackground = true };
+        conversionThread.SetApartmentState(ApartmentState.STA);
+        conversionThread.Start();
+        conversionThread.Join();
         Dispatcher.Invoke(() =>
         {
             try
@@ -213,6 +235,10 @@ public partial class MainWindow : Window
                 DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
                 RefreshView();
                 Logger.Run("LAN: file uploaded from phone -> added: {0}", displayName);
+                if (conversionError != null)
+                    Dispatcher.BeginInvoke(new Action(() => MessageBox.Show(this,
+                        "照片已接收并保留原文件，但自动转换失败。\n请检查 Windows 的 HEIF/HEVC 图像解码支持。\n\n" + conversionError,
+                        "HEIC 转换失败", MessageBoxButton.OK, MessageBoxImage.Warning)));
             }
             catch (Exception ex)
             {
@@ -1258,6 +1284,26 @@ public partial class MainWindow : Window
             }
         };
         menu.Items.Add(clipMonitorItem);
+
+        var heicMenu = new MenuItem { Header = "接收 HEIC 自动转换", Foreground = (Brush)FindResource("TextBrush") };
+        foreach (var option in new[] {
+            (Mode: HeicConversionMode.Off, Label: "关闭（保留原格式）"),
+            (Mode: HeicConversionMode.Png, Label: "PNG（无损，默认）"),
+            (Mode: HeicConversionMode.Jpeg, Label: "JPEG（质量 95，白色背景）") })
+        {
+            var choice = new MenuItem { Header = option.Label, IsCheckable = true,
+                IsChecked = AppSettings.HeicConversion == option.Mode,
+                ToolTip = "仅对之后收到的 HEIC 图片生效；转换后仍保留原文件。",
+                Foreground = (Brush)FindResource("TextBrush") };
+            choice.Click += (_, _) =>
+            {
+                AppSettings.HeicConversion = option.Mode;
+                AppSettings.Save();
+                foreach (MenuItem sibling in heicMenu.Items) sibling.IsChecked = ReferenceEquals(sibling, choice);
+            };
+            heicMenu.Items.Add(choice);
+        }
+        menu.Items.Add(heicMenu);
 
         menu.Items.Add(new Separator());
 

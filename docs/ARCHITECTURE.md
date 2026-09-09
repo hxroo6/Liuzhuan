@@ -104,6 +104,15 @@
 
 ## 4. 协议参考
 
+### 手机上传 HEIC 的电脑端兼容转换（2026-09-10）
+
+- `MainWindow.OnLanFileUploaded` 在登记素材之前调用 `HeicImageConverter`，使用独立 STA 线程解码/编码，界面线程只负责登记最终文件。HTTP 回执在转换和登记后返回，协议不变。
+- 设置菜单「接收 HEIC 自动转换」提供 Off / Png / Jpeg，持久化到 `appsettings.json` 的 `HeicConversion`；旧配置默认 Png。仅影响后续上传。
+- 按 ISO BMFF `ftyp` 中 HEVC 图像品牌识别，不能信任扩展名（手机可能提供 HEIC 内容和 `.png` 文件名）。PNG 保留分辨率，JPEG 质量 95、透明区域白底；多帧只转换主图。
+- 输出独立文件，原始上传文件始终保留；素材路径、显示名、大小及广播均使用转换后的文件。失败时保留并登记原文件、记录错误并异步提示用户，不阻止上传回执。
+- 使用 Windows WIC 解码器，目标电脑需具备 HEIF/HEVC 解码支持；本机已用两张问题原图验证。输出是兼容静态图片，不承诺保留原 HEIC 的动态内容、HDR 或全部元数据。
+- 回归命令：`F:/dotnet7/dotnet.exe run --project scripts/HeicConversionChecks -- <HEIC样本路径> ...`，验证设置持久化、格式识别、PNG/JPEG 全分辨率解码、关闭/普通图片透传及损坏文件保留。
+
 帧格式 `{v, type, id, ts, device, data}`（`LanMessage.cs` ↔ `Proto.kt` 对应，字段两端成对修改）。
 
 | type | 方向 | data 关键字段 |

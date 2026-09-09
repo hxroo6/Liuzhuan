@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType><TargetFramework>net7.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Liuzhuan/Services/HeicImageConverter.cs" Link="HeicImageConverter.cs" />
+    <Compile Include="../../Liuzhuan/Services/AppSettings.cs" Link="AppSettings.cs" />
+  </ItemGroup>
+</Project>
