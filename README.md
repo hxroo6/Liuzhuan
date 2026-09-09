@@ -13,6 +13,7 @@
 ## ✨ 功能
 
 ### 电脑端（C# WPF）
+- **HEIC 自动转换**：收到手机 HEIC 图片时，按真实格式识别并转为 PNG（默认、无损）或 JPEG；即使原文件错误命名为 `.png` 也能识别，原文件始终保留
 - 悬浮侧边栏：拖拽暂存任意文件/图片/文字，即用即拖
 - 素材分类：文字 / 图片 / 视频 / 音频 / 文件
 - 搜索、删除、撤回（Ctrl+Z）、剪贴板粘贴（Ctrl+V）
@@ -64,6 +65,10 @@
 
 ### 电脑端（Windows 10/11 x64）
 
+从 [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest) 下载 `Liuzhuan-v1.1.1-windows-x64.zip`，解压后运行 `app/Liuzhuan.exe`，无需另装 .NET。升级前退出旧版，用新版 `app` 目录替换旧版程序目录，保留同级 `data` 目录（素材、配对和设置）。v1.1.1 仅更新电脑端，安卓继续使用 v1.1.0 APK，无需重装。
+
+也可以从源码构建：
+
 ```bash
 cd Liuzhuan
 dotnet publish -c Release -r win-x64 --self-contained true -o dist
@@ -71,6 +76,20 @@ dotnet publish -c Release -r win-x64 --self-contained true -o dist
 ```
 
 启动后：设置菜单 → 查看本机 IP / 生成口令。默认端口：控制面 8899、数据面 8900。
+
+#### HEIC 图片自动转换（v1.1.1）
+
+设置 → **接收 HEIC 自动转换**：
+
+| 选项 | 行为 |
+|---|---|
+| PNG（默认） | 转为无损 PNG，保留图片分辨率 |
+| JPEG | 转为质量 95 的 JPEG，透明区域使用白色背景 |
+| 关闭 | 原样接收，不转换 |
+
+设置会保存，仅对之后从手机收到的图片生效；旧图片可重新发送。转换后的文件进入素材库并同步到手机，原始文件仍保留在上传目录。普通图片不变。
+
+转换依赖 Windows 的 HEIF/HEVC 解码支持；缺少解码器或转换失败时，会提示并保留收到的原文件。转换输出静态主图，不保证保留多帧、HDR 或全部元数据。PNG/JPEG 是实际重新编码，不是仅修改后缀。
 
 ### 安卓端
 
@@ -81,6 +100,8 @@ dotnet publish -c Release -r win-x64 --self-contained true -o dist
 3. 点连接 → 自动引导开启无障碍（剪贴板监控）→ 返回自动重连
 4. 发送：任意 App 复制后切回流转即秒发；长按选中文字 → 菜单「流转」直发；发送页「加入文件」可传任意格式/大小文件；分享菜单上传
 5. （可选，Root 用户）LSPosed → 启用流转模块 → 勾选微信等 App → force-stop 目标 App 重开 → **后台复制秒达**（见「两种模式」）
+
+覆盖安装 APK 后，请到系统无障碍设置将流转服务关闭→重新开启。
 
 > 两端需在同一局域网（同一 Wi-Fi 或电脑开热点给手机）。
 >

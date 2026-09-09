@@ -13,6 +13,7 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 ## ✨ Features
 
 ### Desktop (C# WPF)
+- **Automatic HEIC conversion**: detects uploaded HEIC images by their actual contents and converts them to PNG (default, lossless) or JPEG, even when incorrectly named `.png`; the original file is always retained
 - Floating side panel: drag-and-drop stash any file/image/text, drag out to use
 - Material categories: text / image / video / audio / file
 - Search, delete, undo (Ctrl+Z), paste from clipboard (Ctrl+V)
@@ -64,6 +65,10 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 ### Desktop (Windows 10/11 x64)
 
+Download `Liuzhuan-v1.1.1-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. v1.1.1 updates the desktop app only; keep using the v1.1.0 Android APK without reinstalling it.
+
+Alternatively, build from source:
+
 ```bash
 cd Liuzhuan
 dotnet publish -c Release -r win-x64 --self-contained true -o dist
@@ -71,6 +76,20 @@ dotnet publish -c Release -r win-x64 --self-contained true -o dist
 ```
 
 After launch: tray menu → view local IP / generate password. Default ports: control 8899, data 8900.
+
+#### Automatic HEIC conversion (v1.1.1)
+
+Open Settings → **接收 HEIC 自动转换** (Convert received HEIC images):
+
+| Option | Behavior |
+|---|---|
+| PNG (default) | Lossless PNG output at the original image resolution |
+| JPEG | JPEG quality 95, with a white background for transparent areas |
+| Off | Receive the original file without conversion |
+
+The setting persists and applies only to future uploads from phones; resend older images to convert them. The converted file is added to the material library and synced to phones, while the original remains in the uploads directory. Other image formats pass through unchanged.
+
+Conversion requires Windows HEIF/HEVC decoding support. If decoding is unavailable or conversion fails, the app displays a warning and keeps the received original. Output is a static primary image; multiple frames, HDR, and all original metadata are not guaranteed to be preserved. Images are actually re-encoded, not merely renamed.
 
 ### Android
 
@@ -81,6 +100,8 @@ Build requirements: see [BUILDING.md](BUILDING.md).
 3. Tap Connect → follow the prompt to enable accessibility (clipboard monitor) → the app auto-reconnects
 4. Send: copy anywhere and switch back to Liuzhuan for an instant push; long-press selected text → "Liuzhuan" sends directly; "Attach file" on the Send tab streams any file; or share to Liuzhuan
 5. (Optional, rooted users) LSPosed → enable the Liuzhuan module → check WeChat etc. → force-stop and reopen the target app → **background copies push instantly** (see "Two modes")
+
+After installing an APK update over an existing installation, turn the Liuzhuan accessibility service off and back on in Android settings.
 
 > Both ends must be on the same LAN (same Wi-Fi, or a hotspot from the PC).
 >
