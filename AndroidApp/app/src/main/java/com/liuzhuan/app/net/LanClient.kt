@@ -91,12 +91,22 @@ class LanClient(
         log("⏸️ 已暂停重连（点「连接」可恢复）")
     }
 
-    fun sendText(content: String): Boolean {
+    fun sendText(content: String, taskId:String=java.util.UUID.randomUUID().toString()): Boolean {
+        com.liuzhuan.app.TransferTasks.start(content.take(40),"手机 → 电脑",taskId) {
+            com.liuzhuan.app.LanHub.client?.sendText(content,taskId)
+                ?: com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
+        }
         if (state != State.Connected) {
             log("未连接，无法发送")
+            com.liuzhuan.app.TransferTasks.finish(taskId,false,"未连接电脑，请连接后重试")
             return false
         }
-        val accepted = ws?.send(Proto.buildSyncText(content)) == true
+        val accepted = ws?.send(Proto.buildSyncText(content,requestId=taskId)) == true
+        if(!accepted) com.liuzhuan.app.TransferTasks.finish(taskId,false,"发送未成功，请检查连接")
+        else scope.launch {
+            delay(20_000)
+            if(com.liuzhuan.app.TransferTasks.running(taskId)) com.liuzhuan.app.TransferTasks.finish(taskId,false,"未收到电脑确认；请先检查电脑再重试，避免重复。旧版电脑需升级。")
+        }
         log(if (accepted) "已提交文字（${content.length} 字）" else "发送未成功，请检查连接")
         return accepted
     }
@@ -110,24 +120,43 @@ class LanClient(
     }
 
     /** 上传文件/图片到电脑（HTTP POST 到 /upload 端点，复用 PC 端 FileHttpServer） */
-    fun pushFile(bytes: ByteArray, name: String, mime: String) {
-        val s = lastSettings ?: run { log("未连接，无法上传文件"); return }
+    fun pushFile(bytes: ByteArray, name: String, mime: String, taskId:String=java.util.UUID.randomUUID().toString()) {
+        com.liuzhuan.app.TransferTasks.start(name,"手机 → 电脑",taskId,retry={
+            com.liuzhuan.app.LanHub.client?.pushFile(bytes,name,mime,taskId)
+                ?: com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
+        })
+        val s = lastSettings ?: run {
+            log("未连接，无法上传文件")
+            com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
+            return
+        }
         val filePort = (s.serverPort.toIntOrNull() ?: 8899) + 1
         val auth = Proto.sha256Hex(s.password)
         val encodedName = URLEncoder.encode(name, "UTF-8")
         val url = "http://${s.serverIp}:$filePort/upload?name=$encodedName&auth=$auth"
         val body = bytes.toRequestBody(mime.toMediaTypeOrNull())
         val req = Request.Builder().url(url).post(body).build()
+        com.liuzhuan.app.TransferTasks.progress(taskId,0,bytes.size.toLong())
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) {
                 log("文件上传失败: ${e.message}")
+                com.liuzhuan.app.TransferTasks.finish(taskId,false,"${e.message}；重试前请检查电脑是否已收到")
             }
             override fun onResponse(call: Call, response: Response) {
                 response.use {
+                    com.liuzhuan.app.TransferTasks.progress(taskId,bytes.size.toLong(),bytes.size.toLong())
+                    com.liuzhuan.app.TransferTasks.finish(taskId,response.isSuccessful,if(response.isSuccessful) "电脑已接收" else "HTTP ${response.code}")
                     log(if (response.isSuccessful) "文件上传成功（${bytes.size} 字节）" else "文件上传失败 HTTP ${response.code}")
                 }
             }
         })
+    }
+
+    fun thumbnailUrl(id:String):String? {
+        val s=lastSettings ?: return null
+        if(state!=State.Connected) return null
+        val port=(s.serverPort.toIntOrNull() ?: 8899)+1
+        return "http://${s.serverIp}:$port/thumbnail/${URLEncoder.encode(id,"UTF-8")}?auth=${Proto.sha256Hex(s.password)}"
     }
 
     /** 请求素材详情（文字全文 / 文件下载地址） */
@@ -158,8 +187,15 @@ class LanClient(
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if(webSocket !== ws) return
                 val (type, data) = Proto.parse(text)
                 when (type) {
+                    "ack" -> {
+                        if(data.optString("status")=="stored") {
+                            val requestId=data.optString("requestId")
+                            com.liuzhuan.app.TransferTasks.finish(requestId,true,"电脑已接收")
+                        }
+                    }
                     "welcome" -> {
                         setState(State.Connected)
                         log("✅ 已连接电脑端流转")

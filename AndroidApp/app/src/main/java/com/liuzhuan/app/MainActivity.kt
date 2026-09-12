@@ -129,15 +129,7 @@ class MainActivity : ComponentActivity() {
                     toast(appContext, "📝 已复制到剪贴板")
                 } else if (data.downloadUrl.isNotEmpty()) {
                     // 文件 → 下载保存（MediaStore，Android 10+ 免存储权限）
-                    val fileName = data.name.ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
-                    Thread {
-                        try {
-                            downloadToMediaStore(appContext, data.downloadUrl, fileName, data.type)
-                            toast(appContext, "✅ 已保存到手机")
-                        } catch (ex: Exception) {
-                            toast(appContext, "❌ 保存失败: ${ex.message?.take(30)}")
-                        }
-                    }.start()
+                    receiveFile(appContext, data)
                 }
             }
         )
@@ -262,6 +254,8 @@ fun MainScreen(
     var port by remember { mutableStateOf("8899") }
     var password by remember { mutableStateOf("") }
     var textInput by rememberSaveable { mutableStateOf("") }
+    var showTransfers by remember { mutableStateOf(false) }
+    val transfers by TransferTasks.tasks.collectAsStateWithLifecycle()
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var manualConnection by rememberSaveable { mutableStateOf(false) }
     var showLogs by rememberSaveable { mutableStateOf(false) }
@@ -367,10 +361,12 @@ fun MainScreen(
         }
     }
 
+    if (showTransfers) TransferTaskDialog { showTransfers = false }
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("流转  /  LIUZHUAN", style = MaterialTheme.typography.titleMedium) },
+                actions = { TextButton(onClick = { showTransfers = true }) { Text("收发 ${transfers.count { it.running }}") } },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
@@ -815,10 +811,8 @@ fun MainScreen(
                                         .padding(vertical = 14.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    Text(
-                                        typeIcon(item.type),
-                                        style = MaterialTheme.typography.titleMedium
-                                    )
+                                    if (item.type == "Image") PhotoThumbnail(if(isConnected) client.thumbnailUrl(item.id) else null, item.name)
+                                    else Text(typeIcon(item.type), style = MaterialTheme.typography.titleMedium)
                                     Spacer(Modifier.width(10.dp))
                                     Column(Modifier.weight(1f)) {
                                         Text(
@@ -899,8 +893,13 @@ private fun uploadFileStreaming(
     uri: android.net.Uri,
     store: SettingsStore,
     onProgress: (sent: Long, total: Long) -> Unit,
-    onResult: (ok: Boolean, msg: String) -> Unit
+    onResult: (ok: Boolean, msg: String) -> Unit,
+    taskId:String = java.util.UUID.randomUUID().toString()
 ) {
+    val appContext=context.applicationContext
+    TransferTasks.start("准备文件", "手机 → 电脑",taskId) {
+        uploadFileStreaming(appContext,uri,SettingsStore(appContext),{_,_->},{ok,msg->toast(appContext,msg)},taskId)
+    }
     Thread {
         var tmp: java.io.File? = null
         try {
@@ -917,6 +916,7 @@ private fun uploadFileStreaming(
             }
             if (name.isBlank()) name = "file_${System.currentTimeMillis()}.bin"
 
+            TransferTasks.progress(taskId,0,size.coerceAtLeast(0),name)
             var readFrom = uri
             if (size < 0) {
                 // 个别 DocumentsProvider 不报长度 → 先流式落缓存拿 Content-Length
@@ -928,12 +928,12 @@ private fun uploadFileStreaming(
                 readFrom = android.net.Uri.fromFile(f)
                 tmp = f
             }
-            if (size <= 0L) { onResult(false, "空文件"); return@Thread }
+            if (size <= 0L) throw Exception("空文件")
 
             val settings = runBlocking { store.settings.first() }
-            if (settings.serverIp.isBlank()) { onResult(false, "未配置电脑 IP"); return@Thread }
+            if (settings.serverIp.isBlank()) throw Exception("未配置电脑 IP")
             val auth = Proto.sha256Hex(settings.password)
-            val url = "http://${settings.serverIp}:8900/upload?name=" +
+            val url = "http://${settings.serverIp}:${(settings.serverPort.toIntOrNull() ?: 8899)+1}/upload?name=" +
                 java.net.URLEncoder.encode(name, "UTF-8") + "&auth=$auth"
 
             val body = object : okhttp3.RequestBody() {
@@ -949,6 +949,7 @@ private fun uploadFileStreaming(
                             if (n <= 0) break
                             sink.write(buf, 0, n)
                             sent += n
+                            TransferTasks.progress(taskId,sent,size)
                             onProgress(sent, size)
                         }
                     } ?: throw Exception("无法读取文件")
@@ -960,10 +961,12 @@ private fun uploadFileStreaming(
                 .readTimeout(300, TimeUnit.SECONDS)
                 .build()
             client.newCall(Request.Builder().url(url).post(body).build()).execute().use { resp ->
-                if (resp.isSuccessful) onResult(true, name)
-                else onResult(false, "HTTP ${resp.code}")
+                if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
+                TransferTasks.finish(taskId,true,"电脑已接收")
+                onResult(true,name)
             }
         } catch (ex: Exception) {
+            TransferTasks.finish(taskId,false,"${ex.message ?: "传输失败"}；重试前请检查电脑是否已收到")
             onResult(false, ex.message?.take(40) ?: "未知错误")
         } finally {
             tmp?.delete()
@@ -979,40 +982,52 @@ private fun formatSize(bytes: Long): String = when {
     else -> "$bytes B"
 }
 
-/** 下载文件到 MediaStore（Android 10+ 免存储权限） */
-private fun downloadToMediaStore(context: Context, url: String, fileName: String, type: String) {
-    val safeName = fileName.substringAfterLast('/').ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
-    val client = OkHttpClient.Builder()
-        .connectTimeout(10, TimeUnit.SECONDS)
-        .readTimeout(180, TimeUnit.SECONDS)
-        .build()
-    val req = Request.Builder().url(url).build()
-    client.newCall(req).execute().use { resp ->
-        if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
-        val bytes = resp.body?.bytes() ?: throw Exception("empty body")
-        val collection = when (type) {
-            "Image" -> MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            "Video" -> MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            "Audio" -> MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            else -> MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        }
-        val relativePath = when (type) {
-            "Image" -> "Pictures/Liuzhuan"
-            "Video" -> "Movies/Liuzhuan"
-            "Audio" -> "Music/Liuzhuan"
-            else -> "Download/Liuzhuan"
-        }
-        val values = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, safeName)
-            put(MediaStore.MediaColumns.MIME_TYPE, mimeFor(safeName))
-            put(MediaStore.MediaColumns.RELATIVE_PATH, relativePath)
-        }
-        val uri = context.contentResolver.insert(collection, values)
-            ?: throw Exception("insert failed")
-        context.contentResolver.openOutputStream(uri)?.use { it.write(bytes) }
-    }
+/** 下载采用流式写入与 IS_PENDING，未完成的文件不会出现在相册。 */
+private fun receiveFile(context:Context,data:Proto.ItemData) {
+    val id="download:${data.id}"
+    if(TransferTasks.running(id)) return
+    val name=data.name.ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
+    TransferTasks.start(name,"电脑 → 手机",id) { receiveFile(context,data) }
+    Thread {
+        try { downloadToMediaStore(context,data.downloadUrl,name,data.type,id); TransferTasks.finish(id,true,"已保存到手机"); toast(context,"已保存到手机") }
+        catch(ex:Exception) { TransferTasks.finish(id,false,ex.message ?: "保存失败");toast(context,"保存失败，请在收发任务中重试") }
+    }.start()
 }
 
+private fun downloadToMediaStore(context: Context, url: String, fileName: String, type: String, taskId:String) {
+    val safeName = fileName.substringAfterLast('/').ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
+    val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).build()
+    client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+        if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
+        val body=resp.body ?: throw Exception("empty body")
+        val total=body.contentLength()
+        val collection = when(type) {
+            "Image"->MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            "Video"->MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            "Audio"->MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            else->MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        }
+        val folder=when(type) { "Image"->"Pictures"; "Video"->"Movies"; "Audio"->"Music";else->"Download" }
+        val values=ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME,safeName)
+            put(MediaStore.MediaColumns.MIME_TYPE,mimeFor(safeName))
+            put(MediaStore.MediaColumns.RELATIVE_PATH,"$folder/Liuzhuan")
+            put(MediaStore.MediaColumns.IS_PENDING,1)
+        }
+        val resolver=context.contentResolver
+        val uri=resolver.insert(collection,values) ?: throw Exception("无法创建保存文件")
+        try {
+            resolver.openOutputStream(uri)?.use { output ->
+                body.byteStream().use { input ->
+                    val buffer=ByteArray(65536); var done=0L
+                    while(true) { val n=input.read(buffer); if(n<0) break; output.write(buffer,0,n); done+=n;TransferTasks.progress(taskId,done,total.coerceAtLeast(0)) }
+                    if(total>=0 && done!=total) throw Exception("下载中断：$done/$total 字节")
+                }
+            } ?: throw Exception("无法写入文件")
+            if(resolver.update(uri,ContentValues().apply {put(MediaStore.MediaColumns.IS_PENDING,0)},null,null)<=0) throw Exception("无法完成文件保存")
+        } catch(ex:Exception) { resolver.delete(uri,null,null);throw ex }
+    }
+}
 private fun mimeFor(name: String): String {
     val n = name.lowercase()
     return when {

@@ -12,6 +12,13 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 ## ✨ Features
 
+### New in the local development build (M27, not yet on Releases)
+
+- **Transfer tasks**: open “收发” at the bottom of the desktop panel or top of the Android app to see progress, speed, and outcomes for the current session. Failed phone tasks can be retried.
+- **Photo thumbnails on Android**: the Receive page loads and caches previews. Downloads stream to storage; incomplete files remain hidden from the gallery.
+- **Desktop quick preview**: select an image or text and press Space. Browse previous/next items, zoom images, fit to window, copy, or press Esc to close.
+- **Completion reflects the actual stage**: text waits for desktop registration, incomplete uploads are rejected, and desktop “sent” is distinct from phone “saved.” Upgrade both ends together. Task history resets on restart; retries transfer the whole file again.
+
 ### Desktop (C# WPF)
 - **Automatic HEIC conversion**: detects uploaded HEIC images by their actual contents and converts them to PNG (default, lossless) or JPEG, even when incorrectly named `.png`; the original file is always retained
 - Floating side panel: drag-and-drop stash any file/image/text, drag out to use

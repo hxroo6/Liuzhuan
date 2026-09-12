@@ -379,6 +379,7 @@
                         <TextBlock x:Name="FeedbackText" Text="单击复制 · 拖出使用 · 右键更多" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Content="更多" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Click="ManageBtn_Click" ToolTip="清空分类与全部清空"/>
+                            <Button DockPanel.Dock="Right" Content="收发" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Margin="0,0,6,0" Click="TransfersBtn_Click" ToolTip="查看收发任务"/>
                             <Button DockPanel.Dock="Right" x:Name="UndoBtn" Content="撤回" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Margin="0,0,6,0" Click="UndoBtn_Click" ToolTip="撤回删除 · Ctrl+Z" IsEnabled="False"/>
                             <TextBlock x:Name="StatusText" FontSize="12" Foreground="{StaticResource TextDimBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
                         </DockPanel>

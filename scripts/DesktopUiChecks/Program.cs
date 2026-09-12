@@ -62,6 +62,24 @@ internal static class Program
         ((RadioButton)window.FindName("TabText")).IsChecked=true;
         Check(((ListView)window.FindName("TextView")).Visibility==Visibility.Visible,"text reading view");
         Render("desktop-text.png");
+        if(args.Length>1)
+        {
+            var previews=new List<MaterialItem> {new() {Type=MaterialType.Image,FilePath=args[1],DisplayName="第一张"}, new() {Type=MaterialType.Image,FilePath=args[1],DisplayName="第二张"}};
+            var preview=new Liuzhuan.Views.QuickPreviewWindow(previews,0,_=>{});
+            var move=preview.GetType().GetMethod("Move",BindingFlags.NonPublic|BindingFlags.Instance)!;
+            move.Invoke(preview,new object[]{1});move.Invoke(preview,new object[]{-1});
+            var content=(ContentControl)preview.GetType().GetField("_content",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(preview)!;
+            Check(content.Content is ScrollViewer,"image preview navigation reuses image without parent conflict");
+            var previewRoot=(FrameworkElement)preview.Content;previewRoot.Measure(new Size(720,550));previewRoot.Arrange(new Rect(0,0,720,550));previewRoot.UpdateLayout();
+            var previewImage=(Image)preview.GetType().GetField("_image",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(preview)!;
+            Check(previewImage.ActualHeight>300,"preview adapts image to available content area");
+            var shot=new RenderTargetBitmap(720,550,96,96,PixelFormats.Pbgra32);shot.Render(previewRoot);var encoder=new PngBitmapEncoder();encoder.Frames.Add(BitmapFrame.Create(shot));using(var outputFile=File.Create(Path.Combine(output,"quick-preview.png"))) encoder.Save(outputFile);
+        }
+        TransferJournal.Report(new("preview-active","旅行照片.png","手机 → 电脑",6*1048576,12*1048576,"传输中","",2*1048576));
+        TransferJournal.Report(new("preview-failed","设计稿.pdf","电脑 → 手机",1048576,8*1048576,"失败","连接中断，请在手机重试",0));
+        var tasksWindow=new Liuzhuan.Views.TransferWindow();
+        var tasksRoot=(FrameworkElement)tasksWindow.Content;tasksRoot.Measure(new Size(480,500));tasksRoot.Arrange(new Rect(0,0,480,500));tasksRoot.UpdateLayout();
+        var tasksShot=new RenderTargetBitmap(480,500,96,96,PixelFormats.Pbgra32);tasksShot.Render(tasksRoot);var tasksEncoder=new PngBitmapEncoder();tasksEncoder.Frames.Add(BitmapFrame.Create(tasksShot));using(var tasksOutput=File.Create(Path.Combine(output,"transfer-tasks.png"))) tasksEncoder.Save(tasksOutput);
         store.Dispose();
         Console.WriteLine("Rendered to " + output);
     }

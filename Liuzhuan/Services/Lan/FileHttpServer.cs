@@ -97,7 +97,15 @@ public class FileHttpServer : IDisposable
                 return;
             }
 
-            var id = pathAndQuery.StartsWith("file/", StringComparison.OrdinalIgnoreCase)
+            // 消费 GET 请求头后再关闭连接，避免有未读数据时 TCP RST 截断响应正文。
+            for (int i = 0; i < 100; i++)
+            {
+                if (string.IsNullOrEmpty(await ReadLineAsync(stream,8192))) break;
+                if (i == 99) { await WriteSimpleAsync(stream,400,"Bad Request"); return; }
+            }
+
+            var isThumbnail = pathAndQuery.StartsWith("thumbnail/", StringComparison.OrdinalIgnoreCase);
+            var id = isThumbnail ? pathAndQuery.Substring(10) : pathAndQuery.StartsWith("file/", StringComparison.OrdinalIgnoreCase)
                 ? pathAndQuery.Substring(5)
                 : "";
 
@@ -122,6 +130,19 @@ public class FileHttpServer : IDisposable
                 return;
             }
 
+            if (isThumbnail)
+            {
+                if (item.Type != MaterialType.Image) { await WriteSimpleAsync(stream,404,"Not Found"); return; }
+                try
+                {
+                    var thumbnail = await NetworkThumbnailService.CreateAsync(item.FilePath);
+                    await stream.WriteAsync(Encoding.ASCII.GetBytes($"HTTP/1.1 200 OK\r\nContent-Type: image/png\r\nContent-Length: {thumbnail.Length}\r\nConnection: close\r\n\r\n"));
+                    await stream.WriteAsync(thumbnail);
+                }
+                catch { await WriteSimpleAsync(stream,415,"Unsupported Media Type"); }
+                return;
+            }
+
             var fileLen = new FileInfo(item.FilePath).Length;
             var header = "HTTP/1.1 200 OK\r\n" +
                          "Content-Length: " + fileLen + "\r\n" +
@@ -132,7 +153,7 @@ public class FileHttpServer : IDisposable
             await stream.WriteAsync(headerBytes);
             await using (var fs = File.OpenRead(item.FilePath))
             {
-                await fs.CopyToAsync(stream);
+                await CopyTracked(fs, stream, fileLen, Guid.NewGuid().ToString("N"), item.DisplayName, "电脑 → 手机", "已发送");
             }
             Logger.Run("FileHttpServer: served {0} ({1} bytes)", item.DisplayName, fileLen);
         }
@@ -183,25 +204,53 @@ public class FileHttpServer : IDisposable
         Directory.CreateDirectory(uploadDir);
         var savePath = Path.Combine(uploadDir, Guid.NewGuid().ToString("N") + "_" + name);
 
-        using (var fs = File.Create(savePath))
+        var transferId = Guid.NewGuid().ToString("N");
+        var partial = savePath + ".part";
+        try
         {
-            var buf = new byte[81920];
-            long remaining = length;
-            while (remaining > 0)
+            using (var fs = File.Create(partial))
             {
-                int n = await stream.ReadAsync(buf, 0, (int)Math.Min(buf.Length, remaining));
-                if (n <= 0) break;
-                await fs.WriteAsync(buf, 0, n);
-                remaining -= n;
+                await CopyTracked(stream, fs, length, transferId, name, "手机 → 电脑", "处理中");
             }
+            File.Move(partial, savePath);
+            FileUploaded?.Invoke(savePath, name);
+            TransferJournal.Report(new(transferId,name,"手机 → 电脑",length,length,"已接收","",0));
+        }
+        catch (Exception ex)
+        {
+            if (File.Exists(partial)) File.Delete(partial);
+            TransferJournal.Report(new(transferId,name,"手机 → 电脑",0,length,"失败",ex.Message,0));
+            await WriteSimpleAsync(stream,400,"Incomplete or Failed Upload");
+            return;
         }
 
         Logger.Run("FileHttpServer: upload saved {0} ({1} bytes)", savePath, length);
-        FileUploaded?.Invoke(savePath, name);
 
         // 响应
         var resp = "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
         await stream.WriteAsync(Encoding.ASCII.GetBytes(resp));
+    }
+
+    private static async Task CopyTracked(Stream input, Stream output, long total, string id, string name, string direction, string finalState)
+    {
+        var clock = System.Diagnostics.Stopwatch.StartNew();
+        long done = 0, lastReport = -200;
+        var buffer = new byte[65536];
+        void Report(string state, string error = "") => TransferJournal.Report(new(id,name,direction,done,total,state,error,done / Math.Max(0.01,clock.Elapsed.TotalSeconds)));
+        Report("传输中");
+        try
+        {
+            while (done < total)
+            {
+                int n = await input.ReadAsync(buffer.AsMemory(0,(int)Math.Min(buffer.Length,total-done))).AsTask().WaitAsync(TimeSpan.FromSeconds(120));
+                if (n == 0) throw new EndOfStreamException($"文件未收完整：{done}/{total} 字节");
+                await output.WriteAsync(buffer.AsMemory(0,n)).AsTask().WaitAsync(TimeSpan.FromSeconds(120));
+                done += n;
+                if (clock.ElapsedMilliseconds-lastReport>=200) { Report("传输中");lastReport=clock.ElapsedMilliseconds; }
+            }
+            Report(finalState);
+        }
+        catch(Exception ex) { Report("失败",ex.Message);throw; }
     }
 
     private static async Task<string?> ReadLineAsync(NetworkStream stream, int maxLen)

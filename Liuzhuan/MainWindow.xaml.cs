@@ -247,6 +247,7 @@ public partial class MainWindow : Window
             catch (Exception ex)
             {
                 Logger.Error("LAN file upload handling failed: {0}", ex.Message);
+                throw;
             }
         });
     }
@@ -1156,6 +1157,18 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Space && (GridView.IsKeyboardFocusWithin || TextView.IsKeyboardFocusWithin))
+        {
+            var selected = GetSelectedItems().FirstOrDefault();
+            var previewItems = _currentView.Where(x => x.Type == MaterialType.Image || x.Type == MaterialType.Text).ToList();
+            if (selected != null && previewItems.Contains(selected))
+            {
+                CloseHoverPreview();
+                new Views.QuickPreviewWindow(previewItems, previewItems.IndexOf(selected), CopyItemToClipboard) { Owner=this }.Show();
+            }
+            else ShowFeedback("选择一张图片或一段文字，再按空格预览");
+            e.Handled = true; return;
+        }
         if (e.Key == Key.Escape)
         {
             if (SearchBox.Text.Length > 0) SearchBox.Clear();
@@ -1615,6 +1628,15 @@ public partial class MainWindow : Window
         menu.Items.Add(exitItem);
 
         OpenMenu(menu);
+    }
+
+    private Views.TransferWindow? _transferWindow;
+    private void TransfersBtn_Click(object sender, RoutedEventArgs e)
+    {
+        if (_transferWindow != null) { _transferWindow.Activate(); return; }
+        _transferWindow = new Views.TransferWindow { Owner=this };
+        _transferWindow.Closed += (_,_)=>_transferWindow=null;
+        _transferWindow.Show();
     }
 
     #endregion

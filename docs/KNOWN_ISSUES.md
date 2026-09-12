@@ -23,7 +23,7 @@
 - 附带同类观察：收藏状态变化（SetFavorite）也不广播，属设计内可接受；Undo 属真实盲区。
 
 ### DEF-2 连接态发送失败会丢事件（ack 未被利用）
-- `PushToPcAction.execute` 仅在 `state != Connected` 时入队；状态机判定 Connected 但底层发送失败（`pushClipboard` 返回 false，或 OkHttp 缓冲后静默失败）时事件直接丢失。服务端对 sync_text/clipboard_push 有回 ack，但 Android 收到 ack 后不做送达校验。
+- `PushToPcAction.execute` 仅在 `state != Connected` 时入队；状态机判定 Connected 但底层发送失败（`pushClipboard` 返回 false，或 OkHttp 缓冲后静默失败）时事件直接丢失。M27 的 `sendText` 手动/分享文字已关联登记后的 ack，但自动 `pushClipboard` 链路尚未利用回执。
 - **影响**：极端情况下静默丢一条剪贴板事件。
 - **候选修法**：send 失败也 enqueue 重试；或按 diagnosticId 校验 ack。
 
@@ -56,7 +56,7 @@ Windows 设备管理器完全看不到设备 = 线材（仅充电线）或端口
 | DEBT-1 | PC `DataStore._sequence` 为内存计数器，重启归零 | 目前靠「重启→断线→重连→replaceAll 快照重置 lastSequence」自然兜底，可用但脆弱；序列号持久化才能根治 gap 检测跨重启语义 | `DataStore.cs` |
 | DEBT-2 | `CopyEventDetector.Candidate.preferSelection` 字段只生产不消费 | 无功能影响，纯遗留 | grep 全库仅在 Detector 内出现 |
 | DEBT-4 | WakeLock/WifiLock acquire() 无超时 | 电量代价 + lint 告警 | 保活设计使然；2026-08-28 已将 Wi-Fi 锁从 LOW_LATENCY 降为 FULL_HIGH_PERF 降耗，进一步需评估断连风险 |
-| DEBT-5 | 两端工程内零单元测试 | 回归靠真机手工 A-B 对照 | 纯函数区（Deduplicator 时间窗 / Proto 编解码对称性 / Detector 评分矩阵）成本最低 |
+| DEBT-5 | 核心剪贴板链路缺少自动测试 | 后台复制回归仍靠真机手工 A-B 对照 | scripts 已有 HEIC、桌面交互和 M27 收发检查；Deduplicator / Proto / Detector 仍待覆盖 |
 | DEBT-6 | `LanDiscovery` 每次 discover 新建 DatagramSocket 且单次 socket 全程 150ms soTimeout 忙轮询收包 | 搜索体验略糙，功能正常 | 低优先级 |
 
 ## 五、运维与构建注意事项

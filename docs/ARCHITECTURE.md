@@ -67,7 +67,7 @@
 - **ON_RESUME 兜底**：接收页 Compose `DisposableEffect` 生命周期观察里刷新三态无障碍状态 + `captureManager.captureOnForeground()` 直接读剪贴板走同一 Dispatcher。
 - **直连路径（不经 Dispatcher/Pipeline）**：
   - `ProcessTextActivity`（ACTION_PROCESS_TEXT 选中文本直达）：pushClipboard 直发 + 写剪贴板 + markLocalText；
-  - 分享菜单（SEND intent）：文字走 `LanClient.sendText`，文件走 OkHttp POST `http://ip:8900/upload?name=&auth=`（端口硬编码 8900）。
+  - 分享菜单（SEND intent）：文字走 `LanClient.sendText`，文件走 OkHttp POST `/upload?name=&auth=`（HTTP 端口为所选电脑 WS 端口 + 1）。
 
 ### 2.3 连接层 `LanClient`
 
@@ -97,25 +97,36 @@
 | `Services/Lan/WsHub.cs` | Fleck 会话管理 ConcurrentDictionary；消息 switch(hello/heartbeat/sync_text+clipboard_push/list_sync/get_item/bye)；welcome 前 AuthService 校验；**同名设备重连自动踢旧 session**；Broadcast* 三方法全局广播 |
 | `Services/Lan/LanServer.cs` | 组合根子服务(WsHub/FileHttpServer/UdpDiscovery)，`IsListening` 用 TCP 自连 127.0.0.1:Port 自检（Fleck 静默失败检测） |
 | `Services/Lan/AuthService.cs` | sha256 口令哈希比对 + Unix 秒 ts ±300s 防重放；对照目标为 `LanConfig.PasswordHash` |
-| `Services/Lan/FileHttpServer.cs` | GET `/file/{id}?auth=`、POST `/upload?name=&auth=`；上传存 `<data>/uploads/<guid>_<name>` 后触发 FileUploaded；两端鉴权不通过即拒绝 |
+| `Services/Lan/FileHttpServer.cs` | GET `/file/{id}?auth=`、GET `/thumbnail/{id}?auth=`、POST `/upload?name=&auth=`；上传先写 `.part`，收齐声明字节数后转为正式文件并触发 FileUploaded；三种端点使用同一口令鉴权 |
 | `Services/Lan/UdpDiscovery.cs` | 绑定 Port+2(8901)；收到 `LIUZHUAN_DISCOVER` 应答 `LIUZHUAN_OFFER|ip|wsPort|设备名` |
 | `Services/Lan/LanConfig.cs` | lan.json 持久化(键 Enabled/Port/Password)；`GeneratePassword()` 6 位纯数字；**Enabled 默认 false**（新环境首次部署需在 lan.json 置 true 或经 UI 开启） |
 | `Models/MaterialItem.cs` | 素材模型（INotifyPropertyChanged，含缩略图懒加载） |
 
 ## 4. 协议参考
 
+### 收发任务与快捷预览（M27，2026-09-12）
+
+- PC 底部「收发」打开 `Views/TransferWindow`，由进程内 `TransferJournal` 汇总文件上传/下载与接收文字。Android 顶部「收发」打开 `TransferTaskDialog`，`TransferTasks` 跟踪文件和 `sendText` 手动/分享文字。两端最多保留 40 条最近记录，超额时仅淘汰已结束任务；重启清空。
+- Android 失败任务支持手动重试，重新完整传输，不做断点续传。上传确认丢失时不能判断电脑是否已登记，因此提示先检查电脑，避免重复。分享 URI 权限过期需要重新选择文件；下载重试沿用该次地址，换电脑或改口令后请重新获取素材。
+- `sync_text` 的请求 `id` 对应任务 ID。PC 在 `TextReceived` 同步登记返回后回 `ack`，`data={status:"stored",requestId:<请求 id>}`；Android 收到该确认才显示「电脑已接收」，20 秒未确认提示检查后重试。确认表示已登记素材，不是 JSON 延迟持久化完成。自动 `pushClipboard` 送达保证仍见 KNOWN_ISSUES DEF-2。
+- HTTP 上传中断/长度不足时删除 `.part` 并返回 400；成功文件与素材登记完成后才回 200。PC 下载任务「已发送」只表示服务器已写出声明字节，不能证明手机保存成功。
+- Android 下载以 64KB 缓冲流式写入 MediaStore，校验响应长度，成功关闭文件并清除 `IS_PENDING` 才显示「已保存到手机」；失败删除不完整文件。上传也使用 64KB 缓冲，任务进度约 200ms 更新一次。
+- 接收页 Image 行请求鉴权 `/thumbnail/{id}`：PC `NetworkThumbnailService` 使用独立 STA 线程编码 256px 宽 PNG，并发上限 2；Android 并发 3、8MB 内存 LRU，限制单响应 2MB/解码边长 512px。离线、旧电脑端或不支持的图片显示占位。原文件下载地址保持原义。
+- PC 选中图片/文字后按空格打开 `QuickPreviewWindow`，支持上一项/下一项、图片缩放与适应窗口、复制和 Esc 关闭。图片预览最多解码至 1600px 宽，复制仍使用原素材；不修改原文件。
+- 新能力需两端一起升级。`scripts/TransferChecks` 覆盖真实 HTTP/WS 的上传完整性、鉴权缩略图、文件一致性及文字回执顺序，`TransferTasksCheck.kt` 覆盖失败重试与任务保留。Android 相册落盘及实际界面仍需真机验收。
+
 ### 电脑端素材栏交互（2026-09-12）
 
 - 两端视觉统一为深色青绿、薄荷绿操作色和暖金辅助标签。电脑端增加流转标记、素材类型及大小/日期信息；Android `FlowDesign.kt` 集中管理主题与页面介绍卡片。
 - Android 连接页优先展示搜索/扫码、上次电脑快捷连接，手动输入和日志可折叠；暂停重连始终可访问。连接时保留用户的自动发送开关。
-- Android 发送页区分空输入、提交发送与上传进度；`LanClient.sendText` 返回 WebSocket 是否接受发送（不等同对端确认），不修改协议或进程级协程作用域。
+- Android 发送页区分空输入、提交发送与上传进度；`LanClient.sendText` 返回 WebSocket 是否接受发送（不等同对端确认），对端确认结果在 M27 收发任务中显示，保持进程级协程作用域。
 - Android 接收页在 Repository 数据上派生名称搜索/类型筛选，不另建数据源；离线时显示缓存提示并禁用获取操作。三个页面分别保留滚动位置，文字草稿与筛选条件使用 `rememberSaveable`。
 
 - 380 DIP 宽侧栏：标题/固定/设置，独立搜索，添加文件/粘贴与连接数，七类筛选，素材区，反馈/计数/撤回/更多。图片保持双列，文字分类使用整行阅读。
 - `RefreshView` 原位增删/移动集合，避免异步缩略图完成时清空列表、丢失选择；空素材、无收藏与搜索无结果分别给出提示。
 - 单击复制，Ctrl/Shift 多选不复制；Ctrl+A 全选，Ctrl+C 复制同类多选文件或文字；Esc 依次清搜索、清选择、收起。清空保留原确认逻辑，入口移到「更多」。
 - 拖动窗口限定为标题区域，只有窗口拖动结束才触发贴边吸附；固定展开为本次运行状态。菜单、拖出和正在编辑时不自动收起；图片悬停 400ms 后预览，移开取消。
-- 新「添加文件」复用 `DragDropService.CreateFromPathRecursive` 与原有素材登记/广播流程；剪贴板、LAN 协议、HEIC 转换和 Android 无改动。
+- 新「添加文件」复用 `DragDropService.CreateFromPathRecursive` 与原有素材登记/广播流程。
 - `scripts/DesktopUiChecks` 使用独立测试数据目录进行 WPF 离屏渲染及交互回归：两列布局、刷新保留选中、固定防收起、搜索与收藏空状态、文字视图。真实窗口工具在当前 Windows 上无法截图（`SetIsBorderRequired` / `0x80004002`），视觉检查使用实际 XAML 离屏渲染，非真实桌面截图。
 
 ### 手机上传 HEIC 的电脑端兼容转换（2026-09-10）
@@ -144,7 +155,7 @@
 | item_cleared | P→A | sequence |
 | get_item | A→P | id |
 | item_data | P→A | id, type, name, content 或 downloadUrl(+size), error |
-| ack | P→A | status="ok"（sync_text/clipboard_push 处理前先回执；**Android 目前未校验 ack**） |
+| ack | P→A | status="stored", requestId=请求帧 id（sync_text/clipboard_push 登记后回执；Android sendText 任务关联确认，自动 pushClipboard 尚未利用） |
 | bye | A→P | — |
 
 ## 5. 并发模型（全线进程级）
@@ -157,4 +168,4 @@
 ## 6. 测试资产
 
 - Python E2E：`scripts/test_m1_sync.py`、`test_m1_lan.py`、`test_m1_download.py`、`test_m4_multi.py`（多设备并发）、`demo_shot.py`/`gen_manual.py`。协议联调可不开真机直跑。
-- 两端工程内暂无单元测试（技术债，见 KNOWN_ISSUES）。
+- 独立检查工程：`scripts/HeicConversionChecks`、`scripts/DesktopUiChecks`、`scripts/TransferChecks`；自动剪贴板核心链路仍缺少单元测试（见 KNOWN_ISSUES）。

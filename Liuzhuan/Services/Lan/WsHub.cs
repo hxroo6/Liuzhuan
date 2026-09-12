@@ -172,14 +172,16 @@ public class WsHub
         var content = msg.Data?.GetValueOrDefault("content")?.ToString() ?? "";
         var device = msg.Device;
         if (string.IsNullOrWhiteSpace(content)) return;
-        // 先回执再处理（保证客户端先收到 ack）
+        // 素材登记完成后再确认；requestId 用于 Android 任务关联，旧客户端可忽略。
+        TextReceived?.Invoke(content, device);
+        var textBytes = System.Text.Encoding.UTF8.GetByteCount(content);
+        TransferJournal.Report(new(msg.Id,content.Length>40?content[..40]:content,"手机 → 电脑",textBytes,textBytes,"已接收","",0));
         Send(socket, new LanMessage
         {
             Type = "ack",
             Id = msg.Id,
-            Data = new Dictionary<string, object?> { ["status"] = "ok" }
+            Data = new Dictionary<string, object?> { ["status"] = "stored", ["requestId"] = msg.Id }
         });
-        TextReceived?.Invoke(content, device);
     }
 
     /// <summary>处理最近素材列表同步请求（返回最近 50 条摘要 + 快照序号）</summary>

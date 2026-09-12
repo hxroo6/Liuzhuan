@@ -43,10 +43,10 @@ object Proto {
         .put("data", JSONObject().put("t", System.currentTimeMillis() / 1000))
         .toString()
 
-    fun buildSyncText(content: String, source: String = "android"): String = JSONObject()
+    fun buildSyncText(content: String, source: String = "android", requestId: String = UUID.randomUUID().toString().replace("-", "")): String = JSONObject()
         .put("v", 1)
         .put("type", "sync_text")
-        .put("id", UUID.randomUUID().toString().replace("-", ""))
+        .put("id", requestId)
         .put("ts", System.currentTimeMillis() / 1000)
         .put("device", deviceLabel)
         .put("data", JSONObject()
