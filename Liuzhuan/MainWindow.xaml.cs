@@ -42,7 +42,11 @@ public partial class MainWindow : Window
     private MaterialItem? _lastClickItem;
 
     // 面板参数
-    private const double PanelWidth = 340;
+    private const double PanelWidth = 380;
+    private bool _isPinned;
+    private bool _menuOpen;
+    private DispatcherTimer? _feedbackTimer;
+    private DispatcherTimer? _hoverPreviewTimer;
     private const double CollapsedVisible = 8;
     private const double CollapseDelayMs = 1500;
 
@@ -397,6 +401,7 @@ public partial class MainWindow : Window
     private void PositionWindowRightEdge()
     {
         var workArea = SystemParameters.WorkArea;
+        Height = Math.Min(Height, workArea.Height);
         Top = workArea.Top + (workArea.Height - Height) / 2;
         Width = PanelWidth;
         _expandedLeft = workArea.Right - PanelWidth;
@@ -408,7 +413,12 @@ public partial class MainWindow : Window
     private void SetupCollapseTimer()
     {
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CollapseDelayMs) };
-        _collapseTimer.Tick += (s, e) => { _collapseTimer.Stop(); if (!_isLeftAnchored) CollapsePanel(); };
+        _collapseTimer.Tick += (s, e) =>
+        {
+            if (IsMouseOver || _menuOpen || _isDragging || IsKeyboardFocusWithin && IsActive) return;
+            _collapseTimer.Stop();
+            if (!_isLeftAnchored && !_isPinned) CollapsePanel();
+        };
     }
 
     /// <summary>
@@ -460,16 +470,11 @@ public partial class MainWindow : Window
         MouseLeftButtonDown += (s, e) =>
         {
             // 排除交互控件（按钮/输入框/素材项），空白区域才能拖动
-            if (e.OriginalSource is System.Windows.Controls.Button or
-                System.Windows.Controls.Primitives.ToggleButton or
-                System.Windows.Controls.TextBox or
-                System.Windows.Controls.ListBoxItem or
-                System.Windows.Controls.CheckBox) return;
-            try { DragMove(); }
+            var source = e.OriginalSource as DependencyObject;
+            if (VisualHitTest<ButtonBase>(source) != null || VisualHitTest<DockPanel>(source) != HeaderDragArea) return;
+            try { DragMove(); SnapToEdge(); }
             catch { /* 非左键或系统限制时忽略 */ }
         };
-
-        MouseLeftButtonUp += (s, e) => SnapToEdge();
         Logger.Run("DragSnap: enabled (drag to edges to snap)");
     }
 
@@ -561,6 +566,7 @@ public partial class MainWindow : Window
     private void CollapsePanel()
     {
         if (!_isExpanded) return;
+        if (_isPinned || _menuOpen) return;
         if (_isLeftAnchored) return; // 左锚定：保持展开，不收起不跳右
         _isExpanded = false;
         var translate = new TranslateTransform();
@@ -574,6 +580,7 @@ public partial class MainWindow : Window
         };
         anim.Completed += (s, e) =>
         {
+            if (_isExpanded) return; // 动画中重新进入，不让旧的收起回调隐藏已展开面板。
             Width = CollapsedVisible;
             Left = _collapsedLeft;
             MainPanel.RenderTransform = null;
@@ -585,7 +592,82 @@ public partial class MainWindow : Window
     private void Window_MouseEnter(object sender, MouseEventArgs e) => ExpandPanel();
     private void Window_MouseLeave(object sender, MouseEventArgs e) => _collapseTimer?.Start();
     private void TriggerBar_MouseEnter(object sender, MouseEventArgs e) { TriggerBar.Opacity = 0.7; ExpandPanel(); }
-    private void CollapseBtn_Click(object sender, RoutedEventArgs e) => CollapsePanel();
+    private void CollapseBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _isPinned = false;
+        PinBtn.Content = "固定";
+        PinBtn.Foreground = (Brush)FindResource("TextDimBrush");
+        CollapsePanel();
+    }
+
+    private void PinBtn_Click(object sender, RoutedEventArgs e)
+    {
+        _isPinned = !_isPinned;
+        PinBtn.Content = _isPinned ? "已固定" : "固定";
+        PinBtn.Foreground = (Brush)FindResource(_isPinned ? "AccentBrush" : "TextDimBrush");
+        ShowFeedback(_isPinned ? "面板已固定，鼠标移开也不收起" : "已恢复自动收起");
+        if (!_isPinned) _collapseTimer?.Start();
+    }
+
+    private void ShowFeedback(string message)
+    {
+        FeedbackText.Text = message;
+        FeedbackText.ToolTip = message;
+        FeedbackText.Foreground = (Brush)FindResource("AccentBrush");
+        _feedbackTimer?.Stop();
+        _feedbackTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
+        _feedbackTimer.Tick += (_, _) =>
+        {
+            _feedbackTimer.Stop();
+            FeedbackText.Text = "单击复制 · 拖出使用 · 右键更多";
+            FeedbackText.Foreground = (Brush)FindResource("TextDimBrush");
+        };
+        _feedbackTimer.Start();
+    }
+
+    private void PasteBtn_Click(object sender, RoutedEventArgs e) => PasteFromClipboard();
+
+    private void AddFilesBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var dialog = new Microsoft.Win32.OpenFileDialog { Title = "添加素材", Multiselect = true, Filter = "所有文件|*.*" };
+        if (dialog.ShowDialog(this) != true) return;
+        int added = 0;
+        foreach (var path in dialog.FileNames)
+        {
+            foreach (var item in DragDropService.CreateFromPathRecursive(path))
+            {
+                _dataStore.Add(item);
+                added++;
+                DragDropService.LoadDeferredPropertiesAsync(item, RefreshView);
+            }
+        }
+        RefreshView();
+        ShowFeedback(added > 0 ? $"已处理 {added} 项素材，重复内容自动合并" : "未能读取文件，请检查文件是否仍然存在");
+    }
+
+    private void ManageBtn_Click(object sender, RoutedEventArgs e)
+    {
+        var menu = new ContextMenu();
+        var current = new MenuItem { Header = "清空当前分类…" };
+        current.Click += ClearCurrentBtn_Click;
+        var all = new MenuItem { Header = "清空全部素材…" };
+        all.Click += ClearAllBtn_Click;
+        menu.Items.Add(current); menu.Items.Add(all);
+        OpenMenu(menu);
+    }
+
+    private void OpenMenu(ContextMenu menu)
+    {
+        _menuOpen = true;
+        _collapseTimer?.Stop();
+        menu.Closed += (_, _) => { _menuOpen = false; _collapseTimer?.Start(); };
+        menu.IsOpen = true;
+    }
+
+    private void MaterialSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (StatusText != null) UpdateStatusText();
+    }
 
     #endregion
 
@@ -606,6 +688,7 @@ public partial class MainWindow : Window
         _searchKeyword = SearchBox.Text?.Trim() ?? "";
         // 有内容时显示清除按钮
         SearchClearBtn.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Collapsed : Visibility.Visible;
+        SearchHint.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
         RefreshView();
     }
 
@@ -630,7 +713,7 @@ public partial class MainWindow : Window
 
     private void RefreshView()
     {
-        _currentView.Clear();
+        if (_dataStore == null || GridView == null || EmptyState == null) return;
 
         IEnumerable<MaterialItem> items;
         if (!string.IsNullOrEmpty(_searchKeyword))
@@ -638,8 +721,17 @@ public partial class MainWindow : Window
         else
             items = _dataStore.GetFiltered(_currentTab);
 
-        foreach (var item in items)
-            _currentView.Add(item);
+        // 原位更新，缩略图完成或新素材到达时不清空列表、打断选中与滚动位置。
+        var desired = items.ToList();
+        var ids = desired.Select(x => x.Id).ToHashSet();
+        for (int i = _currentView.Count - 1; i >= 0; i--)
+            if (!ids.Contains(_currentView[i].Id)) _currentView.RemoveAt(i);
+        for (int i = 0; i < desired.Count; i++)
+        {
+            int oldIndex = _currentView.IndexOf(desired[i]);
+            if (oldIndex < 0) _currentView.Insert(i, desired[i]);
+            else if (oldIndex != i) _currentView.Move(oldIndex, i);
+        }
 
         // 决定使用哪个视图
         bool useTextOnly = _currentTab == "Text";
@@ -658,6 +750,8 @@ public partial class MainWindow : Window
         };
 
         EmptyState.Visibility = _currentView.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        EmptyTitle.Text = _searchKeyword.Length > 0 ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
+        EmptyDescription.Text = _searchKeyword.Length > 0 ? "试试更短的关键词，或清除搜索" : _currentTab == "Favorites" ? "点击素材上的星标，常用内容随时取用" : "拖入文件，或点击上方「添加文件」";
         UpdateStatusText();
     }
 
@@ -676,7 +770,11 @@ public partial class MainWindow : Window
             _ => ""
         };
         var searchHint = !string.IsNullOrEmpty(_searchKeyword) ? $" 搜索「{_searchKeyword}」" : "";
-        StatusText.Text = $"{typeName} {count} 项{searchHint}";
+        var selected = GetSelectedItems().Count;
+        StatusText.Text = selected > 0 ? $"已选 {selected} 项 / 共 {count} 项" : $"{typeName} · {count} 项";
+        StatusText.ToolTip = $"{typeName} {count} 项{searchHint}";
+        if (ConnectionText != null)
+            ConnectionText.Text = _lanServer.ClientCount > 0 ? $"已连接 {_lanServer.ClientCount} 台设备" : LanConfig.Enabled ? "局域网 · 等待连接" : "局域网同步已关闭";
     }
 
     #endregion
@@ -718,6 +816,7 @@ public partial class MainWindow : Window
             }
             RefreshView();
             Logger.Run("Drop: added {0} items", items.Count);
+            ShowFeedback($"已添加 {items.Count} 项素材");
         }
         e.Handled = true;
     }
@@ -728,6 +827,7 @@ public partial class MainWindow : Window
 
     private void Card_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (VisualHitTest<ButtonBase>(e.OriginalSource as DependencyObject) != null) return;
         if (sender is FrameworkElement fe && fe.DataContext is MaterialItem item)
         {
             _dragStartPoint = e.GetPosition(null);
@@ -758,7 +858,7 @@ public partial class MainWindow : Window
     /// <summary>单击释放：如果没有拖动，复制资产到剪贴板</summary>
     private void Card_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        if (_dragItem != null && !_isDragging)
+        if (_dragItem != null && !_isDragging && Keyboard.Modifiers == ModifierKeys.None)
         {
             // 单击复制到剪贴板
             CopyItemToClipboard(_dragItem);
@@ -776,17 +876,21 @@ public partial class MainWindow : Window
             {
                 Clipboard.SetText(item.TextContent);
                 Logger.Run("Click copy: text -> clipboard ({0} chars)", item.TextContent.Length);
+                ShowFeedback("文字已复制，可粘贴到其他应用");
             }
             else if (item.IsFile && File.Exists(item.FilePath))
             {
                 var files = new System.Collections.Specialized.StringCollection { item.FilePath };
                 Clipboard.SetFileDropList(files);
                 Logger.Run("Click copy: file -> clipboard ({0})", item.DisplayName);
+                ShowFeedback($"已复制：{item.DisplayName}");
             }
+            else ShowFeedback("原文件已移动或不存在，请重新添加");
         }
         catch (Exception ex)
         {
             Logger.Error("CopyItemToClipboard failed: {0}", ex.Message);
+            ShowFeedback("复制失败，剪贴板可能正在被其他应用使用");
         }
     }
 
@@ -796,7 +900,7 @@ public partial class MainWindow : Window
         var textBox = new TextBox
         {
             Text = item.TextContent,
-            IsReadOnly = false,
+            IsReadOnly = true,
             AcceptsReturn = true,
             TextWrapping = TextWrapping.Wrap,
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
@@ -945,7 +1049,7 @@ public partial class MainWindow : Window
 
         // 收集选中的项
         var selectedItems = GetSelectedItems();
-        var targetItems = selectedItems.Count > 1 ? selectedItems : new List<MaterialItem> { item };
+        var targetItems = selectedItems.Count > 1 && selectedItems.Contains(item) ? selectedItems : new List<MaterialItem> { item };
 
         // 删除
         var deleteItem = new MenuItem { Header = $"删除选中（{targetItems.Count} 项）", Foreground = (Brush)FindResource("TextBrush") };
@@ -998,7 +1102,7 @@ public partial class MainWindow : Window
             menu.Items.Add(copyTextItem);
         }
 
-        menu.IsOpen = true;
+        OpenMenu(menu);
     }
 
     private List<MaterialItem> GetSelectedItems()
@@ -1029,6 +1133,7 @@ public partial class MainWindow : Window
         RefreshView();
         UpdateUndoButton();
         Logger.Run("Deleted {0} items", items.Count);
+        ShowFeedback($"已移除 {items.Count} 项 · 可撤回，原文件保留");
     }
 
     private void FavoriteBtn_Click(object sender, RoutedEventArgs e)
@@ -1040,6 +1145,8 @@ public partial class MainWindow : Window
             if (item != null)
             {
                 _dataStore.SetFavorite(id, !item.IsFavorite);
+                ShowFeedback(item.IsFavorite ? "已加入收藏" : "已取消收藏");
+                if (_currentTab == "Favorites") RefreshView();
                 // INotifyPropertyChanged 会自动更新星星 UI
                 Logger.Run("Favorite toggled: {0} -> {1}", item.DisplayName, !item.IsFavorite);
             }
@@ -1049,6 +1156,42 @@ public partial class MainWindow : Window
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (e.Key == Key.Escape)
+        {
+            if (SearchBox.Text.Length > 0) SearchBox.Clear();
+            else if (GetSelectedItems().Count > 0) GetActiveListView()?.UnselectAll();
+            else CollapseBtn_Click(sender, e);
+            e.Handled = true;
+            return;
+        }
+        if (!SearchBox.IsKeyboardFocusWithin && e.Key == Key.A && Keyboard.Modifiers == ModifierKeys.Control)
+        { GetActiveListView()?.SelectAll(); e.Handled = true; return; }
+        if (!SearchBox.IsKeyboardFocusWithin && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control)
+        {
+            var selection = GetSelectedItems();
+            if (selection.Count == 1) CopyItemToClipboard(selection[0]);
+            else if (selection.Count > 1)
+            {
+                try
+                {
+                    if (selection.All(x => x.IsFile && File.Exists(x.FilePath)))
+                    {
+                        var files = new System.Collections.Specialized.StringCollection();
+                        files.AddRange(selection.Select(x => x.FilePath).ToArray());
+                        Clipboard.SetFileDropList(files);
+                        ShowFeedback($"已复制 {selection.Count} 个文件");
+                    }
+                    else if (selection.All(x => !x.IsFile))
+                    {
+                        Clipboard.SetText(string.Join(Environment.NewLine + Environment.NewLine, selection.Select(x => x.TextContent)));
+                        ShowFeedback($"已复制 {selection.Count} 段文字");
+                    }
+                    else ShowFeedback("请分别选择文件或文字后复制");
+                }
+                catch (Exception ex) { Logger.Error("Selection copy failed: {0}", ex.Message); ShowFeedback("复制失败，请稍后重试"); }
+            }
+            e.Handled = true; return;
+        }
         // Del 键删除选中项（焦点不在搜索框时）
         if (e.Key == Key.Delete && !SearchBox.IsKeyboardFocusWithin)
         {
@@ -1108,10 +1251,12 @@ public partial class MainWindow : Window
             DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
             RefreshView();
             Logger.Run("Paste: added item Type={0} Name={1}", item.Type, item.DisplayName);
+            ShowFeedback("剪贴板素材已添加");
         }
         else
         {
             Logger.Run("Paste: clipboard has no recognized content");
+            ShowFeedback("剪贴板中没有可添加的素材");
         }
     }
 
@@ -1159,7 +1304,14 @@ public partial class MainWindow : Window
             // 图片类素材：hover 时弹出原图预览
             if (item.IsFile && item.Type == MaterialType.Image && File.Exists(item.FilePath))
             {
-                ShowHoverPreview(item, fe);
+                _hoverPreviewTimer?.Stop();
+                _hoverPreviewTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(400) };
+                _hoverPreviewTimer.Tick += (_, _) =>
+                {
+                    _hoverPreviewTimer.Stop();
+                    if (fe.IsMouseOver && !_isDragging && !_menuOpen) ShowHoverPreview(item, fe);
+                };
+                _hoverPreviewTimer.Start();
             }
         }
     }
@@ -1462,7 +1614,7 @@ public partial class MainWindow : Window
         };
         menu.Items.Add(exitItem);
 
-        menu.IsOpen = true;
+        OpenMenu(menu);
     }
 
     #endregion
@@ -1535,6 +1687,7 @@ public partial class MainWindow : Window
 
     private void CloseHoverPreview()
     {
+        _hoverPreviewTimer?.Stop();
         if (_previewPopup != null)
         {
             _previewPopup.IsOpen = false;
@@ -1556,6 +1709,8 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
+        _feedbackTimer?.Stop();
+        _hoverPreviewTimer?.Stop();
         _collapseTimer?.Stop();
         _hotkeyService.Dispose();
         _lanServer.Dispose();

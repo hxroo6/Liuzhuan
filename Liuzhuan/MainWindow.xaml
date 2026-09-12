@@ -3,8 +3,8 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:Liuzhuan.Models"
         Title="流转"
-        Width="340"
-        Height="600"
+        Width="380"
+        Height="680"
         WindowStyle="None"
         AllowsTransparency="False"
         Topmost="True"
@@ -28,16 +28,16 @@
         <!-- 素材卡片模板（网格用：图片/视频/其他文件）— 自适应比例，紧凑排列 -->
         <DataTemplate x:Key="GridCardTemplate" DataType="{x:Type models:MaterialItem}">
             <Border x:Name="CardBorder" Margin="2" Background="{StaticResource PanelLightBrush}"
-                    CornerRadius="4" MouseMove="Card_MouseMove"
+                    CornerRadius="8" MouseMove="Card_MouseMove"
                     MouseLeftButtonDown="Card_MouseLeftButtonDown"
                     MouseLeftButtonUp="Card_MouseLeftButtonUp"
                     MouseEnter="Card_MouseEnter"
                     MouseLeave="Card_MouseLeave"
                     Cursor="Hand"
-                    Width="148">
+                    Width="154">
                 <Grid>
                     <Grid.RowDefinitions>
-                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="132"/>
                         <RowDefinition Height="Auto"/>
                     </Grid.RowDefinitions>
 
@@ -72,8 +72,8 @@
                             Margin="3,3,13,3" Width="20" Height="20"
                             Click="FavoriteBtn_Click"
                             Cursor="Hand"
-                            Tag="{Binding Id}"
-                            Opacity="0">
+                            Tag="{Binding Id}" ToolTip="收藏 / 取消收藏" AutomationProperties.Name="收藏 / 取消收藏"
+                            Opacity="0.45">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="bd" Background="#60000000" CornerRadius="10">
@@ -97,7 +97,7 @@
                     <!-- 文件名 -->
                     <TextBlock Grid.Row="1" Text="{Binding DisplayName}"
                                Foreground="{StaticResource TextDimBrush}"
-                               FontSize="9" Margin="3,1,3,2"
+                               FontSize="12" Margin="3,1,3,2"
                                TextTrimming="CharacterEllipsis"
                                TextWrapping="NoWrap"/>
                 </Grid>
@@ -126,7 +126,7 @@
         <!-- 文字卡片模板（自动换行填满卡片） -->
         <DataTemplate x:Key="TextCardTemplate" DataType="{x:Type models:MaterialItem}">
             <Border x:Name="TextCardBorder" Margin="2" Background="{StaticResource PanelLightBrush}"
-                    CornerRadius="4" MouseMove="Card_MouseMove"
+                    CornerRadius="8" MouseMove="Card_MouseMove"
                     MouseLeftButtonDown="Card_MouseLeftButtonDown"
                     MouseLeftButtonUp="Card_MouseLeftButtonUp"
                     MouseEnter="Card_MouseEnter"
@@ -138,8 +138,8 @@
                 <Grid>
                     <TextBlock Text="{Binding TextContent}"
                                Foreground="{StaticResource TextBrush}"
-                               FontSize="10"
-                               Margin="5,4"
+                               FontSize="12"
+                               Margin="10,10,10,32"
                                TextWrapping="Wrap"
                                TextTrimming="CharacterEllipsis"/>
 
@@ -149,8 +149,8 @@
                             Margin="2,3,12,3" Width="20" Height="20"
                             Click="FavoriteBtn_Click"
                             Cursor="Hand"
-                            Tag="{Binding Id}"
-                            Opacity="0">
+                            Tag="{Binding Id}" ToolTip="收藏 / 取消收藏" AutomationProperties.Name="收藏 / 取消收藏"
+                            Opacity="0.45">
                         <Button.Template>
                             <ControlTemplate TargetType="Button">
                                 <Border x:Name="bd" Background="#60000000" CornerRadius="10">
@@ -210,13 +210,13 @@
                                    FontSize="12" TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="{Binding FilePath, Converter={StaticResource PathShortConverter}}"
                                    Foreground="{StaticResource TextDimBrush}"
-                                   FontSize="9" TextTrimming="CharacterEllipsis"
+                                   FontSize="12" TextTrimming="CharacterEllipsis"
                                    Margin="0,1,0,0"/>
                     </StackPanel>
 
                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
                                Foreground="{StaticResource TextDimBrush}"
-                               FontSize="10"
+                               FontSize="12"
                                Text="{Binding Duration, Converter={StaticResource DurationConverter}}"/>
                 </Grid>
             </Border>
@@ -226,7 +226,7 @@
     <!-- 主容器：触发条 + 面板 -->
     <Grid>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition x:Name="PanelColumn" Width="332"/>
+            <ColumnDefinition x:Name="PanelColumn" Width="372"/>
             <ColumnDefinition x:Name="TriggerColumn" Width="8"/>
         </Grid.ColumnDefinitions>
 
@@ -250,115 +250,40 @@
                     <RowDefinition Height="Auto"/>
                 </Grid.RowDefinitions>
 
-                <!-- 标题栏 + 搜索框 -->
-                <Grid Grid.Row="0" Height="36">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="Auto"/>
-                        <ColumnDefinition Width="Auto"/>
-                    </Grid.ColumnDefinitions>
-
-                    <TextBlock Grid.Column="0" Text="流转"
-                               Foreground="{StaticResource TextBrush}"
-                               FontSize="14" FontWeight="Medium"
-                               VerticalAlignment="Center"
-                               Margin="10,0,4,0"/>
-
-                    <!-- 搜索框 + 清除按钮 -->
-                    <Grid Grid.Column="1" Margin="2,4" VerticalAlignment="Center">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <Border Grid.Column="0" Background="#20FFFFFF" CornerRadius="4,0,0,4">
-                            <TextBox x:Name="SearchBox"
-                                     Background="Transparent" BorderThickness="0"
-                                     Foreground="{StaticResource TextBrush}"
-                                     FontSize="11"
-                                     Padding="4,2"
-                                     VerticalContentAlignment="Center"
-                                     TextChanged="SearchBox_TextChanged"
-                                     KeyDown="SearchBox_KeyDown"/>
-                        </Border>
-                        <Button Grid.Column="1" x:Name="SearchClearBtn"
-                                Width="18" Background="#20FFFFFF"
-                                BorderThickness="0"
-                                Foreground="{StaticResource TextDimBrush}"
-                                Content="✕" FontSize="9"
-                                Click="SearchClearBtn_Click"
-                                ToolTip="清除搜索"
-                                Visibility="Collapsed">
-                            <Button.Template>
-                                <ControlTemplate TargetType="Button">
-                                    <Border x:Name="bd" Background="{TemplateBinding Background}"
-                                            CornerRadius="0,4,4,0">
-                                        <ContentPresenter HorizontalAlignment="Center"
-                                                          VerticalAlignment="Center"/>
-                                    </Border>
-                                    <ControlTemplate.Triggers>
-                                        <Trigger Property="IsMouseOver" Value="True">
-                                            <Setter TargetName="bd" Property="Background" Value="#30FFFFFF"/>
-                                        </Trigger>
-                                    </ControlTemplate.Triggers>
-                                </ControlTemplate>
-                            </Button.Template>
-                        </Button>
-                    </Grid>
-
-                    <!-- 设置按钮 -->
-                    <Button Grid.Column="2" x:Name="SettingsBtn"
-                            Width="26" Height="26"
-                            Background="Transparent" BorderThickness="0"
-                            Foreground="{StaticResource TextDimBrush}"
-                            Click="SettingsBtn_Click"
-                            Content="⚙" FontSize="13"
-                            ToolTip="设置"/>
-                    <!-- 收回按钮 -->
-                    <Button Grid.Column="3" x:Name="CollapseBtn"
-                            Width="26" Height="26"
-                            Background="Transparent" BorderThickness="0"
-                            Foreground="{StaticResource TextDimBrush}"
-                            Click="CollapseBtn_Click"
-                            Content="▶" FontSize="10"
-                            ToolTip="收回面板"/>
+                <!-- 标题只负责窗口操作；搜索、分类与主要动作独立分层。 -->
+                <Grid Grid.Row="0" Margin="16,12,12,0">
+                    <Grid.RowDefinitions><RowDefinition Height="40"/><RowDefinition Height="46"/><RowDefinition Height="44"/></Grid.RowDefinitions>
+                    <DockPanel Grid.Row="0" x:Name="HeaderDragArea" Background="Transparent">
+                        <Button DockPanel.Dock="Right" x:Name="CollapseBtn" Content="›" FontSize="24" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="CollapseBtn_Click" ToolTip="收起面板" AutomationProperties.Name="收起面板"/>
+                        <Button DockPanel.Dock="Right" x:Name="SettingsBtn" Content="⚙" FontSize="18" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="SettingsBtn_Click" ToolTip="设置与设备" AutomationProperties.Name="设置与设备"/>
+                        <Button DockPanel.Dock="Right" x:Name="PinBtn" Content="固定" FontSize="12" Width="44" Height="32" Style="{StaticResource IconButtonStyle}" Click="PinBtn_Click" ToolTip="固定展开，鼠标移开也不收起"/>
+                        <StackPanel VerticalAlignment="Center"><TextBlock Text="流转" FontSize="20" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/><TextBlock Text="你的跨设备素材暂存栏" FontSize="11" Foreground="{StaticResource TextDimBrush}"/></StackPanel>
+                    </DockPanel>
+                    <Border Grid.Row="1" Background="{StaticResource PanelLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,8,0,0">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="32"/></Grid.ColumnDefinitions>
+                            <TextBox x:Name="SearchBox" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextBrush}" CaretBrush="{StaticResource TextBrush}" FontSize="13" Padding="10,6" VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" KeyDown="SearchBox_KeyDown" AutomationProperties.Name="搜索当前分类素材"/>
+                            <TextBlock x:Name="SearchHint" Text="搜索当前分类…  Ctrl+F" Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="10,0" VerticalAlignment="Center" IsHitTestVisible="False"/>
+                            <Button Grid.Column="1" x:Name="SearchClearBtn" Content="×" Style="{StaticResource IconButtonStyle}" Click="SearchClearBtn_Click" ToolTip="清除搜索" AutomationProperties.Name="清除搜索" Visibility="Collapsed"/>
+                        </Grid>
+                    </Border>
+                    <DockPanel Grid.Row="2" Margin="0,8,0,0">
+                        <Button DockPanel.Dock="Right" Content="＋ 添加文件" Padding="10,4" Style="{StaticResource ActionButtonStyle}" Click="AddFilesBtn_Click"/>
+                        <Button DockPanel.Dock="Right" Content="粘贴" Margin="0,0,6,0" Padding="10,4" Style="{StaticResource ActionButtonStyle}" Click="PasteBtn_Click" ToolTip="从剪贴板添加素材 · Ctrl+V"/>
+                        <TextBlock x:Name="ConnectionText" Text="局域网 · 等待连接" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis"/>
+                    </DockPanel>
                 </Grid>
-
-                <!-- 标签页栏 -->
-                <Border Grid.Row="1" Background="{StaticResource PanelLightBrush}">
-                    <StackPanel Orientation="Horizontal" Margin="4,3">
-                        <RadioButton x:Name="TabRecent" Content="最近" IsChecked="True"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Recent" Checked="Tab_Checked"
-                                     Margin="1,0"/>
-                        <RadioButton x:Name="TabFavorites" Content="★"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Favorites" Checked="Tab_Checked"
-                                     Margin="1,0"
-                                     ToolTip="收藏"/>
-                        <RadioButton x:Name="TabVideo" Content="视频"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Video" Checked="Tab_Checked"
-                                     Margin="1,0"/>
-                        <RadioButton x:Name="TabText" Content="文字"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Text" Checked="Tab_Checked"
-                                     Margin="1,0"/>
-                        <RadioButton x:Name="TabImage" Content="图片"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Image" Checked="Tab_Checked"
-                                     Margin="1,0"/>
-                        <RadioButton x:Name="TabAudio" Content="音频"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Audio" Checked="Tab_Checked"
-                                     Margin="1,0"/>
-                        <RadioButton x:Name="TabOther" Content="其他"
-                                     Style="{StaticResource TabButtonStyle}"
-                                     Tag="Other" Checked="Tab_Checked"
-                                     Margin="1,0"/>
-                    </StackPanel>
+                <Border Grid.Row="1" Margin="12,10,12,6" Padding="2" Background="{StaticResource PanelLightBrush}" CornerRadius="8">
+                    <UniformGrid Rows="1">
+                        <RadioButton x:Name="TabRecent" Content="全部" IsChecked="True" Style="{StaticResource TabButtonStyle}" Tag="Recent" Checked="Tab_Checked"/>
+                        <RadioButton x:Name="TabFavorites" Content="收藏" Style="{StaticResource TabButtonStyle}" Tag="Favorites" Checked="Tab_Checked"/>
+                        <RadioButton x:Name="TabImage" Content="图片" Style="{StaticResource TabButtonStyle}" Tag="Image" Checked="Tab_Checked"/>
+                        <RadioButton x:Name="TabText" Content="文字" Style="{StaticResource TabButtonStyle}" Tag="Text" Checked="Tab_Checked"/>
+                        <RadioButton x:Name="TabVideo" Content="视频" Style="{StaticResource TabButtonStyle}" Tag="Video" Checked="Tab_Checked"/>
+                        <RadioButton x:Name="TabAudio" Content="音频" Style="{StaticResource TabButtonStyle}" Tag="Audio" Checked="Tab_Checked"/>
+                        <RadioButton x:Name="TabOther" Content="其他" Style="{StaticResource TabButtonStyle}" Tag="Other" Checked="Tab_Checked"/>
+                    </UniformGrid>
                 </Border>
-
                 <!-- 内容区 -->
                 <Grid Grid.Row="2" Background="{StaticResource PanelBrush}">
                     <!-- 网格视图（图片/视频/其他文件/最近） -->
@@ -369,11 +294,11 @@
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               ItemsSource="{Binding}"
-                              SelectionMode="Extended"
-                              Margin="2,2">
+                              Padding="0" SelectionMode="Extended" SelectionChanged="MaterialSelectionChanged"
+                              Margin="8,2">
                         <ListView.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <WrapPanel Orientation="Horizontal" ItemWidth="154"/>
+                                <WrapPanel Orientation="Horizontal" ItemWidth="164"/>
                             </ItemsPanelTemplate>
                         </ListView.ItemsPanel>
                     </ListView>
@@ -387,11 +312,11 @@
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               ItemsSource="{Binding}"
                               ItemTemplate="{StaticResource TextCardTemplate}"
-                              SelectionMode="Extended"
-                              Margin="2,2">
+                              Padding="0" SelectionMode="Extended" SelectionChanged="MaterialSelectionChanged"
+                              Margin="8,2">
                         <ListView.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <WrapPanel Orientation="Horizontal" ItemWidth="154"/>
+                                <VirtualizingStackPanel/>
                             </ItemsPanelTemplate>
                         </ListView.ItemsPanel>
                     </ListView>
@@ -404,7 +329,7 @@
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                               ScrollViewer.VerticalScrollBarVisibility="Auto"
                               ItemsSource="{Binding}"
-                              SelectionMode="Extended"
+                              Padding="0" SelectionMode="Extended" SelectionChanged="MaterialSelectionChanged"
                               Margin="4,2"/>
 
                     <!-- 空状态提示 -->
@@ -412,16 +337,16 @@
                                 HorizontalAlignment="Center"
                                 VerticalAlignment="Center"
                                 Visibility="Collapsed">
-                        <TextBlock Text="拖入素材到这里"
+                        <TextBlock x:Name="EmptyTitle" Text="把素材放在这里"
                                    Foreground="{StaticResource TextDimBrush}"
                                    FontSize="13"
                                    HorizontalAlignment="Center"/>
-                        <TextBlock Text="支持视频、图片、音频、文字、文件夹"
+                        <TextBlock x:Name="EmptyDescription" Text="拖入文件，或点击上方「添加文件」"
                                    Foreground="{StaticResource TextDimBrush}"
-                                   FontSize="10"
+                                   FontSize="12"
                                    HorizontalAlignment="Center"
                                    Margin="0,4,0,0"
-                                   Opacity="0.6"/>
+                                   Opacity="0.9"/>
                     </StackPanel>
 
                     <!-- 拖入高亮提示 -->
@@ -441,48 +366,16 @@
                     </Border>
                 </Grid>
 
-                <!-- 底部状态栏 -->
-                <Border Grid.Row="3" Height="28" Background="{StaticResource PanelLightBrush}">
-                    <Grid Margin="8,0">
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-
-                        <TextBlock Grid.Column="0" x:Name="StatusText"
-                                   Foreground="{StaticResource TextDimBrush}"
-                                   FontSize="10"
-                                   VerticalAlignment="Center"/>
-
-                        <!-- 撤回删除 -->
-                        <Button Grid.Column="1" x:Name="UndoBtn" Content="撤回"
-                                Background="Transparent" BorderThickness="0"
-                                Foreground="{StaticResource TextDimBrush}"
-                                FontSize="10" Padding="4,0"
-                                Click="UndoBtn_Click"
-                                ToolTip="撤回删除 (Ctrl+Z)"
-                                IsEnabled="False"/>
-
-                        <!-- 清空当前分类 -->
-                        <Button Grid.Column="2" Content="清空"
-                                Background="Transparent" BorderThickness="0"
-                                Foreground="{StaticResource TextDimBrush}"
-                                FontSize="10" Padding="4,0"
-                                Click="ClearCurrentBtn_Click"
-                                ToolTip="清空当前分类"/>
-
-                        <!-- 清空全部 -->
-                        <Button Grid.Column="3" Content="全部清空"
-                                Background="Transparent" BorderThickness="0"
-                                Foreground="#FF6B6B"
-                                FontSize="10" Padding="4,0"
-                                Click="ClearAllBtn_Click"
-                                ToolTip="清空所有素材"/>
-                    </Grid>
+                <Border Grid.Row="3" Background="{StaticResource PanelLightBrush}" Padding="12,8,12,10">
+                    <StackPanel>
+                        <TextBlock x:Name="FeedbackText" Text="单击复制 · 拖出使用 · 右键更多" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
+                        <DockPanel>
+                            <Button DockPanel.Dock="Right" Content="更多" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Click="ManageBtn_Click" ToolTip="清空分类与全部清空"/>
+                            <Button DockPanel.Dock="Right" x:Name="UndoBtn" Content="撤回" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Margin="0,0,6,0" Click="UndoBtn_Click" ToolTip="撤回删除 · Ctrl+Z" IsEnabled="False"/>
+                            <TextBlock x:Name="StatusText" FontSize="12" Foreground="{StaticResource TextDimBrush}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+                        </DockPanel>
+                    </StackPanel>
                 </Border>
-
                 <!-- 底部拖拽调整高度 -->
                 <Thumb x:Name="ResizeThumb"
                        Grid.Row="3"

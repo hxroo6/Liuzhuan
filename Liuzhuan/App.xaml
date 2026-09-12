@@ -1,18 +1,18 @@
 <Application x:Class="Liuzhuan.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:utils="clr-namespace:Liuzhuan.Utils"
+             xmlns:utils="clr-namespace:Liuzhuan.Utils" xmlns:sys="clr-namespace:System;assembly=mscorlib"
              xmlns:tb="http://www.hardcodet.net/taskbar"
              StartupUri="MainWindow.xaml"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
-        <ResourceDictionary>
+        <ResourceDictionary><sys:Double x:Key="{x:Static SystemParameters.VerticalScrollBarWidthKey}">8</sys:Double>
             <!-- 全局颜色 -->
-            <Color x:Key="AccentColor">#3B82F6</Color>
-            <Color x:Key="PanelColor">#2D2D35</Color>
-            <Color x:Key="PanelLightColor">#383842</Color>
-            <Color x:Key="TextColor">#E8E8EC</Color>
-            <Color x:Key="TextDimColor">#9999A3</Color>
+            <Color x:Key="AccentColor">#86B7FF</Color>
+            <Color x:Key="PanelColor">#171C26</Color>
+            <Color x:Key="PanelLightColor">#232B39</Color>
+            <Color x:Key="TextColor">#F1F5FC</Color>
+            <Color x:Key="TextDimColor">#B0BDCE</Color>
             <Color x:Key="TriggerBarColor">#4A4A55</Color>
 
             <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
@@ -21,6 +21,35 @@
             <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}"/>
             <SolidColorBrush x:Key="TextDimBrush" Color="{StaticResource TextDimColor}"/>
             <SolidColorBrush x:Key="TriggerBarBrush" Color="{StaticResource TriggerBarColor}"/>
+            <SolidColorBrush x:Key="BorderBrush" Color="#39465A"/>
+
+            <Style x:Key="ActionButtonStyle" TargetType="Button">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                <Setter Property="Background" Value="#334155"/>
+                <Setter Property="FontSize" Value="12"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+                    <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="6" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#455773"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#526988"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value></Setter>
+            </Style>
+            <Style TargetType="ListViewItem">
+                <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,6"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListViewItem">
+                    <Border x:Name="SelectionBorder" BorderThickness="2" BorderBrush="Transparent" CornerRadius="10" Background="Transparent"><ContentPresenter/></Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="#56657A"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value></Setter>
+            </Style>
 
             <!-- 默认字体 -->
             <FontFamily x:Key="UIFont">Microsoft YaHei UI, Segoe UI</FontFamily>
@@ -38,7 +67,7 @@
                 <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderThickness" Value="0"/>
-                <Setter Property="Padding" Value="8,4"/>
+                <Setter Property="Padding" Value="3,7"/>
                 <Setter Property="FontSize" Value="12"/>
                 <Setter Property="Cursor" Value="Hand"/>
                 <Setter Property="Template">
@@ -105,10 +134,10 @@
                             <Grid Background="Transparent">
                                 <Track x:Name="PART_Track" IsDirectionReversed="False">
                                     <Track.DecreaseRepeatButton>
-                                        <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Background="Transparent"/>
+                                        <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton>
                                     </Track.DecreaseRepeatButton>
                                     <Track.IncreaseRepeatButton>
-                                        <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Background="Transparent"/>
+                                        <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Focusable="False"><RepeatButton.Template><ControlTemplate TargetType="RepeatButton"><Border Background="Transparent"/></ControlTemplate></RepeatButton.Template></RepeatButton>
                                     </Track.IncreaseRepeatButton>
                                     <Track.Thumb>
                                         <Thumb>
