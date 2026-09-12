@@ -91,13 +91,14 @@ class LanClient(
         log("⏸️ 已暂停重连（点「连接」可恢复）")
     }
 
-    fun sendText(content: String) {
+    fun sendText(content: String): Boolean {
         if (state != State.Connected) {
             log("未连接，无法发送")
-            return
+            return false
         }
-        ws?.send(Proto.buildSyncText(content))
-        log("已发送文字（${content.length} 字）")
+        val accepted = ws?.send(Proto.buildSyncText(content)) == true
+        log(if (accepted) "已提交文字（${content.length} 字）" else "发送未成功，请检查连接")
+        return accepted
     }
 
     /** 推送剪贴板内容，返回是否已发送（供 Toast 提示） */

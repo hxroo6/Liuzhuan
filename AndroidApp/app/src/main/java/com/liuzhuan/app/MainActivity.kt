@@ -11,6 +11,8 @@ import android.provider.MediaStore
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
@@ -146,7 +148,7 @@ class MainActivity : ComponentActivity() {
         LanHub.client = client
 
         setContent {
-            MaterialTheme(colorScheme = darkColorScheme()) {
+            FlowTheme {
                 MainScreen(
                     store = store,
                     client = client,
@@ -259,8 +261,14 @@ fun MainScreen(
     var ip by remember { mutableStateOf("") }
     var port by remember { mutableStateOf("8899") }
     var password by remember { mutableStateOf("") }
-    var textInput by remember { mutableStateOf("") }
-    var selectedTab by remember { mutableStateOf(0) }
+    var textInput by rememberSaveable { mutableStateOf("") }
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var manualConnection by rememberSaveable { mutableStateOf(false) }
+    var showLogs by rememberSaveable { mutableStateOf(false) }
+    var receiveSearch by rememberSaveable { mutableStateOf("") }
+    var receiveType by rememberSaveable { mutableStateOf("All") }
+    var sendStatus by remember { mutableStateOf("") }
+    val pageScrollStates = List(3) { rememberScrollState() }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
     var autoSend by remember { mutableStateOf(true) }
 
@@ -315,10 +323,15 @@ fun MainScreen(
     }
 
     fun saveAndConnect() {
+        if (ip.isBlank() || port.toIntOrNull() !in 1..65534 || password.isBlank()) {
+            toast(context, "请填写电脑地址、有效端口和口令")
+            return
+        }
         val newSettings = SettingsStore.Settings(
             serverIp = ip.trim(),
             serverPort = port.trim().ifBlank { "8899" },
             password = password.trim(),
+            autoSendClipboard = autoSend,
             deviceName = android.os.Build.MODEL
         )
         settings = newSettings
@@ -357,30 +370,30 @@ fun MainScreen(
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
-                title = { Text("⚡ 流转") },
+                title = { Text("流转  /  LIUZHUAN", style = MaterialTheme.typography.titleMedium) },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
-                    containerColor = Color(0xFF16161E)
+                    containerColor = MaterialTheme.colorScheme.background
                 )
             )
         },
         bottomBar = {
-            NavigationBar {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
                     onClick = { selectedTab = 0 },
-                    icon = { Text("🔌") },
+                    icon = { Text("⇄") },
                     label = { Text("连接") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
                     onClick = { selectedTab = 1 },
-                    icon = { Text("📤") },
+                    icon = { Text("↑") },
                     label = { Text("发送") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    icon = { Text("📥") },
+                    icon = { Text("↓") },
                     label = { Text("接收") }
                 )
             }
@@ -390,14 +403,83 @@ fun MainScreen(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
-                .verticalScroll(rememberScrollState())
+                .imePadding()
+                .verticalScroll(pageScrollStates[selectedTab])
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            FlowIntro(selectedTab, isConnected, stateText)
             if (selectedTab == 0) {
                 // ===== 连接页 =====
-                Card {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        // ===== 自动发现 + 扫码配对 =====
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    scope.launch {
+                                        searching = true
+                                        val found = LanDiscovery.discover()
+                                        discoveredServers.clear()
+                                        discoveredServers.addAll(found)
+                                        searching = false
+                                        if (found.isEmpty()) {
+                                            toast(context, "未发现电脑端流转\n请确认电脑已启动且在同一Wi-Fi")
+                                        }
+                                    }
+                                },
+                                enabled = !searching,
+                                modifier = Modifier.weight(1f)
+                            ) { Text(if (searching) "搜索中..." else "搜索电脑") }
+                            OutlinedButton(
+                                onClick = {
+                                    val options = com.journeyapps.barcodescanner.ScanOptions().apply {
+                                        setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
+                                        setPrompt("扫描电脑屏幕上的配对二维码")
+                                        setBeepEnabled(false)
+                                    }
+                                    scanLauncher.launch(options)
+                                },
+                                enabled = !isConnected,
+                                modifier = Modifier.weight(1f)
+                            ) { Text("扫码连接") }
+                        }
+                        if (discoveredServers.isNotEmpty()) {
+                            Text("发现 ${discoveredServers.size} 台电脑（点选填入 IP）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            discoveredServers.forEach { s ->
+                                Row(
+                                    Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            manualConnection = true
+                                            ip = s.ip
+                                            port = s.port.toString()
+                                            toast(context, "已填入 ${s.name} 的 IP，请输入口令后连接")
+                                        }
+                                        .padding(vertical = 6.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text("🖥️", style = MaterialTheme.typography.bodyMedium)
+                                    Spacer(Modifier.width(8.dp))
+                                    Column(Modifier.weight(1f)) {
+                                        Text(s.name, style = MaterialTheme.typography.bodyMedium)
+                                        Text("${s.ip}:${s.port}", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    }
+                                }
+                            }
+                        }
+
+                        if (isConnected && !manualConnection) {
+                            OutlinedButton(onClick = { client.disconnect() }, modifier = Modifier.fillMaxWidth()) { Text("断开当前电脑") }
+                        }
+                        if (!isConnected && !isReconnecting && ip.isNotBlank() && password.isNotBlank()) {
+                            Button(onClick = { saveAndConnect() }, modifier = Modifier.fillMaxWidth()) { Text("连接上次的电脑") }
+                        }
+                        if (isReconnecting && !manualConnection) {
+                            OutlinedButton(onClick = { client.pause() }, modifier = Modifier.fillMaxWidth()) { Text("暂停自动重连") }
+                        }
+                        TextButton(onClick = { manualConnection = !manualConnection }) { Text(if (manualConnection) "收起手动配置" else "手动输入地址与口令") }
+                        if (manualConnection) {
                         OutlinedTextField(
                             value = ip,
                             onValueChange = { ip = it },
@@ -435,7 +517,7 @@ fun MainScreen(
                                         isConnected -> Color(0xFF4CAF50)
                                         stateText.contains("失败") || stateText.contains("断开") -> Color(0xFFF44336)
                                         stateText.contains("连接中") -> Color(0xFFFFC107)
-                                        else -> Color(0xFF9E9E9E)
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
                                     }
                                 ) { Box(Modifier.size(12.dp)) }
                             }
@@ -474,67 +556,14 @@ fun MainScreen(
                             ) { Text("⏸️ 暂停自动重连") }
                         }
 
-                        // ===== 自动发现 + 扫码配对 =====
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    scope.launch {
-                                        searching = true
-                                        val found = LanDiscovery.discover()
-                                        discoveredServers.clear()
-                                        discoveredServers.addAll(found)
-                                        searching = false
-                                        if (found.isEmpty()) {
-                                            toast(context, "未发现电脑端流转\n请确认电脑已启动且在同一Wi-Fi")
-                                        }
-                                    }
-                                },
-                                enabled = !searching,
-                                modifier = Modifier.weight(1f)
-                            ) { Text(if (searching) "搜索中..." else "🔍 搜索电脑") }
-                            OutlinedButton(
-                                onClick = {
-                                    val options = com.journeyapps.barcodescanner.ScanOptions().apply {
-                                        setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
-                                        setPrompt("扫描电脑屏幕上的配对二维码")
-                                        setBeepEnabled(false)
-                                    }
-                                    scanLauncher.launch(options)
-                                },
-                                enabled = !isConnected,
-                                modifier = Modifier.weight(1f)
-                            ) { Text("📷 扫码连接") }
-                        }
-                        if (discoveredServers.isNotEmpty()) {
-                            Text("发现 ${discoveredServers.size} 台电脑（点选填入 IP）", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9E9E9E))
-                            discoveredServers.forEach { s ->
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable {
-                                            ip = s.ip
-                                            port = s.port.toString()
-                                            toast(context, "已填入 ${s.name} 的 IP，请输入口令后连接")
-                                        }
-                                        .padding(vertical = 6.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Text("🖥️", style = MaterialTheme.typography.bodyMedium)
-                                    Spacer(Modifier.width(8.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(s.name, style = MaterialTheme.typography.bodyMedium)
-                                        Text("${s.ip}:${s.port}", style = MaterialTheme.typography.bodySmall, color = Color(0xFF9E9E9E))
-                                    }
-                                }
-                            }
                         }
                     }
                 }
 
                 // ===== 剪贴板监控 =====
-                Card {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("📋 剪贴板监控", style = MaterialTheme.typography.titleSmall)
+                        Text("自动同步", style = MaterialTheme.typography.titleSmall)
                         // 返回页面时重新检测（修复：系统开启了但 App 里显示未开启）
                         // 三态检测：开关/服务进程/系统绑定，防止 Settings 残留字符串误报
                         var accState by remember { mutableStateOf(accessibilityState(context)) }
@@ -573,20 +602,20 @@ fun MainScreen(
                         ) { Text(if (serviceRunning || systemBound) "管理" else "开启监控（无障碍）") }
 
                         Text(
-                            "链路诊断：$clipDiagnostic",
+                            "$clipDiagnostic",
                             style = MaterialTheme.typography.bodySmall,
                             color = Color(0xFFFFB74D)
                         )
                         Text(
                             "诊断历史见下方「日志」卡片",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF757575)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
 
                 // ===== 日志（双击复制全部）=====
-                Card {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(
                         Modifier
                             .padding(16.dp)
@@ -610,6 +639,8 @@ fun MainScreen(
                                 )
                             }
                     ) {
+                        TextButton(onClick = { showLogs = !showLogs }) { Text(if (showLogs) "收起连接诊断" else "查看连接诊断与日志") }
+                        if (showLogs) {
                         Text("📜 日志（双击复制）", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
                         // 最近事件：复制链路诊断历史（原连接页监控卡片，归集至此）
@@ -617,14 +648,14 @@ fun MainScreen(
                             Text(
                                 "🩺 最近事件",
                                 style = MaterialTheme.typography.bodyMedium,
-                                color = Color(0xFF757575)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                             Spacer(Modifier.height(2.dp))
                             diagnosticHistory.reversed().forEach { line ->
                                 Text(
                                     "· $line",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF9E9E9E)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Spacer(Modifier.height(8.dp))
@@ -633,22 +664,23 @@ fun MainScreen(
                             Text(
                                 line,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF9E9E9E)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         if (logLines.isEmpty()) {
-                            Text("暂无日志", style = MaterialTheme.typography.bodySmall, color = Color(0xFF616161))
+                            Text("暂无日志", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                         }
                     }
                 }
             } else if (selectedTab == 1) {
                 // ===== 发送页 =====
-                Card {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text("📤 发送文字到电脑", style = MaterialTheme.typography.titleSmall)
+                        Text("01 / 发送文字", style = MaterialTheme.typography.titleSmall)
                         OutlinedTextField(
                             value = textInput,
-                            onValueChange = { textInput = it },
+                            onValueChange = { textInput = it; sendStatus = "" },
                             label = { Text("文字内容") },
                             minLines = 4,
                             maxLines = 8,
@@ -657,31 +689,37 @@ fun MainScreen(
                         Button(
                             onClick = {
                                 if (textInput.isNotBlank()) {
-                                    client.sendText(textInput.trim())
+                                    sendStatus = if (client.sendText(textInput.trim())) "已提交发送，接收页可查看同步结果" else "发送未成功，请检查连接后重试"
                                 }
                             },
-                            enabled = isConnected,
+                            enabled = isConnected && textInput.isNotBlank(),
                             modifier = Modifier.fillMaxWidth()
-                        ) { Text("发送") }
+                        ) { Text(if (isConnected) "发送到电脑  ↑" else "连接电脑后发送") }
+                        if (!isConnected) TextButton(onClick = { selectedTab = 0 }) { Text("前往连接电脑") }
+                        if (sendStatus.isNotBlank()) Text(sendStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
                         HorizontalDivider()
                         // ===== 发送文件到电脑（任意格式/大小，流式直传不经剪贴板）=====
-                        Text("📎 发送文件到电脑", style = MaterialTheme.typography.titleSmall)
+                        Text("02 / 发送文件", style = MaterialTheme.typography.titleSmall)
                         Button(
                             onClick = { filePicker.launch(arrayOf("*/*")) },
                             enabled = isConnected && !uploading,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(if (uploading) "⬆️ 上传中…" else "📎 加入文件（任意格式）") }
+                        if (uploading) {
+                            if (lastProgressPct >= 0) LinearProgressIndicator(progress = { lastProgressPct / 100f }, modifier = Modifier.fillMaxWidth())
+                            else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        }
                         if (uploadStatus.isNotEmpty()) {
                             Text(
                                 uploadStatus,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF9E9E9E)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         Text(
                             "文件经局域网直传电脑端素材库，不限格式与大小",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF757575)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         HorizontalDivider()
                         // ===== 剪贴板自动发送开关 =====
@@ -693,9 +731,9 @@ fun MainScreen(
                             Column(Modifier.weight(1f)) {
                                 Text("后台自动发送剪贴板", style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    "开启后：在任意 App 复制 → 自动读取并发送到电脑",
+                                    "LSPosed 模式支持后台复制；标准模式可切回流转发送",
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF757575)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                             Switch(
@@ -717,23 +755,23 @@ fun MainScreen(
                 }
             } else {
                 // ===== 接收页（单一事实源：Repository → StateFlow，WS 推送增量）=====
-                Card {
+                Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(16.dp)) {
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("📥 电脑端最近素材", style = MaterialTheme.typography.titleSmall)
+                            Text("电脑端素材", style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "${materials.size} 条",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF9E9E9E)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                         // 轻量同步状态（一眼看出卡在哪）
                         Text(
-                            when (syncState) {
+                            if (!isConnected) "○ 已离线 · 显示上次素材" else when (syncState) {
                                 com.liuzhuan.app.data.MaterialRepository.SyncState.SYNCED ->
                                     "● 已同步 · ${materials.size} 项"
                                 com.liuzhuan.app.data.MaterialRepository.SyncState.SYNCING ->
@@ -745,27 +783,36 @@ fun MainScreen(
                                 else -> "● 未同步"
                             },
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF4CAF50)
+                            color = if (isConnected && syncState == com.liuzhuan.app.data.MaterialRepository.SyncState.SYNCED) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Text(
-                            "实时同步：电脑流转新增素材会即时显示（仅元信息，省电省流量）",
+                            "文字点按复制，图片与文件点按保存",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Color(0xFF757575)
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         Spacer(Modifier.height(8.dp))
-                        if (materials.isEmpty()) {
+                        OutlinedTextField(value = receiveSearch, onValueChange = { receiveSearch = it },
+                            placeholder = { Text("搜索素材名称") }, singleLine = true, modifier = Modifier.fillMaxWidth(),
+                            trailingIcon = { if (receiveSearch.isNotEmpty()) TextButton(onClick = { receiveSearch = "" }) { Text("清除") } })
+                        Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            listOf("All" to "全部", "Text" to "文字", "Image" to "图片", "Video" to "视频", "Audio" to "音频", "Other" to "文件").forEach { (type, title) ->
+                                FilterChip(selected = receiveType == type, onClick = { receiveType = type }, label = { Text(title) })
+                            }
+                        }
+                        val visibleMaterials = materials.filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50)
+                        if (visibleMaterials.isEmpty()) {
                             Text(
-                                "暂无素材\n提示：连接后自动拉取，电脑端新增会实时推送",
+                                if (receiveSearch.isNotBlank() || receiveType != "All") "没有匹配的素材，试试其他分类或关键词" else if (!isConnected) "连接电脑后，素材会出现在这里" else "还没有素材，先向电脑流转拖入一个文件",
                                 style = MaterialTheme.typography.bodySmall,
-                                color = Color(0xFF616161)
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         } else {
-                            materials.take(50).forEach { item ->
+                            visibleMaterials.forEach { item ->
                                 Row(
                                     Modifier
                                         .fillMaxWidth()
-                                        .clickable { client.requestItem(item.id) }
-                                        .padding(vertical = 8.dp),
+                                        .clickable(enabled = isConnected) { client.requestItem(item.id); toast(context, if (item.type == "Text") "正在获取文字…" else "正在获取文件…") }
+                                        .padding(vertical = 14.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
                                     Text(
@@ -783,11 +830,11 @@ fun MainScreen(
                                         Text(
                                             "${typeName(item.type)} · ${formatTime(item.time)} · 点击${if (item.type == "Text") "复制" else "保存"}",
                                             style = MaterialTheme.typography.bodySmall,
-                                            color = Color(0xFF9E9E9E)
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
                                     }
                                 }
-                                HorizontalDivider(color = Color(0xFF2A2A35))
+                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                             }
                         }
                     }

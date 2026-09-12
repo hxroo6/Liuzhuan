@@ -29,6 +29,18 @@ public class MaterialItem : INotifyPropertyChanged
 
     public MaterialType Type { get; set; }
 
+    [JsonIgnore]
+    public string KindLabel => Type switch
+    {
+        MaterialType.Image => "图片", MaterialType.Text => "文字", MaterialType.Video => "视频",
+        MaterialType.Audio => "音频", _ => "文件"
+    };
+
+    [JsonIgnore]
+    public string DetailLabel => Type == MaterialType.Text
+        ? $"{TextContent.Length} 字 · {AddedTime:MM/dd}"
+        : $"{Utils.FileClassifier.FormatSize(Size)} · {AddedTime:MM/dd}";
+
     /// <summary>本地文件绝对路径（文字类为 null）</summary>
     public string FilePath { get; set; } = string.Empty;
 

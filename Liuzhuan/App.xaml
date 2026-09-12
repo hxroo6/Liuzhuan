@@ -8,11 +8,11 @@
     <Application.Resources>
         <ResourceDictionary><sys:Double x:Key="{x:Static SystemParameters.VerticalScrollBarWidthKey}">8</sys:Double>
             <!-- 全局颜色 -->
-            <Color x:Key="AccentColor">#86B7FF</Color>
-            <Color x:Key="PanelColor">#171C26</Color>
-            <Color x:Key="PanelLightColor">#232B39</Color>
-            <Color x:Key="TextColor">#F1F5FC</Color>
-            <Color x:Key="TextDimColor">#B0BDCE</Color>
+            <Color x:Key="AccentColor">#85E2CD</Color>
+            <Color x:Key="PanelColor">#101D21</Color>
+            <Color x:Key="PanelLightColor">#192C30</Color>
+            <Color x:Key="TextColor">#EDF6F2</Color>
+            <Color x:Key="TextDimColor">#B2C8C5</Color>
             <Color x:Key="TriggerBarColor">#4A4A55</Color>
 
             <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}"/>
@@ -21,19 +21,20 @@
             <SolidColorBrush x:Key="TextBrush" Color="{StaticResource TextColor}"/>
             <SolidColorBrush x:Key="TextDimBrush" Color="{StaticResource TextDimColor}"/>
             <SolidColorBrush x:Key="TriggerBarBrush" Color="{StaticResource TriggerBarColor}"/>
-            <SolidColorBrush x:Key="BorderBrush" Color="#39465A"/>
+            <SolidColorBrush x:Key="WarmBrush" Color="#E6C58C"/>
+<SolidColorBrush x:Key="BorderBrush" Color="#304A4D"/>
 
             <Style x:Key="ActionButtonStyle" TargetType="Button">
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
-                <Setter Property="Background" Value="#334155"/>
+                <Setter Property="Background" Value="#28524A"/>
                 <Setter Property="FontSize" Value="12"/>
                 <Setter Property="Cursor" Value="Hand"/>
                 <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
                     <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="6" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#455773"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#34695D"/></Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
-                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#526988"/></Trigger>
+                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#407F70"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate></Setter.Value></Setter>
