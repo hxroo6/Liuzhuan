@@ -61,7 +61,7 @@ Windows 设备管理器完全看不到设备 = 线材（仅充电线）或端口
 | DEBT-2 | `CopyEventDetector.Candidate.preferSelection` 字段只生产不消费 | 无功能影响，纯遗留 | grep 全库仅在 Detector 内出现 |
 | DEBT-4 | WakeLock/WifiLock acquire() 无超时 | 电量代价 + lint 告警 | 保活设计使然；2026-08-28 已将 Wi-Fi 锁从 LOW_LATENCY 降为 FULL_HIGH_PERF 降耗，进一步需评估断连风险 |
 | DEBT-5 | 核心剪贴板链路缺少自动测试 | 后台复制回归仍靠真机手工 A-B 对照 | scripts 已有 HEIC、桌面交互和 M27 收发检查；Deduplicator / Proto / Detector 仍待覆盖 |
-| DEBT-6 | `LanDiscovery` 每次 discover 新建 DatagramSocket 且单次 socket 全程 150ms soTimeout 忙轮询收包 | 搜索体验略糙，功能正常 | 低优先级 |
+| DEBT-6 | UDP 发现仍依赖局域网广播，部分路由器隔离客户端时无法发现 | 可使用二维码或手动地址，但网络本身必须互通 | M29 已移到 IO 线程并处理错误；150ms 阻塞接收超时用于及时取消 |
 
 ## 五、运维与构建注意事项
 
@@ -78,3 +78,7 @@ Windows 设备管理器完全看不到设备 = 线材（仅充电线）或端口
 - **日志 tag 地图**（logcat 过滤用）：`ClipMonitor`(ACC 服务入口)、`ClipCapture`(DETECT/CAPTURE)、`ClipDispatch`(DISPATCH)、`ClipPipeline`、`PushToPc`(ACTION/WS/OUT_QUEUE)、`ClipCoord`(flush/VIS/装配)、`LanClient`(WS 状态/SYNC)。诊断不依赖 logcat 时看 UI 连接页「链路诊断/最近事件」（Coordinator 诊断 StateFlow，保留最近 6 条）。
 - **A-B 对照法**：后台连续复制多条后切前台——全部发出 = 断线积压/队列问题（查 WS 连通性）；只发最后一条 = 平台焦点限制（属 LIMIT-1 范畴，不是 bug）。注意区分「前台重读剪贴板」（FG-fore 日志）与「队列 flush」（OUT_QUEUE flush 日志），两者现象相似、含义不同。
 - 协议联调可不开真机：Python 模拟客户端直连 PC（scripts/ 下有现成脚本）。
+
+
+### M29 待真机验收
+- 本机二维码已验证使用 WLAN 192.168.5.60；UDP 后台搜索、错误传播与取消释放通过自动检查。当前 adb 无设备，手机搜索闪退的实际堆栈、更新后扫码互通和切页帧率仍需真机验证。旧二维码/已保存的 172.30.201.230 地址需重新扫码替换。

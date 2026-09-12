@@ -56,7 +56,8 @@ public class UdpDiscovery : IDisposable
                 if (msg != DiscoverMagic) continue;
 
                 // 收到探测 → 回复 OFFER（本机 IP + WS 端口 + 设备名）
-                var ip = LanNetUtil.GetLanIp();
+                var ip = LanNetUtil.GetLanIp(result.RemoteEndPoint.Address.ToString());
+                if (ip == "127.0.0.1") continue;
                 var device = Environment.MachineName;
                 var offer = $"{OfferMagic}|{ip}|{wsPort}|{device}";
                 var bytes = Encoding.UTF8.GetBytes(offer);

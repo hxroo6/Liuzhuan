@@ -110,7 +110,7 @@
 - 面板复用 `_panelTranslate`，反向操作从当前画面位置接续；`_panelTransition` 阻止旧完成回调覆盖新目标。收起完成隐藏 MainPanel 并将 PanelColumn 设为 0，让 8px 触发条实际位于窄窗内；展开时先恢复布局。固定、菜单打开、左锚定保留原有保护。
 - 按钮与卡片只在内部 MotionSurface 做按压缩放、悬停提亮，不变更外部布局或接管点击。拖出前清理悬停预览和按压状态；分类滑动指示条、内容轻入场、搜索焦点边框与反馈提示沿用同一配色和节奏。
 - GridView 的 MaterialTemplateSelector 仅初始化一次；缩略图直接绑定 ThumbnailSource，异步完成仅更新图片并淡入，不重建整页。Duration 增加属性变更通知，保留异步时长更新；缩略图和列表更新保留容器与选择。
-- Android `FlowDesign.kt` 集中定义线性导航图标、220ms 页面轻位移、180–220ms 折叠/箭头及平滑进度。仅组合当前页，不叠加两份生命周期与业务回调；草稿和各页滚动位置保留，切页收起键盘。
+- Android `FlowDesign.kt` 集中定义线性导航图标、180–220ms 折叠/箭头及平滑进度（M29 已移除整页位移与透明度动画）。仅组合当前页，不叠加两份生命周期与业务回调；草稿和各页滚动位置保留，切页收起键盘。
 - Android 图片淡入、任务列表重排采用 Compose 标准动画，跟随系统 MotionDurationScale；结束/失败进度立即显示真实值。接收行按素材 ID、缩略图按 URL 保持组件身份，避免列表增量插入时短暂错图。
 - DesktopUiChecks 采用无业务启动的 Application 和真实资源字典、MainWindow，推动 Dispatcher 检查连续反向/快速三连、关闭动画同步落地、窄条布局与绑定更新；离屏截图不能证明真实帧率、多屏 DPI 或手机触控效果，仍需设备验收。
 
@@ -179,3 +179,11 @@
 
 - Python E2E：`scripts/test_m1_sync.py`、`test_m1_lan.py`、`test_m1_download.py`、`test_m4_multi.py`（多设备并发）、`demo_shot.py`/`gen_manual.py`。协议联调可不开真机直跑。
 - 独立检查工程：`scripts/HeicConversionChecks`、`scripts/DesktopUiChecks`、`scripts/TransferChecks`；自动剪贴板核心链路仍缺少单元测试（见 KNOWN_ISSUES）。
+
+### 局域网发现与 Android 页面减负（M29，2026-09-13）
+
+- `LanNetUtil` 排除隧道、虚拟适配器、链路本地地址与点对点地址；候选地址按手机子网、网关及 Wi-Fi 稳定排序。二维码只使用候选地址，并允许用户选择网卡；没有有效 LAN 时不生成误导二维码。多网卡环境仍需选择与手机相通的网络。
+- `UdpDiscovery` 根据请求来源选择地址；Android 使用 UDP 回包的实际源地址，兼容旧电脑端 OFFER 中误填虚拟 IP。消息字段未变。
+- `LanDiscovery.discover` 为 suspend 函数，socket 创建、发送、接收全部在 IO 调度器；150ms 接收超时提供取消检查机会，use 保证关闭。搜索按钮阻止重复触发并处理异常，取消异常继续传播。
+- 主页面使用 LazyColumn，接收素材按稳定 id 分项组合，保持每页滚动状态；移除整页动画。顶部收发计数只订阅去重后的运行任务数，避免进度更新扩大重组范围。
+- `scripts/LanAddressChecks` 验证网卡选择与实际二维码解码；同目录 DiscoveryCheck.kt 验证真实 UDP 回包、界面调度器不阻塞、取消释放 socket 和异常传播。无 adb 设备，未完成手机闪退堆栈、扫码互通与帧率验收。

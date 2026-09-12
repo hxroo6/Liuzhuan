@@ -12,12 +12,29 @@ namespace Liuzhuan;
 /// </summary>
 public partial class QrCodeWindow : Window
 {
+    private readonly int _port;
+    private readonly string _password;
     public QrCodeWindow(string ip, int port, string password)
     {
+        _port = port; _password = password;
         InitializeComponent();
+        var addresses = Utils.LanNetUtil.GetLanAddresses();
+        NetworkChoice.ItemsSource = addresses;
+        if (addresses.Count == 0)
+        {
+            InfoText.Text = "未找到可用的 Wi-Fi / 以太网地址。\n请连接局域网后重新打开二维码。";
+            NetworkChoice.IsEnabled = false;
+            return;
+        }
+        NetworkChoice.SelectedItem = addresses.FirstOrDefault(a => a.Address == ip) ?? addresses[0];
+    }
 
+    private void NetworkChoice_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    {
+        if (NetworkChoice.SelectedItem is not Utils.LanNetUtil.LanAddress address) return;
+        var ip = address.Address;
         // 二维码内容（JSON）
-        var payload = $"{{\"ip\":\"{ip}\",\"port\":{port},\"pwd\":\"{password}\"}}";
+        var payload = System.Text.Json.JsonSerializer.Serialize(new { ip, port = _port, pwd = _password });
         var writer = new BarcodeWriterPixelData
         {
             Format = BarcodeFormat.QR_CODE,
@@ -28,6 +45,6 @@ public partial class QrCodeWindow : Window
         bmp.WritePixels(new Int32Rect(0, 0, data.Width, data.Height), data.Pixels, data.Width * 4, 0);
         QrImage.Source = bmp;
 
-        InfoText.Text = $"电脑 {ip}:{port}\n口令 {password}";
+        InfoText.Text = $"电脑 {ip}:{_port}\n口令 {_password}";
     }
 }

@@ -18,6 +18,9 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -37,6 +40,9 @@ import com.liuzhuan.app.net.LanClient
 import com.liuzhuan.app.net.LanDiscovery
 import com.liuzhuan.app.net.Proto
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -252,6 +258,7 @@ fun MainScreen(
 
     // 自动发现状态
     var searching by remember { mutableStateOf(false) }
+    var discoveryError by remember { mutableStateOf("") }
     val discoveredServers = remember { mutableStateListOf<LanDiscovery.Server>() }
 
     var ip by remember { mutableStateOf("") }
@@ -259,14 +266,17 @@ fun MainScreen(
     var password by remember { mutableStateOf("") }
     var textInput by rememberSaveable { mutableStateOf("") }
     var showTransfers by remember { mutableStateOf(false) }
-    val transfers by TransferTasks.tasks.collectAsStateWithLifecycle()
+    val runningTransfers by remember { TransferTasks.tasks.map { tasks -> tasks.count { it.running } }.distinctUntilChanged() }.collectAsStateWithLifecycle(0)
     var selectedTab by rememberSaveable { mutableStateOf(0) }
     var manualConnection by rememberSaveable { mutableStateOf(false) }
     var showLogs by rememberSaveable { mutableStateOf(false) }
     var receiveSearch by rememberSaveable { mutableStateOf("") }
     var receiveType by rememberSaveable { mutableStateOf("All") }
     var sendStatus by remember { mutableStateOf("") }
-    val pageScrollStates = List(3) { rememberScrollState() }
+    val pageScrollStates = List(3) { rememberLazyListState() }
+    val visibleMaterials = remember(materials, receiveType, receiveSearch) {
+        materials.filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50)
+    }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
     var autoSend by remember { mutableStateOf(true) }
 
@@ -377,7 +387,7 @@ fun MainScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("流转  /  LIUZHUAN", style = MaterialTheme.typography.titleMedium) },
-                actions = { TextButton(onClick = { showTransfers = true }) { Text("收发 ${transfers.count { it.running }}") } },
+                actions = { TextButton(onClick = { showTransfers = true }) { Text("收发 $runningTransfers") } },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
@@ -406,16 +416,18 @@ fun MainScreen(
             }
         }
     ) { padding ->
-        Column(
+        LazyColumn(
+            state = pageScrollStates[selectedTab],
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
                 .imePadding()
-                .flowPageMotion(selectedTab)
-                .verticalScroll(pageScrollStates[selectedTab])
-                .padding(16.dp),
+                .padding(horizontal = 16.dp),
+            contentPadding = PaddingValues(vertical = 16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            item(key = "page-$selectedTab") {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             FlowIntro(selectedTab, isConnected, stateText)
             if (selectedTab == 0) {
                 // ===== 连接页 =====
@@ -424,15 +436,23 @@ fun MainScreen(
                         // ===== 自动发现 + 扫码配对 =====
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             OutlinedButton(
-                                onClick = {
+                                onClick = search@{
+                                    if (searching) return@search
+                                    searching = true
+                                    discoveryError = ""
                                     scope.launch {
-                                        searching = true
-                                        val found = LanDiscovery.discover()
-                                        discoveredServers.clear()
-                                        discoveredServers.addAll(found)
-                                        searching = false
-                                        if (found.isEmpty()) {
-                                            toast(context, "未发现电脑端流转\n请确认电脑已启动且在同一Wi-Fi")
+                                        try {
+                                            val found = LanDiscovery.discover()
+                                            discoveredServers.clear()
+                                            discoveredServers.addAll(found)
+                                            if (found.isEmpty()) discoveryError = "未发现电脑，请确认电脑已启动且连接同一 Wi-Fi"
+                                        } catch (ex: CancellationException) {
+                                            throw ex
+                                        } catch (ex: Exception) {
+                                            discoveredServers.clear()
+                                            discoveryError = "搜索未完成，请检查 Wi-Fi 或 VPN 后重试（${ex.javaClass.simpleName}）"
+                                        } finally {
+                                            searching = false
                                         }
                                     }
                                 },
@@ -452,6 +472,7 @@ fun MainScreen(
                                 modifier = Modifier.weight(1f)
                             ) { Text("扫码连接") }
                         }
+                        if (discoveryError.isNotEmpty()) Text(discoveryError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         if (discoveredServers.isNotEmpty()) {
                             Text("发现 ${discoveredServers.size} 台电脑（点选填入 IP）", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             discoveredServers.forEach { s ->
@@ -810,42 +831,34 @@ fun MainScreen(
                                 FilterChip(selected = receiveType == type, onClick = { receiveType = type }, label = { Text(title) })
                             }
                         }
-                        val visibleMaterials = materials.filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50)
                         if (visibleMaterials.isEmpty()) {
                             Text(
                                 if (receiveSearch.isNotBlank() || receiveType != "All") "没有匹配的素材，试试其他分类或关键词" else if (!isConnected) "连接电脑后，素材会出现在这里" else "还没有素材，先向电脑流转拖入一个文件",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
-                        } else {
-                            visibleMaterials.forEach { item ->
-                                key(item.id) {
-                                Row(
-                                    Modifier
-                                        .fillMaxWidth()
-                                        .clickable(enabled = isConnected) { client.requestItem(item.id); toast(context, if (item.type == "Text") "正在获取文字…" else "正在获取文件…") }
-                                        .padding(vertical = 14.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    if (item.type == "Image") PhotoThumbnail(if(isConnected) client.thumbnailUrl(item.id) else null, item.name)
-                                    else Text(typeIcon(item.type), style = MaterialTheme.typography.titleMedium)
-                                    Spacer(Modifier.width(10.dp))
-                                    Column(Modifier.weight(1f)) {
-                                        Text(
-                                            item.name.ifBlank { "(无标题)" },
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            maxLines = 1,
-                                            overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                                        )
-                                        Text(
-                                            "${typeName(item.type)} · ${formatTime(item.time)} · 点击${if (item.type == "Text") "复制" else "保存"}",
-                                            style = MaterialTheme.typography.bodySmall,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                                }
+                        }
+                    }
+                }
+            }
+            }
+            }
+            if (selectedTab == 2) {
+                items(visibleMaterials, key = { it.id }, contentType = { it.type }) { item ->
+                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
+                        Row(Modifier.fillMaxWidth()
+                            .clickable(enabled = isConnected) {
+                                client.requestItem(item.id)
+                                toast(context, if (item.type == "Text") "正在获取文字…" else "正在获取文件…")
+                            }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (item.type == "Image") PhotoThumbnail(if (isConnected) client.thumbnailUrl(item.id) else null, item.name)
+                            else Text(typeIcon(item.type), style = MaterialTheme.typography.titleMedium)
+                            Spacer(Modifier.width(10.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(item.name.ifBlank { "(无标题)" }, style = MaterialTheme.typography.bodyMedium,
+                                    maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                Text("${typeName(item.type)} · ${formatTime(item.time)} · 点击${if (item.type == "Text") "复制" else "保存"}",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
                         }
                     }
