@@ -1,14 +1,31 @@
 package com.liuzhuan.app
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -47,6 +64,87 @@ fun FlowIntro(page: Int, connected: Boolean, state: String) {
             Text(if (connected) "● 已连接 · 局域网直传" else "○ $state", style = MaterialTheme.typography.labelMedium,
                 color = if (connected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
         }
-        Text("⇄", fontSize = 36.sp, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(start = 12.dp))
+        Spacer(Modifier.width(12.dp))
+        Surface(shape = RoundedCornerShape(18.dp), color = Color(0xFF31594F),
+            border = BorderStroke(1.dp, Color(0xFF4F7869))) {
+            Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+                FlowNavIcon(page, selected = true, modifier = Modifier.size(28.dp))
+            }
+        }
     }
+}
+
+// Compose animations use the platform MotionDurationScale, including scale = 0.
+// Only the incoming page is composed; switching never duplicates lifecycle effects.
+@Composable
+fun Modifier.flowPageMotion(page: Int): Modifier {
+    var previous by remember { mutableIntStateOf(page) }
+    val direction = remember(page) { (page - previous).coerceIn(-1, 1) }
+    val arrival = remember(page) { Animatable(if (previous == page) 1f else 0f) }
+    LaunchedEffect(page) {
+        previous = page
+        arrival.animateTo(1f, tween(220, easing = FastOutSlowInEasing))
+    }
+    return graphicsLayer {
+        alpha = .8f + .2f * arrival.value
+        translationX = direction * 12.dp.toPx() * (1f - arrival.value)
+    }
+}
+
+@Composable
+fun FlowReveal(visible: Boolean, content: @Composable ColumnScope.() -> Unit) {
+    AnimatedVisibility(visible,
+        enter = expandVertically(tween(220), expandFrom = Alignment.Top) + fadeIn(tween(160)),
+        exit = shrinkVertically(tween(180), shrinkTowards = Alignment.Top) + fadeOut(tween(120))) {
+        Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp), content = content)
+    }
+}
+
+@Composable
+fun FlowDisclosure(expanded: Boolean, expandedLabel: String, collapsedLabel: String, onClick: () -> Unit) {
+    val rotation by animateFloatAsState(if (expanded) 180f else 0f, tween(180), label = "disclosure")
+    TextButton(onClick = onClick, modifier = Modifier.fillMaxWidth().semantics {
+        stateDescription = if (expanded) "已展开" else "已收起"
+    }, contentPadding = PaddingValues(horizontal = 0.dp, vertical = 8.dp)) {
+        Text(if (expanded) expandedLabel else collapsedLabel, modifier = Modifier.weight(1f))
+        val tint = LocalContentColor.current
+        Canvas(Modifier.size(20.dp).graphicsLayer { rotationZ = rotation }) {
+            val stroke = 1.7.dp.toPx()
+            drawLine(tint, Offset(size.width * .25f, size.height * .4f), Offset(size.width * .5f, size.height * .65f), stroke, StrokeCap.Round)
+            drawLine(tint, Offset(size.width * .5f, size.height * .65f), Offset(size.width * .75f, size.height * .4f), stroke, StrokeCap.Round)
+        }
+    }
+}
+
+@Composable
+fun FlowNavIcon(page: Int, selected: Boolean, modifier: Modifier = Modifier.size(24.dp)) {
+    val color by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+        tween(160), label = "navigation tint")
+    Canvas(modifier) {
+        val stroke = 1.8.dp.toPx()
+        fun line(x1: Float, y1: Float, x2: Float, y2: Float) = drawLine(color,
+            Offset(size.width * x1, size.height * y1), Offset(size.width * x2, size.height * y2), stroke, StrokeCap.Round)
+        when (page) {
+            0 -> {
+                line(.15f,.32f,.84f,.32f); line(.65f,.13f,.84f,.32f); line(.65f,.51f,.84f,.32f)
+                line(.85f,.7f,.16f,.7f); line(.35f,.51f,.16f,.7f); line(.35f,.89f,.16f,.7f)
+            }
+            1 -> {
+                line(.5f,.68f,.5f,.14f); line(.27f,.37f,.5f,.14f); line(.73f,.37f,.5f,.14f)
+                line(.18f,.64f,.18f,.86f); line(.18f,.86f,.82f,.86f); line(.82f,.86f,.82f,.64f)
+            }
+            else -> {
+                line(.5f,.13f,.5f,.66f); line(.27f,.44f,.5f,.66f); line(.73f,.44f,.5f,.66f)
+                line(.18f,.64f,.18f,.86f); line(.18f,.86f,.82f,.86f); line(.82f,.86f,.82f,.64f)
+            }
+        }
+    }
+}
+
+@Composable
+fun FlowProgressIndicator(progress: Float, modifier: Modifier = Modifier, running: Boolean = true) {
+    val target = progress.coerceIn(0f, 1f)
+    val smooth by animateFloatAsState(target, tween(180), label = "transfer progress")
+    // Completed/failed rows immediately show the real final count, without a trailing animation.
+    LinearProgressIndicator(progress = { if (running) smooth else target }, modifier = modifier)
 }

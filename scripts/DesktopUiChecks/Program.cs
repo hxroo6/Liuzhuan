@@ -1,15 +1,56 @@
 using System.IO;
 using System.Reflection;
+using System.Xml.Linq;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Data;
+using System.Windows.Markup;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Liuzhuan;
 using Liuzhuan.Models;
 using Liuzhuan.Services;
 
 internal static class Program
 {
+    // DispatcherFrame 只用于驱动动画；不能触发正式 App 的单实例锁、网络和数据目录初始化。
+    private sealed class OffscreenApp : Application
+    {
+        protected override void OnStartup(StartupEventArgs e) { }
+    }
+
+    private static ResourceDictionary ReadProductionResources()
+    {
+        var directory = new DirectoryInfo(Directory.GetCurrentDirectory());
+        while (directory != null && !File.Exists(Path.Combine(directory.FullName, "Liuzhuan", "App.xaml")))
+            directory = directory.Parent;
+        if (directory == null) throw new FileNotFoundException("Run DesktopUiChecks from within the source repository so the production App.xaml resources can be loaded.");
+        var document = XDocument.Load(Path.Combine(directory.FullName, "Liuzhuan", "App.xaml"));
+        var application = document.Root!;
+        XNamespace presentation = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
+        var dictionary = new XElement(application.Element(presentation + "Application.Resources")!.Element(presentation + "ResourceDictionary")!);
+        foreach (var declaration in application.Attributes().Where(x => x.IsNamespaceDeclaration))
+        {
+            var value = declaration.Value.StartsWith("clr-namespace:Liuzhuan.", StringComparison.Ordinal) && !declaration.Value.Contains(";assembly=")
+                ? declaration.Value + ";assembly=Liuzhuan" : declaration.Value;
+            if (value != declaration.Value)
+            {
+                foreach (var element in dictionary.DescendantsAndSelf())
+                {
+                    if (element.Name.NamespaceName == declaration.Value) element.Name = XName.Get(element.Name.LocalName, value);
+                    foreach (var attribute in element.Attributes().Where(x => x.Name.NamespaceName == declaration.Value).ToList())
+                    {
+                        element.SetAttributeValue(XName.Get(attribute.Name.LocalName, value), attribute.Value);
+                        attribute.Remove();
+                    }
+                }
+            }
+            dictionary.SetAttributeValue(declaration.Name, value);
+        }
+        return (ResourceDictionary)XamlReader.Parse(dictionary.ToString());
+    }
+
     [STAThread]
     static void Main(string[] args)
     {
@@ -17,8 +58,11 @@ internal static class Program
         Directory.CreateDirectory(output);
         typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null, Path.Combine(output, "test-data-" + Guid.NewGuid().ToString("N")));
         Liuzhuan.Utils.Logger.Init(output);
-        var app = new App(); app.InitializeComponent();
+        var app = new OffscreenApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        app.Resources = ReadProductionResources();
         var window = new MainWindow(); // 离屏渲染，不启动服务，不访问用户素材库。
+        var loadedHandler = typeof(MainWindow).GetMethod("Window_Loaded", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        window.Loaded -= (RoutedEventHandler)loadedHandler.CreateDelegate(typeof(RoutedEventHandler), window);
         var store = (DataStore)typeof(MainWindow).GetField("_dataStore", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
         void Invoke(string method) => typeof(MainWindow).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
         void Check(bool value, string message) { if (!value) throw new Exception(message); Console.WriteLine("PASS " + message); }
@@ -27,22 +71,46 @@ internal static class Program
         Invoke("RefreshView");
         var grid=(ListView)window.FindName("GridView");
         grid.SelectedItem=grid.Items[1]; var selected=grid.SelectedItem;
+        var selector = grid.ItemTemplateSelector;
         Invoke("RefreshView");
         Check(ReferenceEquals(grid.SelectedItem,selected),"refresh preserves selection");
-        void FillImages(DependencyObject parent)
-        {
-            if(parent is Image image && image.DataContext is MaterialItem item) image.Source=item.ThumbnailSource;
-            for(int i=0;i<VisualTreeHelper.GetChildrenCount(parent);i++) FillImages(VisualTreeHelper.GetChild(parent,i));
-        }
+        Check(selector != null && ReferenceEquals(grid.ItemTemplateSelector, selector), "refresh reuses material template selector");
         var root=(FrameworkElement)window.Content;
         void Render(string name,double scale=1)
         {
-            root.Measure(new Size(380,680)); root.Arrange(new Rect(0,0,380,680)); root.UpdateLayout(); FillImages(root); root.UpdateLayout();
+            root.Measure(new Size(380,680)); root.Arrange(new Rect(0,0,380,680)); root.UpdateLayout();
             var bmp=new RenderTargetBitmap((int)(380*scale),(int)(680*scale),96*scale,96*scale,PixelFormats.Pbgra32);
             bmp.Render(root); var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bmp));
             using var stream=File.Create(Path.Combine(output,name)); encoder.Save(stream);
         }
         Render("desktop-default.png");
+        Image? FindThumbnail(DependencyObject parent)
+        {
+            if (parent is Image image && image.Name == "ThumbImage") return image;
+            for (int i = 0; i < VisualTreeHelper.GetChildrenCount(parent); i++)
+                if (FindThumbnail(VisualTreeHelper.GetChild(parent, i)) is Image child) return child;
+            return null;
+        }
+        if (args.Length > 1)
+        {
+            var imageItem = grid.Items.Cast<MaterialItem>().First(x => x.Type == MaterialType.Image);
+            var imageContainer = (FrameworkElement)grid.ItemContainerGenerator.ContainerFromItem(imageItem);
+            var thumbnail = FindThumbnail(imageContainer) ?? throw new Exception("Image card has no thumbnail element.");
+            var originalSource = imageItem.ThumbnailSource!;
+            Check(BindingOperations.IsDataBound(thumbnail, Image.SourceProperty) && ReferenceEquals(thumbnail.Source, originalSource),
+                "thumbnail renders through its live source binding");
+            var replacementSource = ((BitmapSource)originalSource).Clone(); replacementSource.Freeze();
+            grid.SelectedItem = imageItem;
+            imageItem.ThumbnailSource = replacementSource;
+            Pump(20); Invoke("RefreshView"); root.UpdateLayout();
+            Check(ReferenceEquals(thumbnail.Source, replacementSource) && BindingOperations.IsDataBound(thumbnail, Image.SourceProperty),
+                "deferred thumbnail change reaches the existing image binding");
+            Check(ReferenceEquals(grid.ItemContainerGenerator.ContainerFromItem(imageItem), imageContainer) && ReferenceEquals(grid.SelectedItem, imageItem),
+                "thumbnail refresh preserves container and selected material");
+            imageItem.ThumbnailSource = originalSource;
+            grid.SelectedItem = selected;
+            Pump(20);
+        }
         var first=(FrameworkElement)grid.ItemContainerGenerator.ContainerFromIndex(0);
         var second=(FrameworkElement)grid.ItemContainerGenerator.ContainerFromIndex(1);
         Check(Math.Abs(first.TranslatePoint(new Point(),root).Y-second.TranslatePoint(new Point(),root).Y)<1,"two columns with scrollbar");
@@ -80,6 +148,96 @@ internal static class Program
         var tasksWindow=new Liuzhuan.Views.TransferWindow();
         var tasksRoot=(FrameworkElement)tasksWindow.Content;tasksRoot.Measure(new Size(480,500));tasksRoot.Arrange(new Rect(0,0,480,500));tasksRoot.UpdateLayout();
         var tasksShot=new RenderTargetBitmap(480,500,96,96,PixelFormats.Pbgra32);tasksShot.Render(tasksRoot);var tasksEncoder=new PngBitmapEncoder();tasksEncoder.Frames.Add(BitmapFrame.Create(tasksShot));using(var tasksOutput=File.Create(Path.Combine(output,"transfer-tasks.png"))) tasksEncoder.Save(tasksOutput);
+
+        // 最后执行时钟测试，既保留前面的静态截图，也避免无窗口的 App 启动真实功能。
+        const BindingFlags privateInstance = BindingFlags.Instance | BindingFlags.NonPublic;
+        const BindingFlags privateStatic = BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public;
+        var motionType = typeof(MainWindow).Assembly.GetType("Liuzhuan.Utils.UiMotion", throwOnError: true)!;
+        var motionOverrideProperty = motionType.GetProperty("EnabledOverride", privateStatic);
+        var motionOverrideField = motionType.GetField("EnabledOverride", privateStatic);
+        void SetMotionOverride(bool? enabled)
+        {
+            if (motionOverrideProperty != null) motionOverrideProperty.SetValue(null, enabled);
+            else if (motionOverrideField != null) motionOverrideField.SetValue(null, enabled);
+            else throw new MissingMemberException(motionType.FullName, "EnabledOverride");
+        }
+        void Pump(int milliseconds)
+        {
+            var frame = new DispatcherFrame();
+            var timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromMilliseconds(milliseconds) };
+            timer.Tick += (_, _) => { timer.Stop(); frame.Continue = false; };
+            timer.Start();
+            try { Dispatcher.PushFrame(frame); }
+            finally { timer.Stop(); }
+        }
+        void SetField(string name, object value) => typeof(MainWindow).GetField(name, privateInstance)!.SetValue(window, value);
+        bool IsExpanded() => (bool)typeof(MainWindow).GetField("_isExpanded", privateInstance)!.GetValue(window)!;
+        SetField("_expandedLeft", 1000d);
+        SetField("_collapsedLeft", 1372d);
+        SetField("_isPinned", false);
+        SetField("_menuOpen", false);
+        SetField("_isLeftAnchored", false);
+        var panel = (FrameworkElement)window.FindName("MainPanel");
+        var panelColumn = (ColumnDefinition)window.FindName("PanelColumn");
+        var panelTranslate = (TranslateTransform)typeof(MainWindow).GetField("_panelTranslate", privateInstance)!.GetValue(window)!;
+        try
+        {
+            SetMotionOverride(true);
+            Invoke("CollapsePanel"); Pump(60);
+            var collapsingX = panelTranslate.X;
+            Check(collapsingX > 0 && collapsingX < 372, "collapse clock reaches an intermediate position");
+            Invoke("ExpandPanel");
+            Check(Math.Abs(panelTranslate.X - collapsingX) < 1, $"collapse reversal continues from current position ({collapsingX:F2} -> {panelTranslate.X:F2})");
+            Pump(40);
+            var expandingX = panelTranslate.X;
+            Check(expandingX < collapsingX, "reversed panel travels toward the expanded position");
+            Invoke("CollapsePanel");
+            Check(Math.Abs(panelTranslate.X - expandingX) < 1, "second reversal preserves visual continuity");
+            Pump(400);
+            Check(!IsExpanded() && window.Width == 8 && window.Left == 1372 && panel.Visibility == Visibility.Collapsed && panelColumn.Width.Value == 0,
+                "collapse-expand-collapse ends at the latest collapsed target");
+
+            root.Measure(new Size(8,680)); root.Arrange(new Rect(0,0,8,680)); root.UpdateLayout();
+            var trigger = (FrameworkElement)window.FindName("TriggerBar");
+            var triggerPosition = trigger.TranslatePoint(new Point(), root);
+            Check(trigger.Visibility == Visibility.Visible && trigger.ActualWidth > 0 && triggerPosition.X >= -0.1 && triggerPosition.X + trigger.ActualWidth <= 8.1,
+                "collapsed trigger is visible inside the eight-pixel window");
+            var collapsedShot = new RenderTargetBitmap(8,680,96,96,PixelFormats.Pbgra32);
+            collapsedShot.Render(root);
+            var collapsedEncoder = new PngBitmapEncoder(); collapsedEncoder.Frames.Add(BitmapFrame.Create(collapsedShot));
+            using (var collapsedOutput = File.Create(Path.Combine(output,"collapsed-state.png"))) collapsedEncoder.Save(collapsedOutput);
+
+            Invoke("ExpandPanel"); Pump(60);
+            Invoke("CollapsePanel"); Pump(40);
+            Invoke("ExpandPanel"); Pump(400);
+            Check(IsExpanded() && window.Width == 380 && window.Left == 1000 && panel.Visibility == Visibility.Visible && panelColumn.Width.Value == 372 && Math.Abs(panelTranslate.X) < 0.1,
+                "expand-collapse-expand ignores obsolete collapse completions");
+
+            // 系统禁用动画时必须同步完成布局；中途禁用也不能让旧动画回调再次缩窗。
+            Invoke("CollapsePanel"); Pump(40);
+            SetMotionOverride(false);
+            Invoke("ExpandPanel");
+            Check(IsExpanded() && window.Width == 380 && panel.Visibility == Visibility.Visible && Math.Abs(panelTranslate.X) < 0.1,
+                "disabling motion settles an interrupted expansion immediately");
+            Pump(400);
+            Check(IsExpanded() && window.Width == 380 && panelColumn.Width.Value == 372,
+                "disabled motion invalidates pending collapse completion");
+            Invoke("CollapsePanel");
+            Check(!IsExpanded() && window.Width == 8 && panel.Visibility == Visibility.Collapsed && panelColumn.Width.Value == 0,
+                "disabled motion collapses synchronously");
+            Invoke("ExpandPanel");
+            Check(IsExpanded() && window.Width == 380 && panel.Visibility == Visibility.Visible && panelColumn.Width.Value == 372 && Math.Abs(panelTranslate.X) < 0.1,
+                "disabled motion expands synchronously");
+
+            SetField("_menuOpen", true); Invoke("CollapsePanel");
+            Check(IsExpanded(), "open menu prevents collapse");
+            SetField("_menuOpen", false); SetField("_isLeftAnchored", true); Invoke("CollapsePanel");
+            Check(IsExpanded(), "left anchored panel stays expanded");
+            SetField("_isLeftAnchored", false);
+            Check(typeof(MainWindow).GetField("_hotspotTimer", privateInstance)!.GetValue(window) == null,
+                "animation checks never initialize desktop hotspot or network startup");
+        }
+        finally { SetMotionOverride(null); }
         store.Dispose();
         Console.WriteLine("Rendered to " + output);
     }

@@ -3,16 +3,28 @@ package com.liuzhuan.app
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
@@ -26,6 +38,11 @@ private val thumbnailSlots=Semaphore(3)
 private val thumbnailHttp=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECONDS).readTimeout(10,TimeUnit.SECONDS).build()
 
 @Composable fun PhotoThumbnail(url:String?, label:String) {
+    // A recycled row must never briefly display another item's previously loaded bitmap.
+    key(url) { ThumbnailContent(url, label) }
+}
+
+@Composable private fun ThumbnailContent(url:String?, label:String) {
     val bitmap by produceState<Bitmap?>(null,url) {
         value=null
         if(url==null) return@produceState
@@ -48,30 +65,50 @@ private val thumbnailHttp=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECON
             }
         }
     }
-    if(bitmap!=null) Image(bitmap!!.asImageBitmap(),contentDescription=label,modifier=Modifier.size(56.dp),contentScale=ContentScale.Crop)
-    else Surface(Modifier.size(56.dp),color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small) { Box(Modifier.padding(12.dp)) { Text("图片",style=MaterialTheme.typography.labelSmall) } }
+    val opacity by animateFloatAsState(if (bitmap == null) 0f else 1f, tween(180), label = "thumbnail reveal")
+    Surface(Modifier.size(56.dp),color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small) {
+        Box(contentAlignment = Alignment.Center) {
+            if (bitmap == null) Text("图片", style=MaterialTheme.typography.labelSmall, color=MaterialTheme.colorScheme.onSurfaceVariant)
+            bitmap?.let { image ->
+                Image(image.asImageBitmap(),contentDescription=label,
+                    modifier=Modifier.fillMaxSize().clip(MaterialTheme.shapes.small).graphicsLayer { alpha=opacity },contentScale=ContentScale.Crop)
+            }
+        }
+    }
 }
 
 @Composable fun TransferTaskDialog(onDismiss:()->Unit) {
-    val entries by TransferTasks.tasks.collectAsState()
+    val entries by TransferTasks.tasks.collectAsStateWithLifecycle()
     AlertDialog(onDismissRequest=onDismiss,title={Text("收发任务")},confirmButton={TextButton(onClick=onDismiss){Text("关闭")}},text={
         Column {
-            Text("本次运行记录 · 失败任务可重试",style=MaterialTheme.typography.bodySmall)
-            if(entries.isEmpty()) Text("还没有任务，发送或保存文件后会显示在这里。",modifier=Modifier.padding(top=16.dp))
-            LazyColumn(Modifier.heightIn(max=420.dp),verticalArrangement=Arrangement.spacedBy(16.dp)) {
+            Text(if (entries.isEmpty()) "本次运行记录" else "${entries.count { it.running }} 项进行中 · ${entries.count { it.failed }} 项待处理",
+                style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+            if(entries.isEmpty()) Text("还没有收发任务\n发送或保存文件后，在这里查看进度。",modifier=Modifier.padding(top=20.dp,bottom=8.dp),style=MaterialTheme.typography.bodyMedium)
+            LazyColumn(Modifier.heightIn(max=420.dp),contentPadding=PaddingValues(top=16.dp,bottom=4.dp),verticalArrangement=Arrangement.spacedBy(12.dp)) {
                 items(entries,key={it.id}) { task ->
-                    Column {
-                        Text(task.name,maxLines=2,style=MaterialTheme.typography.titleSmall)
-                        Text("${task.direction} · ${task.state}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.primary)
-                        if(task.total>0) {
-                            LinearProgressIndicator(progress={(task.done.toFloat()/task.total).coerceIn(0f,1f)},modifier=Modifier.fillMaxWidth().padding(vertical=6.dp))
-                            Text("${bytesLabel(task.done)} / ${bytesLabel(task.total)} · ${bytesLabel(task.speed)}/s",style=MaterialTheme.typography.labelSmall)
-                        } else if(task.running) LinearProgressIndicator(Modifier.fillMaxWidth())
-                        if(task.error.isNotEmpty()) Text(task.error,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
-                        if(task.failed && TransferTasks.canRetry(task.id)) TextButton(onClick={TransferTasks.retry(task.id)}){Text("重试")}
+                    Surface(modifier=Modifier.fillMaxWidth().animateItem(fadeInSpec=tween(140),fadeOutSpec=tween(100),placementSpec=tween(220)),
+                        shape=MaterialTheme.shapes.medium,color=MaterialTheme.colorScheme.surface,
+                        border=BorderStroke(1.dp,if(task.failed) MaterialTheme.colorScheme.error.copy(alpha=.4f) else MaterialTheme.colorScheme.outlineVariant)) {
+                        Column(Modifier.animateContentSize(tween(180)).padding(14.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                            Text(task.direction,style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            Text(task.name,maxLines=2,overflow=TextOverflow.Ellipsis,style=MaterialTheme.typography.titleSmall)
+                            Text(task.state,style=MaterialTheme.typography.labelMedium,
+                                color=if(task.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary,
+                                modifier=Modifier.semantics { liveRegion=LiveRegionMode.Polite })
+                            if(task.total>0) {
+                                key(task.started) {
+                                    FlowProgressIndicator(progress=task.done.toFloat()/task.total,modifier=Modifier.fillMaxWidth(),running=task.running)
+                                }
+                                Text("${bytesLabel(task.done)} / ${bytesLabel(task.total)}${if(task.running) " · ${bytesLabel(task.speed)}/s" else ""}",
+                                    style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
+                            } else if(task.running) LinearProgressIndicator(Modifier.fillMaxWidth())
+                            if(task.error.isNotEmpty()) Text(task.error,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
+                            if(task.failed && TransferTasks.canRetry(task.id)) OutlinedButton(onClick={TransferTasks.retry(task.id)},modifier=Modifier.align(Alignment.End)) { Text("重新传输") }
+                        }
                     }
                 }
             }
+            if(entries.isNotEmpty()) Text("仅保留本次运行记录，重试会重新发送全部内容。",modifier=Modifier.padding(top=8.dp),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     })
 }

@@ -25,6 +25,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
@@ -235,6 +237,8 @@ fun MainScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val focusManager = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
 
     // 接收页数据单一事实源：Repository → StateFlow → collectAsStateWithLifecycle
     val materials by com.liuzhuan.app.data.MaterialRepository.materials.collectAsStateWithLifecycle()
@@ -265,6 +269,13 @@ fun MainScreen(
     val pageScrollStates = List(3) { rememberScrollState() }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
     var autoSend by remember { mutableStateOf(true) }
+
+    fun selectPage(page: Int) {
+        if (selectedTab == page) return
+        focusManager.clearFocus()
+        keyboard?.hide()
+        selectedTab = page
+    }
 
     // 发送文件（任务：发送页加入文件按钮；流式上传，任意格式/大小）
     var uploading by remember { mutableStateOf(false) }
@@ -376,20 +387,20 @@ fun MainScreen(
             NavigationBar(containerColor = MaterialTheme.colorScheme.background, tonalElevation = 0.dp) {
                 NavigationBarItem(
                     selected = selectedTab == 0,
-                    onClick = { selectedTab = 0 },
-                    icon = { Text("⇄") },
+                    onClick = { selectPage(0) },
+                    icon = { FlowNavIcon(0, selectedTab == 0) },
                     label = { Text("连接") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 1,
-                    onClick = { selectedTab = 1 },
-                    icon = { Text("↑") },
+                    onClick = { selectPage(1) },
+                    icon = { FlowNavIcon(1, selectedTab == 1) },
                     label = { Text("发送") }
                 )
                 NavigationBarItem(
                     selected = selectedTab == 2,
-                    onClick = { selectedTab = 2 },
-                    icon = { Text("↓") },
+                    onClick = { selectPage(2) },
+                    icon = { FlowNavIcon(2, selectedTab == 2) },
                     label = { Text("接收") }
                 )
             }
@@ -400,6 +411,7 @@ fun MainScreen(
                 .padding(padding)
                 .fillMaxSize()
                 .imePadding()
+                .flowPageMotion(selectedTab)
                 .verticalScroll(pageScrollStates[selectedTab])
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp)
@@ -474,8 +486,11 @@ fun MainScreen(
                         if (isReconnecting && !manualConnection) {
                             OutlinedButton(onClick = { client.pause() }, modifier = Modifier.fillMaxWidth()) { Text("暂停自动重连") }
                         }
-                        TextButton(onClick = { manualConnection = !manualConnection }) { Text(if (manualConnection) "收起手动配置" else "手动输入地址与口令") }
-                        if (manualConnection) {
+                        FlowDisclosure(manualConnection, "收起手动配置", "手动输入地址与口令") {
+                            if (manualConnection) { focusManager.clearFocus(); keyboard?.hide() }
+                            manualConnection = !manualConnection
+                        }
+                        FlowReveal(manualConnection) {
                         OutlinedTextField(
                             value = ip,
                             onValueChange = { ip = it },
@@ -635,8 +650,8 @@ fun MainScreen(
                                 )
                             }
                     ) {
-                        TextButton(onClick = { showLogs = !showLogs }) { Text(if (showLogs) "收起连接诊断" else "查看连接诊断与日志") }
-                        if (showLogs) {
+                        FlowDisclosure(showLogs, "收起连接诊断", "查看连接诊断与日志") { showLogs = !showLogs }
+                        FlowReveal(showLogs) {
                         Text("📜 日志（双击复制）", style = MaterialTheme.typography.titleSmall)
                         Spacer(Modifier.height(6.dp))
                         // 最近事件：复制链路诊断历史（原连接页监控卡片，归集至此）
@@ -691,8 +706,8 @@ fun MainScreen(
                             enabled = isConnected && textInput.isNotBlank(),
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(if (isConnected) "发送到电脑  ↑" else "连接电脑后发送") }
-                        if (!isConnected) TextButton(onClick = { selectedTab = 0 }) { Text("前往连接电脑") }
-                        if (sendStatus.isNotBlank()) Text(sendStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall)
+                        if (!isConnected) TextButton(onClick = { selectPage(0) }) { Text("前往连接电脑") }
+                        FlowReveal(sendStatus.isNotBlank()) { Text(sendStatus, color = MaterialTheme.colorScheme.primary, style = MaterialTheme.typography.bodySmall) }
                         HorizontalDivider()
                         // ===== 发送文件到电脑（任意格式/大小，流式直传不经剪贴板）=====
                         Text("02 / 发送文件", style = MaterialTheme.typography.titleSmall)
@@ -701,8 +716,8 @@ fun MainScreen(
                             enabled = isConnected && !uploading,
                             modifier = Modifier.fillMaxWidth()
                         ) { Text(if (uploading) "⬆️ 上传中…" else "📎 加入文件（任意格式）") }
-                        if (uploading) {
-                            if (lastProgressPct >= 0) LinearProgressIndicator(progress = { lastProgressPct / 100f }, modifier = Modifier.fillMaxWidth())
+                        FlowReveal(uploading) {
+                            if (lastProgressPct >= 0) FlowProgressIndicator(progress = lastProgressPct / 100f, modifier = Modifier.fillMaxWidth())
                             else LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                         }
                         if (uploadStatus.isNotEmpty()) {
@@ -804,6 +819,7 @@ fun MainScreen(
                             )
                         } else {
                             visibleMaterials.forEach { item ->
+                                key(item.id) {
                                 Row(
                                     Modifier
                                         .fillMaxWidth()
@@ -829,6 +845,7 @@ fun MainScreen(
                                     }
                                 }
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                                }
                             }
                         }
                     }

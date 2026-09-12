@@ -22,30 +22,39 @@
             <SolidColorBrush x:Key="TextDimBrush" Color="{StaticResource TextDimColor}"/>
             <SolidColorBrush x:Key="TriggerBarBrush" Color="{StaticResource TriggerBarColor}"/>
             <SolidColorBrush x:Key="WarmBrush" Color="#E6C58C"/>
-<SolidColorBrush x:Key="BorderBrush" Color="#304A4D"/>
+            <SolidColorBrush x:Key="BorderBrush" Color="#304A4D"/>
+            <SolidColorBrush x:Key="ErrorBrush" Color="#F3A39D"/>
 
             <Style x:Key="ActionButtonStyle" TargetType="Button">
+                <Setter Property="utils:UiMotion.Interactive" Value="True"/>
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
                 <Setter Property="Background" Value="#28524A"/>
                 <Setter Property="FontSize" Value="12"/>
                 <Setter Property="Cursor" Value="Hand"/>
                 <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
-                    <Border x:Name="Surface" Background="{TemplateBinding Background}" CornerRadius="6" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                    <Grid Background="Transparent">
+                        <Border x:Name="MotionSurface" Background="{TemplateBinding Background}" CornerRadius="8" BorderThickness="1" BorderBrush="Transparent" Padding="{TemplateBinding Padding}"><ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                        <Border x:Name="HoverWash" Background="{StaticResource AccentBrush}" CornerRadius="8" Opacity="0" IsHitTestVisible="False"/>
+                    </Grid>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Surface" Property="Background" Value="#34695D"/></Trigger>
-                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="Surface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
-                        <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Background" Value="#407F70"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="MotionSurface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate></Setter.Value></Setter>
             </Style>
             <Style TargetType="ListViewItem">
+                <Setter Property="utils:UiMotion.Interactive" Value="True"/>
                 <Setter Property="Padding" Value="0"/><Setter Property="Margin" Value="0,0,0,6"/>
                 <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
                 <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListViewItem">
-                    <Border x:Name="SelectionBorder" BorderThickness="2" BorderBrush="Transparent" CornerRadius="10" Background="Transparent"><ContentPresenter/></Border>
+                    <Border x:Name="SelectionBorder" BorderThickness="2" BorderBrush="Transparent" CornerRadius="10" Background="Transparent">
+                        <Grid x:Name="MotionSurface">
+                            <ContentPresenter/>
+                            <Border x:Name="HoverWash" Background="{StaticResource AccentBrush}" CornerRadius="8" Margin="2" Opacity="0" IsHitTestVisible="False"/>
+                        </Grid>
+                    </Border>
                     <ControlTemplate.Triggers>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="#56657A"/></Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="#3D605D"/></Trigger>
                         <Trigger Property="IsSelected" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
                         <Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter TargetName="SelectionBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
                     </ControlTemplate.Triggers>
@@ -89,8 +98,8 @@
                                 </Trigger>
                                 <Trigger Property="IsChecked" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource AccentBrush}"/>
-                                    <Setter TargetName="bd" Property="Background" Value="#20FFFFFF"/>
                                 </Trigger>
+                                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentBrush}"/><Setter TargetName="bd" Property="BorderThickness" Value="1"/></Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -99,6 +108,7 @@
 
             <!-- 通用按钮样式 -->
             <Style x:Key="IconButtonStyle" TargetType="Button">
+                <Setter Property="utils:UiMotion.Interactive" Value="True"/>
                 <Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
                 <Setter Property="Background" Value="Transparent"/>
                 <Setter Property="BorderThickness" Value="0"/>
@@ -106,18 +116,19 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="bd"
+                            <Grid Background="Transparent"><Border x:Name="MotionSurface"
                                     Background="{TemplateBinding Background}"
-                                    CornerRadius="4">
+                                    BorderThickness="1" BorderBrush="Transparent" CornerRadius="8">
                                 <ContentPresenter HorizontalAlignment="Center"
                                                   VerticalAlignment="Center"
                                                   TextBlock.Foreground="{TemplateBinding Foreground}"/>
-                            </Border>
+                            </Border><Border x:Name="HoverWash" Background="{StaticResource AccentBrush}" CornerRadius="8" Opacity="0" IsHitTestVisible="False"/></Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
-                                    <Setter TargetName="bd" Property="Background" Value="#20FFFFFF"/>
                                     <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
                                 </Trigger>
+                                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="MotionSurface" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>

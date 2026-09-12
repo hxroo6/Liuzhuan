@@ -127,7 +127,12 @@ public class MaterialItem : INotifyPropertyChanged
     }
 
     /// <summary>音频/视频时长（秒），无则为 0</summary>
-    public double Duration { get; set; }
+    private double _duration;
+    public double Duration
+    {
+        get => _duration;
+        set { if (_duration != value) { _duration = value; OnPropertyChanged(); } }
+    }
 
     private bool _isFavorite;
     /// <summary>是否已收藏（收藏项不会被清空操作移除）</summary>

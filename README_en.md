@@ -12,8 +12,10 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 ## ✨ Features
 
-### New in the local development build (M27, not yet on Releases)
+### New in the local development build (M28, not yet on Releases)
 
+- **Consistent motion**: desktop panel transitions reverse smoothly, with card press feedback and a sliding category indicator. Android adds page, disclosure, thumbnail, and progress transitions. Animations follow system settings.
+- **More stable details**: the collapsed desktop panel exposes its actual trigger strip, and thumbnail updates preserve selection. Android retains drafts and page scroll positions and avoids stale photo flashes when items are inserted.
 - **Transfer tasks**: open “收发” at the bottom of the desktop panel or top of the Android app to see progress, speed, and outcomes for the current session. Failed phone tasks can be retried.
 - **Photo thumbnails on Android**: the Receive page loads and caches previews. Downloads stream to storage; incomplete files remain hidden from the gallery.
 - **Desktop quick preview**: select an image or text and press Space. Browse previous/next items, zoom images, fit to window, copy, or press Esc to close.

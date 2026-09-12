@@ -104,6 +104,16 @@
 
 ## 4. 协议参考
 
+### 界面动效与视觉反馈（M28，2026-09-12）
+
+- PC `Utils/UiMotion` 统一点击反馈（110ms）、内容过渡（160ms）与面板展开（240ms）；使用 RenderTransform/Opacity，按 Windows `ClientAreaAnimation` 开关立即落到最终状态。没有持续装饰动画。
+- 面板复用 `_panelTranslate`，反向操作从当前画面位置接续；`_panelTransition` 阻止旧完成回调覆盖新目标。收起完成隐藏 MainPanel 并将 PanelColumn 设为 0，让 8px 触发条实际位于窄窗内；展开时先恢复布局。固定、菜单打开、左锚定保留原有保护。
+- 按钮与卡片只在内部 MotionSurface 做按压缩放、悬停提亮，不变更外部布局或接管点击。拖出前清理悬停预览和按压状态；分类滑动指示条、内容轻入场、搜索焦点边框与反馈提示沿用同一配色和节奏。
+- GridView 的 MaterialTemplateSelector 仅初始化一次；缩略图直接绑定 ThumbnailSource，异步完成仅更新图片并淡入，不重建整页。Duration 增加属性变更通知，保留异步时长更新；缩略图和列表更新保留容器与选择。
+- Android `FlowDesign.kt` 集中定义线性导航图标、220ms 页面轻位移、180–220ms 折叠/箭头及平滑进度。仅组合当前页，不叠加两份生命周期与业务回调；草稿和各页滚动位置保留，切页收起键盘。
+- Android 图片淡入、任务列表重排采用 Compose 标准动画，跟随系统 MotionDurationScale；结束/失败进度立即显示真实值。接收行按素材 ID、缩略图按 URL 保持组件身份，避免列表增量插入时短暂错图。
+- DesktopUiChecks 采用无业务启动的 Application 和真实资源字典、MainWindow，推动 Dispatcher 检查连续反向/快速三连、关闭动画同步落地、窄条布局与绑定更新；离屏截图不能证明真实帧率、多屏 DPI 或手机触控效果，仍需设备验收。
+
 ### 收发任务与快捷预览（M27，2026-09-12）
 
 - PC 底部「收发」打开 `Views/TransferWindow`，由进程内 `TransferJournal` 汇总文件上传/下载与接收文字。Android 顶部「收发」打开 `TransferTaskDialog`，`TransferTasks` 跟踪文件和 `sendText` 手动/分享文字。两端最多保留 40 条最近记录，超额时仅淘汰已结束任务；重启清空。

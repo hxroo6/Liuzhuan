@@ -35,9 +35,10 @@ public class QuickPreviewWindow : Window
         root.Children.Add(_content); Content=root;
         KeyDown+=(_,e)=> { if(e.Key==Key.Escape){Close();e.Handled=true;} else if(e.Key==Key.Left){Move(-1);e.Handled=true;} else if(e.Key==Key.Right){Move(1);e.Handled=true;} };
         _content.SizeChanged+=(_,_)=>ResizeImage();
+        Loaded+=(_,_)=>Utils.UiMotion.Reveal(root);
         ShowItem();
     }
-    private void Move(int delta) { _index=(_index+delta+_items.Count)%_items.Count; ShowItem(); }
+    private void Move(int delta) { _index=(_index+delta+_items.Count)%_items.Count; ShowItem(); Utils.UiMotion.Reveal(_content); }
     private void ResizeImage() { _image.Width=Math.Max(100,_content.ActualWidth-20)*_zoom.Value; _image.Height=Math.Max(100,_content.ActualHeight-20)*_zoom.Value; }
     private void ShowItem()
     {

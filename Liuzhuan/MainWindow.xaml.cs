@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     private string _currentTab = "Recent";
     private string _searchKeyword = "";
     private bool _isExpanded = true;
+    private readonly TranslateTransform _panelTranslate = new();
+    private int _panelTransition;
     private DispatcherTimer? _collapseTimer;
     private DispatcherTimer? _hotspotTimer;
 
@@ -63,6 +65,11 @@ public partial class MainWindow : Window
         GridView.ItemsSource = _currentView;
         TextView.ItemsSource = _currentView;
         ListView.ItemsSource = _currentView;
+        GridView.ItemTemplateSelector = new MaterialTemplateSelector
+        {
+            GridTemplate = (DataTemplate)FindResource("GridCardTemplate"),
+            TextTemplate = (DataTemplate)FindResource("TextCardTemplate")
+        };
         RefreshView();
     }
 
@@ -401,13 +408,17 @@ public partial class MainWindow : Window
 
     private void PositionWindowRightEdge()
     {
+        ++_panelTransition;
+        UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, 0, 0);
         var workArea = SystemParameters.WorkArea;
         Height = Math.Min(Height, workArea.Height);
         Top = workArea.Top + (workArea.Height - Height) / 2;
-        Width = PanelWidth;
+        Width = _isExpanded ? PanelWidth : CollapsedVisible;
+        MainPanel.Visibility = _isExpanded ? Visibility.Visible : Visibility.Collapsed;
+        PanelColumn.Width = new GridLength(_isExpanded ? PanelWidth - CollapsedVisible : 0);
         _expandedLeft = workArea.Right - PanelWidth;
         _collapsedLeft = workArea.Right - CollapsedVisible;
-        Left = _expandedLeft;
+        Left = _isExpanded ? _expandedLeft : _collapsedLeft;
         Logger.Run("Window positioned: Left={0:F0} Top={1:F0} Width={2:F0} Height={3:F0}", Left, Top, Width, Height);
     }
 
@@ -526,8 +537,12 @@ public partial class MainWindow : Window
                 if (!_isExpanded)
                 {
                     _isExpanded = true;
+                    ++_panelTransition;
+                    UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, 0, 0);
+                    MainPanel.Visibility = Visibility.Visible;
+                    PanelColumn.Width = new GridLength(PanelWidth - CollapsedVisible);
                     Width = PanelWidth;
-                    MainPanel.RenderTransform = null;
+                    MainPanel.RenderTransform = _panelTranslate;
                     TriggerBar.Opacity = 0.4;
                 }
                 Logger.Run("Snap: left edge (anchored, no auto-collapse), Left={0}", Left);
@@ -545,21 +560,17 @@ public partial class MainWindow : Window
 
     private void ExpandPanel()
     {
+        _collapseTimer?.Stop();
         if (_isExpanded) return;
         _isExpanded = true;
-        _collapseTimer?.Stop();
+        ++_panelTransition;
+        var from = MainPanel.Visibility == Visibility.Collapsed ? PanelWidth - CollapsedVisible : _panelTranslate.X;
+        PanelColumn.Width = new GridLength(PanelWidth - CollapsedVisible);
         Width = PanelWidth;
         Left = _expandedLeft;
-        var translate = new TranslateTransform();
-        MainPanel.RenderTransform = translate;
-        var anim = new DoubleAnimation
-        {
-            From = PanelWidth - CollapsedVisible,
-            To = 0,
-            Duration = TimeSpan.FromMilliseconds(250),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-        };
-        translate.BeginAnimation(TranslateTransform.XProperty, anim);
+        MainPanel.Visibility = Visibility.Visible;
+        MainPanel.RenderTransform = _panelTranslate;
+        UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, 0, UiMotion.PanelMs, from);
         TriggerBar.Opacity = 0.4;
         Logger.Run("Panel expanded");
     }
@@ -570,23 +581,17 @@ public partial class MainWindow : Window
         if (_isPinned || _menuOpen) return;
         if (_isLeftAnchored) return; // 左锚定：保持展开，不收起不跳右
         _isExpanded = false;
-        var translate = new TranslateTransform();
-        MainPanel.RenderTransform = translate;
-        var anim = new DoubleAnimation
+        CloseHoverPreview();
+        var transition = ++_panelTransition;
+        MainPanel.RenderTransform = _panelTranslate;
+        UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, PanelWidth - CollapsedVisible, 200, completed: () =>
         {
-            From = 0,
-            To = PanelWidth - CollapsedVisible,
-            Duration = TimeSpan.FromMilliseconds(200),
-            EasingFunction = new CubicEase { EasingMode = EasingMode.EaseIn }
-        };
-        anim.Completed += (s, e) =>
-        {
-            if (_isExpanded) return; // 动画中重新进入，不让旧的收起回调隐藏已展开面板。
+            if (_isExpanded || transition != _panelTransition) return;
+            MainPanel.Visibility = Visibility.Collapsed;
+            PanelColumn.Width = new GridLength(0);
             Width = CollapsedVisible;
             Left = _collapsedLeft;
-            MainPanel.RenderTransform = null;
-        };
-        translate.BeginAnimation(TranslateTransform.XProperty, anim);
+        });
         Logger.Run("Panel collapsed");
     }
 
@@ -615,6 +620,7 @@ public partial class MainWindow : Window
         FeedbackText.Text = message;
         FeedbackText.ToolTip = message;
         FeedbackText.Foreground = (Brush)FindResource("AccentBrush");
+        UiMotion.Reveal(FeedbackText);
         _feedbackTimer?.Stop();
         _feedbackTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(4) };
         _feedbackTimer.Tick += (_, _) =>
@@ -680,8 +686,25 @@ public partial class MainWindow : Window
         {
             _currentTab = tag;
             RefreshView();
+            if (ContentArea != null) UiMotion.Reveal(ContentArea);
+            UpdateTabIndicator(rb, true);
             Logger.Run("Tab switched to: {0}", tag);
         }
+    }
+
+    private void TabStrip_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var tab = new[] { TabRecent, TabFavorites, TabImage, TabText, TabVideo, TabAudio, TabOther }
+            .FirstOrDefault(x => x?.IsChecked == true);
+        if (tab != null) UpdateTabIndicator(tab, false);
+    }
+
+    private void UpdateTabIndicator(RadioButton tab, bool animate)
+    {
+        if (TabIndicator == null || TabStrip == null || tab.ActualWidth <= 0) return;
+        TabIndicator.Width = tab.ActualWidth;
+        UiMotion.Animate(TabIndicatorTranslate, TranslateTransform.XProperty,
+            tab.TranslatePoint(new Point(), TabStrip).X, animate ? UiMotion.ContentMs : 0);
     }
 
     private void SearchBox_TextChanged(object sender, TextChangedEventArgs e)
@@ -742,13 +765,6 @@ public partial class MainWindow : Window
         GridView.Visibility = useGrid ? Visibility.Visible : Visibility.Collapsed;
         TextView.Visibility = useTextOnly ? Visibility.Visible : Visibility.Collapsed;
         ListView.Visibility = useAudio ? Visibility.Visible : Visibility.Collapsed;
-
-        // 网格视图用混合模板选择器（文字类用文字卡片，其他用网格卡片）
-        GridView.ItemTemplateSelector = new MaterialTemplateSelector
-        {
-            GridTemplate = (DataTemplate)FindResource("GridCardTemplate"),
-            TextTemplate = (DataTemplate)FindResource("TextCardTemplate")
-        };
 
         EmptyState.Visibility = _currentView.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitle.Text = _searchKeyword.Length > 0 ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
@@ -1007,6 +1023,9 @@ public partial class MainWindow : Window
 
     private void StartDragOut(MaterialItem item)
     {
+        CloseHoverPreview();
+        foreach (var view in new[] { GridView, TextView, ListView })
+            if (view.ItemContainerGenerator.ContainerFromItem(item) is ListViewItem container) UiMotion.Reset(container, immediately: true);
         try
         {
             var data = DragDropService.CreateDragOutData(item);
@@ -1644,14 +1663,10 @@ public partial class MainWindow : Window
     /// <summary>
     /// 缩略图 Image 加载时直接设 Source（绕过 WPF Binding，解决多次尝试均失败的问题）
     /// </summary>
-    private void ThumbnailImage_Loaded(object sender, RoutedEventArgs e)
+    private void ThumbnailImage_TargetUpdated(object sender, System.Windows.Data.DataTransferEventArgs e)
     {
-        if (sender is Image img && img.DataContext is MaterialItem item)
-        {
-            var src = item.ThumbnailSource;
-            img.Source = src;
-            img.UpdateLayout();
-        }
+        if (sender is Image img && img.Source != null && img.IsLoaded)
+            UiMotion.Animate(img, UIElement.OpacityProperty, 1, UiMotion.ContentMs, 0);
     }
 
     private Popup? _previewPopup;
@@ -1731,6 +1746,9 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
+        ++_panelTransition;
+        _panelTranslate.BeginAnimation(TranslateTransform.XProperty, null);
+        _hotspotTimer?.Stop();
         _feedbackTimer?.Stop();
         _hoverPreviewTimer?.Stop();
         _collapseTimer?.Stop();

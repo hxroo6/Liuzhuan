@@ -56,7 +56,8 @@
                            Margin="2"
                            IsHitTestVisible="False"
                            RenderOptions.BitmapScalingMode="HighQuality"
-                           Loaded="ThumbnailImage_Loaded"/>
+                           Source="{Binding ThumbnailSource, NotifyOnTargetUpdated=True}"
+                           TargetUpdated="ThumbnailImage_TargetUpdated"/>
                     <!-- 视频标记 -->
                     <Border Grid.Row="0"
                             Visibility="{Binding Type, Converter={StaticResource VideoVisibilityConverter}}"
@@ -238,6 +239,7 @@
                 Grid.Column="0"
                 Background="{StaticResource PanelBrush}"
                 CornerRadius="16,0,0,16"
+                BorderBrush="{StaticResource BorderBrush}" BorderThickness="1,0,0,0"
                 Margin="0,0,-1,0"
                 AllowDrop="True"
                 Drop="Window_Drop"
@@ -258,7 +260,9 @@
                     <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="46"/><RowDefinition Height="44"/></Grid.RowDefinitions>
                     <DockPanel Grid.Row="0" x:Name="HeaderDragArea" Background="Transparent">
                         <Button DockPanel.Dock="Right" x:Name="CollapseBtn" Content="›" FontSize="24" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="CollapseBtn_Click" ToolTip="收起面板" AutomationProperties.Name="收起面板"/>
-                        <Button DockPanel.Dock="Right" x:Name="SettingsBtn" Content="⚙" FontSize="18" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="SettingsBtn_Click" ToolTip="设置与设备" AutomationProperties.Name="设置与设备"/>
+                        <Button DockPanel.Dock="Right" x:Name="SettingsBtn" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="SettingsBtn_Click" ToolTip="设置与设备" AutomationProperties.Name="设置与设备">
+                            <Path Width="18" Height="18" Stretch="Uniform" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.5" StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M 4,2 L 4,7 M 4,12 L 4,20 M 10,2 L 10,12 M 10,17 L 10,20 M 16,2 L 16,4 M 16,9 L 16,20 M 1,7 L 7,7 L 7,12 L 1,12 Z M 7,12 L 13,12 L 13,17 L 7,17 Z M 13,4 L 19,4 L 19,9 L 13,9 Z"/>
+                        </Button>
                         <Button DockPanel.Dock="Right" x:Name="PinBtn" Content="固定" FontSize="12" Width="44" Height="32" Style="{StaticResource IconButtonStyle}" Click="PinBtn_Click" ToolTip="固定展开，鼠标移开也不收起"/>
                                                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
                             <Border Width="36" Height="36" CornerRadius="12" Margin="0,0,10,0" Background="#28524A">
@@ -267,7 +271,8 @@
                             <StackPanel VerticalAlignment="Center"><TextBlock Text="流转" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource TextBrush}"/><TextBlock Text="素材随行 · 灵感不停" FontSize="10" Foreground="{StaticResource WarmBrush}"/></StackPanel>
                         </StackPanel>
                     </DockPanel>
-                    <Border Grid.Row="1" Background="{StaticResource PanelLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Margin="0,8,0,0">
+                    <Border Grid.Row="1" Background="{StaticResource PanelLightBrush}" BorderThickness="1" CornerRadius="10" Margin="0,8,0,0">
+                        <Border.Style><Style TargetType="Border"><Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/><Style.Triggers><Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger></Style.Triggers></Style></Border.Style>
                         <Grid>
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="32"/></Grid.ColumnDefinitions>
                             <TextBox x:Name="SearchBox" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextBrush}" CaretBrush="{StaticResource TextBrush}" FontSize="13" Padding="10,6" VerticalContentAlignment="Center" TextChanged="SearchBox_TextChanged" KeyDown="SearchBox_KeyDown" AutomationProperties.Name="搜索当前分类素材"/>
@@ -282,6 +287,8 @@
                     </DockPanel>
                 </Grid>
                 <Border Grid.Row="1" Margin="12,10,12,6" Padding="2" Background="{StaticResource PanelLightBrush}" CornerRadius="8">
+                    <Grid x:Name="TabStrip" SizeChanged="TabStrip_SizeChanged">
+                    <Border x:Name="TabIndicator" Background="#31534F" CornerRadius="6" HorizontalAlignment="Left" Width="46" IsHitTestVisible="False"><Border.RenderTransform><TranslateTransform x:Name="TabIndicatorTranslate"/></Border.RenderTransform></Border>
                     <UniformGrid Rows="1">
                         <RadioButton x:Name="TabRecent" Content="全部" IsChecked="True" Style="{StaticResource TabButtonStyle}" Tag="Recent" Checked="Tab_Checked"/>
                         <RadioButton x:Name="TabFavorites" Content="收藏" Style="{StaticResource TabButtonStyle}" Tag="Favorites" Checked="Tab_Checked"/>
@@ -291,9 +298,10 @@
                         <RadioButton x:Name="TabAudio" Content="音频" Style="{StaticResource TabButtonStyle}" Tag="Audio" Checked="Tab_Checked"/>
                         <RadioButton x:Name="TabOther" Content="其他" Style="{StaticResource TabButtonStyle}" Tag="Other" Checked="Tab_Checked"/>
                     </UniformGrid>
+                    </Grid>
                 </Border>
                 <!-- 内容区 -->
-                <Grid Grid.Row="2" Background="{StaticResource PanelBrush}">
+                <Grid x:Name="ContentArea" Grid.Row="2" Background="{StaticResource PanelBrush}" ClipToBounds="True">
                     <!-- 网格视图（图片/视频/其他文件/最近） -->
                     <ListView x:Name="GridView"
                               Visibility="Visible"
