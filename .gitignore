@@ -29,3 +29,7 @@ Thumbs.db
 
 # ===== 历史会话交接（含内网信息，不入库）=====
 会话交接.md
+
+# Android 的 data 包是源码，不是用户数据
+!AndroidApp/app/src/main/java/com/liuzhuan/app/data/
+!AndroidApp/app/src/main/java/com/liuzhuan/app/data/*.kt
