@@ -12,7 +12,7 @@
 
 ## ✨ 功能
 
-### 本地开发版新增（M29，尚未发布到 Releases）
+### v1.2.0 新增（包含 M27–M29）
 
 - **连接与搜索修复**：二维码排除 Wintun/VPN 等虚拟网卡，支持选择实际局域网地址；手机搜索移到后台执行，失败显示提示。更新后请重新扫码。
 - **手机切页减负**：接收列表只构建可见条目；收发进度不再频繁触发整个主界面刷新。实际流畅度仍需真机验证。
@@ -76,7 +76,7 @@
 
 ### 电脑端（Windows 10/11 x64）
 
-从 [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest) 下载 `Liuzhuan-v1.1.1-windows-x64.zip`，解压后运行 `app/Liuzhuan.exe`，无需另装 .NET。升级前退出旧版，用新版 `app` 目录替换旧版程序目录，保留同级 `data` 目录（素材、配对和设置）。v1.1.1 仅更新电脑端，安卓继续使用 v1.1.0 APK，无需重装。
+从 [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest) 下载 `Liuzhuan-v1.2.0-windows-x64.zip`，解压后运行 `app/Liuzhuan.exe`，无需另装 .NET。升级前退出旧版，用新版 `app` 目录替换旧版程序目录，保留同级 `data` 目录（素材、配对和设置）。本次请同时更新电脑端与安卓端（`Liuzhuan-v1.2.0-android.apk`），重新扫码连接。覆盖安装后，到无障碍设置关闭→重新开启流转服务。
 
 也可以从源码构建：
 

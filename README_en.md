@@ -12,7 +12,7 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 ## ✨ Features
 
-### New in the local development build (M29, not yet on Releases)
+### New in v1.2.0 (includes M27–M29)
 
 - **Connection and discovery fixes**: QR codes exclude Wintun/VPN virtual adapters and allow LAN address selection. Android searches off the UI thread and reports failures inline. Scan a new QR code after updating.
 - **Less work when switching pages**: the Receive list composes visible rows, and transfer progress no longer refreshes the entire main screen on every tick. Device performance still needs verification.
@@ -76,7 +76,7 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 ### Desktop (Windows 10/11 x64)
 
-Download `Liuzhuan-v1.1.1-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. v1.1.1 updates the desktop app only; keep using the v1.1.0 Android APK without reinstalling it.
+Download `Liuzhuan-v1.2.0-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. Update both ends, install `Liuzhuan-v1.2.0-android.apk`, and scan a new pairing QR code. After installing over the existing Android app, turn its accessibility service off and back on.
 
 Alternatively, build from source:
 
