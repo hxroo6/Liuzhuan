@@ -187,3 +187,6 @@
 - `LanDiscovery.discover` 为 suspend 函数，socket 创建、发送、接收全部在 IO 调度器；150ms 接收超时提供取消检查机会，use 保证关闭。搜索按钮阻止重复触发并处理异常，取消异常继续传播。
 - 主页面使用 LazyColumn，接收素材按稳定 id 分项组合，保持每页滚动状态；移除整页动画。顶部收发计数只订阅去重后的运行任务数，避免进度更新扩大重组范围。
 - `scripts/LanAddressChecks` 验证网卡选择与实际二维码解码；同目录 DiscoveryCheck.kt 验证真实 UDP 回包、界面调度器不阻塞、取消释放 socket 和异常传播。无 adb 设备，未完成手机闪退堆栈、扫码互通与帧率验收。
+### 电脑设置菜单可读性（2026-09-25）
+- App.xaml 统一 ContextMenu / MenuItem / 子菜单 Popup 模板：深色底、13 号字、36 DIP 最小行高，勾选/悬停/展开状态明确；长文字换行，长菜单可滚动。菜单分隔符同时覆盖 MenuItem.SeparatorStyleKey，避免系统主题回退。
+- HEIC 模式和保存逻辑保持原状；设置菜单去掉 10 号字号，关于窗口显示程序集版本。已按 150% DPI 离屏渲染检查主菜单及 HEIC 子菜单，不等同于真实桌面截图。

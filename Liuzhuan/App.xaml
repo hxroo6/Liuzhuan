@@ -64,6 +64,63 @@
             <!-- 默认字体 -->
             <FontFamily x:Key="UIFont">Microsoft YaHei UI, Segoe UI</FontFamily>
 
+            <!-- 主菜单与 Popup 共用明确的深色模板，避免系统浅色子菜单吞掉文字。 -->
+            <Style TargetType="ContextMenu">
+                <Setter Property="FontFamily" Value="{StaticResource UIFont}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                <Setter Property="Background" Value="{StaticResource PanelLightBrush}"/>
+                <Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/>
+                <Setter Property="BorderThickness" Value="1"/>
+                <Setter Property="Padding" Value="6"/>
+                <Setter Property="MinWidth" Value="280"/>
+                <Setter Property="MaxHeight" Value="640"/>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="10" Padding="{TemplateBinding Padding}" SnapsToDevicePixels="True">
+                        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/></ScrollViewer>
+                    </Border>
+                </ControlTemplate></Setter.Value></Setter>
+            </Style>
+            <Style TargetType="MenuItem">
+                <Setter Property="FontFamily" Value="{StaticResource UIFont}"/>
+                <Setter Property="FontSize" Value="13"/>
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+                <Setter Property="Background" Value="Transparent"/>
+                <Setter Property="Padding" Value="10,8"/>
+                <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem">
+                    <Grid>
+                        <Border x:Name="Row" Background="{TemplateBinding Background}" CornerRadius="6" BorderBrush="Transparent" BorderThickness="1" Padding="{TemplateBinding Padding}" MinHeight="36">
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="18"/></Grid.ColumnDefinitions>
+                                <Path x:Name="Check" Data="M 1,6 L 5,10 L 12,2" Stroke="{StaticResource AccentBrush}" StrokeThickness="2" Width="14" Height="12" Visibility="Collapsed" VerticalAlignment="Center"/>
+                                <ContentPresenter x:Name="Icon" ContentSource="Icon" VerticalAlignment="Center"/>
+                                <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center" TextBlock.Foreground="{TemplateBinding Foreground}">
+                                    <ContentPresenter.Resources><Style TargetType="TextBlock"><Setter Property="TextWrapping" Value="Wrap"/><Setter Property="MaxWidth" Value="340"/></Style></ContentPresenter.Resources>
+                                </ContentPresenter>
+                                <TextBlock Grid.Column="2" Text="{TemplateBinding InputGestureText}" Foreground="{StaticResource TextDimBrush}" Margin="14,0,4,0" VerticalAlignment="Center"/>
+                                <Path x:Name="Arrow" Grid.Column="3" Data="M 1,1 L 5,5 L 1,9" Stroke="{StaticResource TextDimBrush}" StrokeThickness="1.5" Width="6" Height="10" VerticalAlignment="Center" HorizontalAlignment="Right" Visibility="Collapsed"/>
+                            </Grid>
+                        </Border>
+                        <Popup x:Name="PART_Popup" IsOpen="{Binding IsSubmenuOpen, RelativeSource={RelativeSource TemplatedParent}}" Placement="Right" HorizontalOffset="-2" AllowsTransparency="True" Focusable="False">
+                            <Border Background="{StaticResource PanelLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="10" Padding="6" MinWidth="280" SnapsToDevicePixels="True">
+                                <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" CanContentScroll="True" MaxHeight="600"><ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/></ScrollViewer>
+                            </Border>
+                        </Popup>
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="HasItems" Value="True"><Setter TargetName="Arrow" Property="Visibility" Value="Visible"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Visibility" Value="Visible"/><Setter TargetName="Icon" Property="Visibility" Value="Collapsed"/><Setter TargetName="Row" Property="Background" Value="#24483F"/></Trigger>
+                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Row" Property="Background" Value="#31554F"/><Setter TargetName="Row" Property="BorderBrush" Value="#527C72"/></Trigger>
+                        <Trigger Property="IsSubmenuOpen" Value="True"><Setter TargetName="Row" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate></Setter.Value></Setter>
+            </Style>
+            <Style TargetType="Separator">
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="{StaticResource BorderBrush}" Margin="12,6"/></ControlTemplate></Setter.Value></Setter>
+            </Style>
+            <Style x:Key="{x:Static MenuItem.SeparatorStyleKey}" TargetType="Separator" BasedOn="{StaticResource {x:Type Separator}}"/>
             <!-- 转换器 -->
             <utils:VideoVisibilityConverter x:Key="VideoVisibilityConverter"/>
             <utils:TypeIconConverter x:Key="TypeIconConverter"/>

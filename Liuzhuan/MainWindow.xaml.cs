@@ -1424,7 +1424,7 @@ public partial class MainWindow : Window
         {
             Background = (Brush)FindResource("PanelLightBrush"),
             Foreground = (Brush)FindResource("TextBrush"),
-            BorderBrush = (Brush)FindResource("AccentBrush"),
+            BorderBrush = (Brush)FindResource("BorderBrush"),
             BorderThickness = new Thickness(1),
         };
 
@@ -1472,8 +1472,8 @@ public partial class MainWindow : Window
         var heicMenu = new MenuItem { Header = "接收 HEIC 自动转换", Foreground = (Brush)FindResource("TextBrush") };
         foreach (var option in new[] {
             (Mode: HeicConversionMode.Off, Label: "关闭（保留原格式）"),
-            (Mode: HeicConversionMode.Png, Label: "PNG（无损，默认）"),
-            (Mode: HeicConversionMode.Jpeg, Label: "JPEG（质量 95，白色背景）") })
+            (Mode: HeicConversionMode.Png, Label: "PNG · 无损画质（推荐）"),
+            (Mode: HeicConversionMode.Jpeg, Label: "JPEG · 质量 95 / 白色背景") })
         {
             var choice = new MenuItem { Header = option.Label, IsCheckable = true,
                 IsChecked = AppSettings.HeicConversion == option.Mode,
@@ -1496,7 +1496,7 @@ public partial class MainWindow : Window
         {
             Header = $"缓存路径: {ConfigService.GetEffectiveDataDir()}",
             Foreground = (Brush)FindResource("TextBrush"),
-            FontSize = 10,
+            FontSize = 13,
         };
         menu.Items.Add(dataDirItem);
 
@@ -1504,7 +1504,7 @@ public partial class MainWindow : Window
         {
             Header = "重置缓存路径为默认",
             Foreground = (Brush)FindResource("TextDimBrush"),
-            FontSize = 10,
+            FontSize = 13,
         };
         resetDataDirItem.Click += (s, ee) =>
         {
@@ -1537,7 +1537,7 @@ public partial class MainWindow : Window
         {
             Header = $"端口: {LanConfig.Port}（数据端口 {LanConfig.Port + 1}）",
             Foreground = (Brush)FindResource("TextDimBrush"),
-            FontSize = 10
+            FontSize = 13
         };
         menu.Items.Add(lanPortItem);
 
@@ -1546,7 +1546,7 @@ public partial class MainWindow : Window
         {
             Header = $"本机 IP: {GetLocalLanIp()}    [点击刷新]",
             Foreground = (Brush)FindResource("TextDimBrush"),
-            FontSize = 10
+            FontSize = 13
         };
         lanIpItem.Click += (s, e) =>
         {
@@ -1560,7 +1560,7 @@ public partial class MainWindow : Window
         {
             Header = $"口令: {(LanConfig.Password.Length > 0 ? LanConfig.Password : "（未设置）")}",
             Foreground = (Brush)FindResource("TextDimBrush"),
-            FontSize = 10
+            FontSize = 13
         };
         menu.Items.Add(lanPwdItem);
 
@@ -1568,7 +1568,7 @@ public partial class MainWindow : Window
         {
             Header = "生成新口令",
             Foreground = (Brush)FindResource("TextBrush"),
-            FontSize = 10
+            FontSize = 13
         };
         lanRegenItem.Click += (s, e) =>
         {
@@ -1584,7 +1584,7 @@ public partial class MainWindow : Window
         {
             Header = "已连接设备: 无",
             Foreground = (Brush)FindResource("TextDimBrush"),
-            FontSize = 10
+            FontSize = 13
         };
         Action refreshDevices = () =>
         {
@@ -1606,7 +1606,7 @@ public partial class MainWindow : Window
         {
             Header = "配对二维码（手机扫码连接）",
             Foreground = (Brush)FindResource("TextBrush"),
-            FontSize = 10
+            FontSize = 13
         };
         lanQrItem.Click += (s, e) =>
         {
@@ -1629,9 +1629,10 @@ public partial class MainWindow : Window
 
         menu.Items.Add(new Separator());
 
-        var aboutItem = new MenuItem { Header = "关于流转 v1.0", Foreground = (Brush)FindResource("TextBrush") };
+        var appVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.2.0";
+        var aboutItem = new MenuItem { Header = $"关于流转 v{appVersion}", Foreground = (Brush)FindResource("TextBrush") };
         aboutItem.Click += (s, e) => MessageBox.Show(
-            "流转 v1.0\n跨应用素材暂存中转站\n\n核心：拖拽暂存 · 即用即拖 · 不改动源文件\n\n快捷键：\nDel — 删除选中\nCtrl+Z — 撤回删除\nCtrl+V — 粘贴剪贴板\nCtrl+F — 搜索",
+            $"流转 v{appVersion}\n跨应用素材暂存中转站\n\n核心：拖拽暂存 · 即用即拖 · 不改动源文件\n\n快捷键：\nDel — 删除选中\nCtrl+Z — 撤回删除\nCtrl+V — 粘贴剪贴板\nCtrl+F — 搜索",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
         menu.Items.Add(aboutItem);
 
