@@ -10,6 +10,13 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## v1.3.1: stable dragging and edge snapping
+
+- Fix obsolete queued animations moving content out of view after dragging or rapid expand/collapse, leaving only a dark panel.
+- Suspend auto-collapse and edge detection while dragging. Keep the panel open after snapping right; collapse after the pointer leaves.
+- Use the window's monitor and scale for snapping. Moving the pointer between monitors no longer relocates the panel.
+- All 43 desktop regression checks passed. Real multi-monitor and mixed-DPI behavior still needs device verification.
+- Desktop-only update; Android remains at v1.2.0.
 ## v1.3.0: migration and backup
 
 Open **迁移与备份（配置 + 素材）** in Settings. Export a `.liuzhuan.zip` on the old PC, import it using a migration-capable build on the new PC, then exit and reopen Liuzhuan.
@@ -21,8 +28,8 @@ Open **迁移与备份（配置 + 素材）** in Settings. Export a `.liuzhuan.z
 - Scan a new QR code on the new PC. Only files referenced by the current library are packaged, not the entire disk or all historical uploads.
 
 ### Moving to another PC and rolling back
-1. Upgrade the old PC to v1.3.0 and export from Settings. Export uses the material snapshot taken when you start; wait for success before copying the archive.
-2. Extract v1.3.0 on the new PC, run `app/Liuzhuan.exe`, select the migration archive from the same menu, and review its contents.
+1. Upgrade the old PC to v1.3.0 or newer and export from Settings. Export uses the material snapshot taken when you start; wait for success before copying the archive.
+2. Extract the latest release on the new PC, run `app/Liuzhuan.exe`, select the migration archive from the same menu, and review its contents.
 3. Exit and reopen Liuzhuan after import to apply the settings and new library, then pair your phone using a fresh QR code.
 4. To restore the old library, exit Liuzhuan, back up the default `data/config.json`, copy the appropriate `config.before-import-*.json` over it, and reopen. Retain the original material directory and all `imports` directories.
 
@@ -96,7 +103,7 @@ The settings menu also now uses a consistent dark background, readable text, and
 
 ### Desktop (Windows 10/11 x64)
 
-Download `Liuzhuan-v1.3.0-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. This release updates Windows only. Keep using the [v1.2.0 Android APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.2.0/Liuzhuan-v1.2.0-android.apk). Scan a fresh QR code after moving to a new PC. If reinstalling the APK, turn its accessibility service off and back on.
+Download `Liuzhuan-v1.3.1-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. This release updates Windows only. Keep using the [v1.2.0 Android APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.2.0/Liuzhuan-v1.2.0-android.apk). Scan a fresh QR code after moving to a new PC. If reinstalling the APK, turn its accessibility service off and back on.
 
 Alternatively, build from source:
 
