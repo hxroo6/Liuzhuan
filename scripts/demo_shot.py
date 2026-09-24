@@ -2,7 +2,7 @@
 import ctypes, time, os
 from PIL import ImageGrab
 
-OUT = r"F:/QW《流转》 - 副本/release_package/promo"
+OUT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "release_package", "promo")
 os.makedirs(OUT, exist_ok=True)
 
 user32 = ctypes.windll.user32

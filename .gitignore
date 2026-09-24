@@ -33,3 +33,11 @@ Thumbs.db
 # Android 的 data 包是源码，不是用户数据
 !AndroidApp/app/src/main/java/com/liuzhuan/app/data/
 !AndroidApp/app/src/main/java/com/liuzhuan/app/data/*.kt
+
+# Local delivery and screenshots may contain user data
+/release_package/
+/docs/screenshots/
+/HANDOFF.md
+*.log
+*.liuzhuan.zip
+*.pdb

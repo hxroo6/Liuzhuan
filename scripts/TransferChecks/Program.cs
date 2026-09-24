@@ -16,7 +16,7 @@ static class Program
     static int FreePort() { var socket=new TcpListener(IPAddress.Loopback,0); socket.Start();int p=((IPEndPoint)socket.LocalEndpoint).Port;socket.Stop();return p; }
     static async Task Main(string[] args)
     {
-        string output=Path.Combine("F:/appdata/Temp","TransferChecks-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(output);
+        string output=Path.Combine(Path.GetTempPath(),"TransferChecks-"+Guid.NewGuid().ToString("N"));Directory.CreateDirectory(output);
         typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,output);Liuzhuan.Utils.Logger.Init(output);
         LanConfig.Password="test-only";
         var image=new MaterialItem {Id="photo",Type=MaterialType.Image,FilePath=Path.GetFullPath(args[0]),DisplayName="sample.png"};

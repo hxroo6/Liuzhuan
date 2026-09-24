@@ -10,7 +10,7 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
-## Local development: migration and backup (Windows v1.3.0, not yet released)
+## v1.3.0: migration and backup
 
 Open **迁移与备份（配置 + 素材）** in Settings. Export a `.liuzhuan.zip` on the old PC, import it using a migration-capable build on the new PC, then exit and reopen Liuzhuan.
 
@@ -19,6 +19,16 @@ Open **迁移与备份（配置 + 素材）** in Settings. Export a `.liuzhuan.z
 - Creates a separate library and switches on next launch; no merging or overwriting of the old library. The previous config pointer is saved as `data/config.before-import-*.json` under the default data directory.
 - Missing originals are reported. Cancellation or validation failure does not activate the new library. Keep the package private: it includes content and pairing credentials.
 - Scan a new QR code on the new PC. Only files referenced by the current library are packaged, not the entire disk or all historical uploads.
+
+### Moving to another PC and rolling back
+1. Upgrade the old PC to v1.3.0 and export from Settings. Export uses the material snapshot taken when you start; wait for success before copying the archive.
+2. Extract v1.3.0 on the new PC, run `app/Liuzhuan.exe`, select the migration archive from the same menu, and review its contents.
+3. Exit and reopen Liuzhuan after import to apply the settings and new library, then pair your phone using a fresh QR code.
+4. To restore the old library, exit Liuzhuan, back up the default `data/config.json`, copy the appropriate `config.before-import-*.json` over it, and reopen. Retain the original material directory and all `imports` directories.
+
+Migration archives are unencrypted ZIPs containing materials and pairing credentials; transfer them only between your own devices. Public program downloads contain neither your configuration nor your materials. Windows HEIC codecs must be available separately on the new PC.
+
+The settings menu also now uses a consistent dark background, readable text, and clear checkmarks, fixing the low-contrast HEIC submenu.
 
 ## ✨ Features
 
@@ -86,7 +96,7 @@ Open **迁移与备份（配置 + 素材）** in Settings. Export a `.liuzhuan.z
 
 ### Desktop (Windows 10/11 x64)
 
-Download `Liuzhuan-v1.2.0-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. Update both ends, install `Liuzhuan-v1.2.0-android.apk`, and scan a new pairing QR code. After installing over the existing Android app, turn its accessibility service off and back on.
+Download `Liuzhuan-v1.3.0-windows-x64.zip` from [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest), extract it, and run `app/Liuzhuan.exe`. No separate .NET installation is needed. To upgrade, exit the old version, replace its `app` directory, and keep the sibling `data` directory containing materials, pairing information, and settings. This release updates Windows only. Keep using the [v1.2.0 Android APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.2.0/Liuzhuan-v1.2.0-android.apk). Scan a fresh QR code after moving to a new PC. If reinstalling the APK, turn its accessibility service off and back on.
 
 Alternatively, build from source:
 
@@ -170,6 +180,6 @@ Liuzhuan/
 
 ## 📄 License
 
-Copyright (c) 2026 Huang Xinrong (黄信荣) · Email 332258260@qq.com · WeChat HXRO_I
+Copyright (c) 2026 Huang Xinrong (黄信荣)
 
 Released under the **MIT License**. See [LICENSE](LICENSE).

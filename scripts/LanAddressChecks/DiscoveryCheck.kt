@@ -14,7 +14,7 @@ fun main() {
                 server.soTimeout=3000
                 val responder=thread {
                     val packet=DatagramPacket(ByteArray(1024),1024);server.receive(packet)
-                    for(message in listOf("LIUZHUAN_OFFER|bad|oops|invalid", "LIUZHUAN_OFFER|172.30.201.230|8899|Test PC", "LIUZHUAN_OFFER|172.30.201.230|8899|Test PC")) {
+                    for(message in listOf("LIUZHUAN_OFFER|bad|oops|invalid", "LIUZHUAN_OFFER|172.30.99.1|8899|Test PC", "LIUZHUAN_OFFER|172.30.99.1|8899|Test PC")) {
                         val bytes=message.toByteArray();server.send(DatagramPacket(bytes,bytes.size,packet.socketAddress))
                     }
                 }

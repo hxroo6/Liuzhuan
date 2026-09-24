@@ -6,7 +6,8 @@ import json
 import time
 import websocket
 
-PASSWORD = "9Y6VFCBM"
+import os
+PASSWORD = os.environ["LIUZHUAN_TEST_PASSWORD"]
 PORT = 8899
 
 def sha256hex(s):

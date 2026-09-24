@@ -3,7 +3,8 @@
 """测试 get_item（文字全文/文件下载URL）+ HTTP 文件下载"""
 import hashlib, json, time, uuid, urllib.request, websocket
 
-PASSWORD = "066596"
+import os
+PASSWORD = os.environ["LIUZHUAN_TEST_PASSWORD"]  # set locally; never commit pairing credentials
 PORT = 8899
 
 def sha(s): return hashlib.sha256(s.encode()).hexdigest()

@@ -10,7 +10,7 @@
 
 **全程不经过任何云端服务器**，数据只在你自己的局域网里流动。
 
-## 本地开发版：迁移与备份（电脑端 v1.3.0，尚未发布）
+## v1.3.0：迁移与备份
 
 在设置菜单打开 **迁移与备份（配置 + 素材）**：旧电脑导出 `.liuzhuan.zip`，新电脑使用支持迁移功能的版本导入，退出并重新打开后生效。
 
@@ -19,6 +19,16 @@
 - 创建独立素材库，重启后切换，不合并、不覆盖原库；原配置备份在默认 `data/config.before-import-*.json`。
 - 缺失原文件会明确报错；取消或校验失败不切换素材库。迁移包含素材内容和配对口令，请妥善保管。
 - 新电脑需重新扫码连接手机。打包的是当前素材库引用的文件，不是整个磁盘或全部历史上传文件。
+
+### 换机步骤与恢复
+1. 旧电脑先升级到 v1.3.0，在设置中导出迁移包。导出范围是点击导出时的素材快照；请等待成功提示再复制文件。
+2. 新电脑解压 v1.3.0 程序包，运行 `app/Liuzhuan.exe`，从相同入口选择迁移包并确认内容。
+3. 导入完成后退出并重新打开流转，应用配置和新素材库，再用手机重新扫码。
+4. 如需恢复原库：先退出流转，备份默认 `data/config.json`，将对应的 `config.before-import-*.json` 复制为 `config.json`，再启动。保留原素材目录和 `imports` 目录。
+
+迁移包是未加密 ZIP，包含素材与配对口令；仅在自己的设备间传递。程序下载包与迁移包是两回事，公开 Releases 不包含你的配置或素材。HEIC 编解码器需要在新电脑另行具备。
+
+设置菜单也已统一为深色背景、清晰字号及勾选状态，修复 HEIC 子菜单难以辨认的问题。
 
 ## ✨ 功能
 
@@ -86,7 +96,7 @@
 
 ### 电脑端（Windows 10/11 x64）
 
-从 [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest) 下载 `Liuzhuan-v1.2.0-windows-x64.zip`，解压后运行 `app/Liuzhuan.exe`，无需另装 .NET。升级前退出旧版，用新版 `app` 目录替换旧版程序目录，保留同级 `data` 目录（素材、配对和设置）。本次请同时更新电脑端与安卓端（`Liuzhuan-v1.2.0-android.apk`），重新扫码连接。覆盖安装后，到无障碍设置关闭→重新开启流转服务。
+从 [GitHub Releases](https://github.com/hxroo6/Liuzhuan/releases/latest) 下载 `Liuzhuan-v1.3.0-windows-x64.zip`，解压后运行 `app/Liuzhuan.exe`，无需另装 .NET。升级前退出旧版，用新版 `app` 目录替换旧版程序目录，保留同级 `data` 目录（素材、配对和设置）。本次只更新电脑端；安卓继续使用 [v1.2.0 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.2.0/Liuzhuan-v1.2.0-android.apk)。换机后重新扫码；如果覆盖安装 APK，请到无障碍设置关闭→重新开启流转服务。
 
 也可以从源码构建：
 
@@ -170,6 +180,6 @@ Liuzhuan/
 
 ## 📄 版权与许可
 
-Copyright (c) 2026 黄信荣 · 邮箱 332258260@qq.com · 微信 HXRO_I
+Copyright (c) 2026 黄信荣
 
 本项目基于 **MIT License** 开源，详见 [LICENSE](LICENSE)。

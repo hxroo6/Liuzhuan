@@ -195,7 +195,8 @@ run = end.add_run('⚡ 流转 —— 让素材在指尖流转 ⚡')
 run.font.size = Pt(12)
 run.font.color.rgb = ACCENT
 
-out = 'F:/QW《流转》 - 副本/docs/流转使用说明书.docx'
+from pathlib import Path
+out = str(Path(__file__).resolve().parents[1] / 'docs' / '流转使用说明书.docx')
 import os
 os.makedirs(os.path.dirname(out), exist_ok=True)
 doc.save(out)

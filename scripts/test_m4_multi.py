@@ -3,7 +3,8 @@
 """M4 多设备端到端测试：3 台设备并发连接（全量消费消息，无残留）"""
 import hashlib, json, time, uuid, websocket
 
-PASSWORD = "066596"
+import os
+PASSWORD = os.environ["LIUZHUAN_TEST_PASSWORD"]  # set locally; never commit pairing credentials
 PORT = 8899
 
 def sha(s): return hashlib.sha256(s.encode()).hexdigest()

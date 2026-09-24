@@ -3,7 +3,8 @@
 """测试 list_sync 列表同步 + item_added 广播（不依赖消息顺序）"""
 import hashlib, json, time, uuid, websocket
 
-PASSWORD = "066596"
+import os
+PASSWORD = os.environ["LIUZHUAN_TEST_PASSWORD"]  # set locally; never commit pairing credentials
 PORT = 8899
 
 def sha(s): return hashlib.sha256(s.encode()).hexdigest()

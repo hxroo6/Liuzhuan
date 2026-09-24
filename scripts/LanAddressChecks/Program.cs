@@ -12,10 +12,10 @@ internal class Program
     static void Check(bool value, string label) { if (!value) throw new Exception(label); Console.WriteLine("PASS " + label); }
     [STAThread] static void Main()
     {
-        var wifi = new LanNetUtil.LanAddress("192.168.5.60",24,"WLAN","Intel Wi-Fi",NetworkInterfaceType.Wireless80211,true);
+        var wifi = new LanNetUtil.LanAddress("192.168.50.10",24,"WLAN","Intel Wi-Fi",NetworkInterfaceType.Wireless80211,true);
         var wired = new LanNetUtil.LanAddress("10.1.0.2",24,"Ethernet","Realtek",NetworkInterfaceType.Ethernet,true);
         var candidates = new[] {
-            new LanNetUtil.LanAddress("172.30.201.230",32,"vgate0","Rust Wintun Tunnel Tunnel",NetworkInterfaceType.Ethernet,false),
+            new LanNetUtil.LanAddress("172.30.99.1",32,"vgate0","Rust Wintun Tunnel Tunnel",NetworkInterfaceType.Ethernet,false),
             new LanNetUtil.LanAddress("192.168.137.1",24,"Local 2","Microsoft Wi-Fi Direct Virtual Adapter",NetworkInterfaceType.Wireless80211,false),
             new LanNetUtil.LanAddress("169.254.39.90",16,"Ethernet 2","Realtek",NetworkInterfaceType.Ethernet,false),
             new LanNetUtil.LanAddress("100.64.0.2",32,"Other","Unknown adapter",NetworkInterfaceType.Ethernet,true), wifi, wired };
@@ -30,7 +30,7 @@ internal class Program
         if (actual.Count > 0)
         {
             var app = new Application { ShutdownMode=ShutdownMode.OnExplicitShutdown };
-            var qr = new QrCodeWindow("172.30.201.230",8899,"test-only");
+            var qr = new QrCodeWindow("172.30.99.1",8899,"test-only");
             var choice=(ComboBox)qr.FindName("NetworkChoice");
             var chosen=(LanNetUtil.LanAddress)choice.SelectedItem;
             var bitmap=(BitmapSource)((Image)qr.FindName("QrImage")).Source;
