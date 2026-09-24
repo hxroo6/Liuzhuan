@@ -1,3 +1,4 @@
+using System.Runtime.CompilerServices;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
@@ -15,10 +16,16 @@ public static class UiMotion
     public const int FeedbackMs = 110;
     public const int ContentMs = 160;
     public const int PanelMs = 240;
+    private static readonly ConditionalWeakTable<DependencyObject, Dictionary<DependencyProperty, long>> Versions = new();
 
     public static void Animate(DependencyObject target, DependencyProperty property, double to,
         int milliseconds, double? from = null, Action? completed = null)
     {
+        target.Dispatcher.VerifyAccess();
+        var versions = Versions.GetOrCreateValue(target);
+        var version = versions.TryGetValue(property, out var previous) ? previous + 1 : 1;
+        versions[property] = version;
+        bool IsCurrent() => versions[property] == version;
         var current = from ?? (double)target.GetValue(property);
         void Begin(DoubleAnimation? animation)
         {
@@ -43,13 +50,14 @@ public static class UiMotion
         };
         animation.Completed += (_, _) =>
         {
+            if (!IsCurrent()) return;
             Begin(null);
             target.SetCurrentValue(property, to);
             completed?.Invoke();
         };
         // 让当前值先完成一帧布局，再启动新时钟；这样反向操作在同一事件循环中
         // 也不会先看到目标值的跳变。
-        target.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => Begin(animation)));
+        target.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() => { if (IsCurrent()) Begin(animation); }));
     }
 
     public static void Reveal(FrameworkElement element)

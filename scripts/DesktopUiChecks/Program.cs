@@ -183,6 +183,46 @@ internal static class Program
         try
         {
             SetMotionOverride(true);
+            // 不让 Dispatcher 先渲染：排队的收起动画必须被同步复位永久取消。
+            // 这与拖窗开始或同一帧反向操作时的调用顺序相同。
+            var queuedTranslate = new TranslateTransform();
+            var obsoleteCompletions = 0;
+            var resetCompletions = 0;
+            Liuzhuan.Utils.UiMotion.Animate(queuedTranslate, TranslateTransform.XProperty, 372, 200,
+                completed: () => obsoleteCompletions++);
+            Liuzhuan.Utils.UiMotion.Animate(queuedTranslate, TranslateTransform.XProperty, 0, 0,
+                completed: () => resetCompletions++);
+            Check(Math.Abs(queuedTranslate.X) < 0.1 && resetCompletions == 1,
+                "immediate reset settles a queued animation synchronously");
+            Pump(60);
+            Check(Math.Abs(queuedTranslate.X) < 0.1,
+                "queued animation cannot revive after an immediate reset");
+            Pump(320);
+            Check(Math.Abs(queuedTranslate.X) < 0.1 && obsoleteCompletions == 0 && resetCompletions == 1,
+                "cancelled queued animation cannot change the value or invoke its completion");
+
+            // 失效范围必须精确到对象和属性，否则复位 X 会误杀 Y 或别的控件的动画。
+            var otherTranslate = new TranslateTransform();
+            var independentCompletions = 0;
+            Liuzhuan.Utils.UiMotion.Animate(queuedTranslate, TranslateTransform.XProperty, 100, 120);
+            Liuzhuan.Utils.UiMotion.Animate(queuedTranslate, TranslateTransform.YProperty, 24, 120,
+                completed: () => independentCompletions++);
+            Liuzhuan.Utils.UiMotion.Animate(otherTranslate, TranslateTransform.XProperty, 48, 120,
+                completed: () => independentCompletions++);
+            Liuzhuan.Utils.UiMotion.Animate(queuedTranslate, TranslateTransform.XProperty, 0, 0);
+            Pump(320);
+            Check(Math.Abs(queuedTranslate.X) < 0.1 && Math.Abs(queuedTranslate.Y - 24) < 0.1
+                && Math.Abs(otherTranslate.X - 48) < 0.1 && independentCompletions == 2,
+                "animation cancellation preserves other properties and other objects");
+
+            Invoke("CollapsePanel"); Invoke("ExpandPanel");
+            Pump(60);
+            Check(IsExpanded() && window.Width == 380 && panel.Visibility == Visibility.Visible && Math.Abs(panelTranslate.X) < 0.1,
+                "same-frame collapse and expansion keep the main panel visible");
+            Pump(320);
+            Check(IsExpanded() && panelColumn.Width.Value == 372 && Math.Abs(panelTranslate.X) < 0.1,
+                "same-frame reversal cannot leave an expanded window with offscreen content");
+
             Invoke("CollapsePanel"); Pump(60);
             var collapsingX = panelTranslate.X;
             Check(collapsingX > 0 && collapsingX < 372, "collapse clock reaches an intermediate position");
@@ -212,6 +252,52 @@ internal static class Program
             Invoke("ExpandPanel"); Pump(400);
             Check(IsExpanded() && window.Width == 380 && window.Left == 1000 && panel.Visibility == Visibility.Visible && panelColumn.Width.Value == 372 && Math.Abs(panelTranslate.X) < 0.1,
                 "expand-collapse-expand ignores obsolete collapse completions");
+
+            // DragMove 会继续泵消息。用手动驱动的 Dispatcher 验证拖窗期间的状态，
+            // 不调用原生 DragMove / SnapToEdge，也不创建真实窗口或启动热区轮询。
+            var originalCollapseTimer = typeof(MainWindow).GetField("_collapseTimer", privateInstance)!.GetValue(window);
+            var originalHotspotTimer = typeof(MainWindow).GetField("_hotspotTimer", privateInstance)!.GetValue(window);
+            var dragCollapseTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
+            var dragHotspotTimer = new DispatcherTimer { Interval = TimeSpan.FromHours(1) };
+            SetField("_collapseTimer", dragCollapseTimer);
+            SetField("_hotspotTimer", dragHotspotTimer);
+            try
+            {
+                foreach (var delayBeforeDrag in new[] { 0, 60 })
+                {
+                    var phase = delayBeforeDrag == 0 ? "queued" : "running";
+                    Invoke("CollapsePanel");
+                    if (delayBeforeDrag > 0) Pump(delayBeforeDrag);
+                    // 模拟用户已经拖离旧停靠位置，强制展开不能把窗口跳回旧坐标。
+                    window.Left = 920;
+                    dragCollapseTimer.Start(); dragHotspotTimer.Start();
+                    Invoke("BeginWindowDrag");
+                    Check((bool)typeof(MainWindow).GetField("_isWindowDragging", privateInstance)!.GetValue(window)!
+                        && !dragCollapseTimer.IsEnabled && !dragHotspotTimer.IsEnabled,
+                        $"drag beginning with a {phase} animation suspends collapse and hotspot timers");
+                    Check(IsExpanded() && window.Width == 380 && window.Left == 920 && panel.Visibility == Visibility.Visible
+                        && panelColumn.Width.Value == 372 && Math.Abs(panelTranslate.X) < 0.1,
+                        $"drag beginning with a {phase} animation restores content without moving the window");
+                    Invoke("CollapsePanel");
+                    Pump(60);
+                    Check(IsExpanded() && window.Width == 380 && window.Left == 920 && panel.Visibility == Visibility.Visible
+                        && Math.Abs(panelTranslate.X) < 0.1,
+                        $"drag ignores collapse requests and the obsolete {phase} animation");
+                    Pump(320);
+                    Check(IsExpanded() && window.Width == 380 && panelColumn.Width.Value == 372 && Math.Abs(panelTranslate.X) < 0.1,
+                        $"drag stays fully visible after the obsolete {phase} animation would have completed");
+                    SetField("_isWindowDragging", false);
+                    window.Left = 1000;
+                }
+            }
+            finally
+            {
+                dragCollapseTimer.Stop(); dragHotspotTimer.Stop();
+                typeof(MainWindow).GetField("_collapseTimer", privateInstance)!.SetValue(window, originalCollapseTimer);
+                typeof(MainWindow).GetField("_hotspotTimer", privateInstance)!.SetValue(window, originalHotspotTimer);
+                SetField("_isWindowDragging", false);
+            }
+            Render("desktop-drag-recovered.png", 1.5);
 
             // 系统禁用动画时必须同步完成布局；中途禁用也不能让旧动画回调再次缩窗。
             Invoke("CollapsePanel"); Pump(40);

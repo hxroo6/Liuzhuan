@@ -30,6 +30,7 @@ public partial class MainWindow : Window
     private string _currentTab = "Recent";
     private string _searchKeyword = "";
     private bool _isExpanded = true;
+    private bool _isWindowDragging;
     private readonly TranslateTransform _panelTranslate = new();
     private int _panelTransition;
     private DispatcherTimer? _collapseTimer;
@@ -408,9 +409,10 @@ public partial class MainWindow : Window
 
     private void PositionWindowRightEdge()
     {
+        _isLeftAnchored = false;
         ++_panelTransition;
         UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, 0, 0);
-        var workArea = SystemParameters.WorkArea;
+        var workArea = CurrentMonitorWorkArea();
         Height = Math.Min(Height, workArea.Height);
         Top = workArea.Top + (workArea.Height - Height) / 2;
         Width = _isExpanded ? PanelWidth : CollapsedVisible;
@@ -427,7 +429,7 @@ public partial class MainWindow : Window
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CollapseDelayMs) };
         _collapseTimer.Tick += (s, e) =>
         {
-            if (IsMouseOver || _menuOpen || _isDragging || IsKeyboardFocusWithin && IsActive) return;
+            if (_isWindowDragging || IsMouseOver || _menuOpen || _isDragging || IsKeyboardFocusWithin && IsActive) return;
             _collapseTimer.Stop();
             if (!_isLeftAnchored && !_isPinned) CollapsePanel();
         };
@@ -442,35 +444,70 @@ public partial class MainWindow : Window
         _hotspotTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         _hotspotTimer.Tick += (s, e) =>
         {
-            if (!GetCursorPos(out var pt)) return;
-            var hMon = MonitorFromPoint(pt, 2 /* MONITOR_DEFAULTTONEAREST */);
+            if (_isWindowDragging || _isDragging || !GetCursorPos(out var pt)) return;
+            var hwnd = new WindowInteropHelper(this).Handle;
+            var monitor = MonitorFromWindow(hwnd, 2);
+            // 鼠标换屏不是窗口离屏，不再根据鼠标所在屏幕强行搬动窗口。
+            if (MonitorFromPoint(pt, 2) != monitor) return;
             var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-            if (!GetMonitorInfo(hMon, ref mi)) return;
+            if (!GetMonitorInfo(monitor, ref mi)) return;
             var work = mi.rcWork;
-
-            // 窗口完全跑出该屏幕（多屏拔插/分辨率变化）→ 自动归位
-            if (Left < work.Left - 50 || Left > work.Right + 50)
-            {
-                var top = work.Top + (work.Bottom - work.Top - Height) / 2;
-                _expandedLeft = work.Right - PanelWidth;
-                _collapsedLeft = work.Right - CollapsedVisible;
-                Left = _isExpanded ? _expandedLeft : _collapsedLeft;
-                Top = top;
-                Logger.Run("Hotspot: window repositioned to screen ({0})", Left);
-            }
-
-            // 鼠标贴近屏幕右缘（12px 内）且纵向在工作区内 → 展开
-            if (pt.X >= work.Right - 12 && pt.Y >= work.Top && pt.Y <= work.Bottom)
-            {
+            if (pt.X >= work.Right - 12 && pt.X <= work.Right && pt.Y >= work.Top && pt.Y <= work.Bottom)
                 ExpandPanel();
-            }
         };
         _hotspotTimer.Start();
     }
 
+    // Win32 屏幕坐标转为当前窗口 DIP，再与 WPF Left/Width 一起计算。
+    private Rect CurrentMonitorWorkArea()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
+        if (hwnd == IntPtr.Zero || !GetMonitorInfo(MonitorFromWindow(hwnd, 2), ref mi)) return SystemParameters.WorkArea;
+        var transform = HwndSource.FromHwnd(hwnd)?.CompositionTarget?.TransformFromDevice ?? Matrix.Identity;
+        return new Rect(transform.Transform(new Point(mi.rcWork.Left, mi.rcWork.Top)),
+            transform.Transform(new Point(mi.rcWork.Right, mi.rcWork.Bottom)));
+    }
+
+    private void SetExpandedLayoutImmediately()
+    {
+        ++_panelTransition;
+        _isExpanded = true;
+        UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, 0, 0);
+        MainPanel.RenderTransform = _panelTranslate;
+        MainPanel.Visibility = Visibility.Visible;
+        PanelColumn.Width = new GridLength(PanelWidth - CollapsedVisible);
+        Width = PanelWidth;
+        TriggerBar.Opacity = 0.4;
+    }
+
+    private void BeginWindowDrag()
+    {
+        if (_isWindowDragging) return;
+        _isWindowDragging = true;
+        _collapseTimer?.Stop();
+        _hotspotTimer?.Stop();
+        CloseHoverPreview();
+        SetExpandedLayoutImmediately();
+        Logger.Run("Window drag started: pending panel motion cancelled");
+    }
+
+    private void EndWindowDrag()
+    {
+        if (!_isWindowDragging) return;
+        _isWindowDragging = false;
+        try { SnapToEdge(); }
+        catch (Exception ex)
+        {
+            SetExpandedLayoutImmediately();
+            Logger.Error("Window drag snap failed: {0}", ex.Message);
+        }
+        finally { _hotspotTimer?.Start(); _collapseTimer?.Start(); }
+        Logger.Run("Window drag ended: offset={0:F1}, width={1:F1}", _panelTranslate.X, Width);
+    }
     /// <summary>
     /// 拖动 + 贴边吸附：窗口可自由拖动，松开时靠近屏幕边缘自动吸附。
-    /// 右缘吸附 → 贴右并缩进（收起态，鼠标靠近展开）；左缘吸附 → 贴左展开。
+    /// 右缘吸附 → 贴右展开，鼠标离开后收起；左缘吸附 → 贴左展开。
     /// 另挂 WM_DISPLAYCHANGE：分辨率/多屏变化时自动重新吸附到当前右侧。
     /// </summary>
     private void SetupDragSnap()
@@ -484,8 +521,10 @@ public partial class MainWindow : Window
             // 排除交互控件（按钮/输入框/素材项），空白区域才能拖动
             var source = e.OriginalSource as DependencyObject;
             if (VisualHitTest<ButtonBase>(source) != null || VisualHitTest<DockPanel>(source) != HeaderDragArea) return;
-            try { DragMove(); SnapToEdge(); }
-            catch { /* 非左键或系统限制时忽略 */ }
+            BeginWindowDrag();
+            try { DragMove(); }
+            catch (InvalidOperationException ex) { Logger.Run("Window drag interrupted: {0}", ex.Message); }
+            finally { EndWindowDrag(); }
         };
         Logger.Run("DragSnap: enabled (drag to edges to snap)");
     }
@@ -496,6 +535,7 @@ public partial class MainWindow : Window
         {
             Dispatcher.BeginInvoke(() =>
             {
+                if (_isWindowDragging) return;
                 PositionWindowRightEdge();
                 Left = _isExpanded ? _expandedLeft : _collapsedLeft;
                 Logger.Run("Display changed, repositioned: Left={0}", Left);
@@ -507,53 +547,32 @@ public partial class MainWindow : Window
     /// <summary>拖动释放后贴边吸附（左右各 80px 触发）</summary>
     private void SnapToEdge()
     {
-        try
+        var work = CurrentMonitorWorkArea();
+        SetExpandedLayoutImmediately();
+        Height = Math.Min(Height, work.Height);
+        Top = Math.Clamp(Top, work.Top, work.Bottom - Height);
+        if (Left + PanelWidth >= work.Right - 80)
         {
-            if (!GetCursorPos(out var pt)) return;
-            var hMon = MonitorFromPoint(pt, 2 /* MONITOR_DEFAULTTONEAREST */);
-            var mi = new MONITORINFO { cbSize = Marshal.SizeOf<MONITORINFO>() };
-            if (!GetMonitorInfo(hMon, ref mi)) return;
-            var work = mi.rcWork;
-            var w = ActualWidth;
-
-            // 窗口右边界贴近屏幕右缘 → 贴右 + 缩进
-            if (Left + w >= work.Right - 80)
-            {
-                _isLeftAnchored = false;
-                _expandedLeft = work.Right - PanelWidth;
-                _collapsedLeft = work.Right - CollapsedVisible;
-                Left = _expandedLeft;
-                Top = Math.Max(work.Top, Math.Min(work.Bottom - Height, Top));
-                CollapsePanel();
-                Logger.Run("Snap: right edge (collapsed), Left={0}", Left);
-            }
-            // 窗口贴近屏幕左缘 → 贴左展开（不自动收起）
-            else if (Left <= work.Left + 80)
-            {
-                _isLeftAnchored = true;
-                Left = work.Left;
-                _expandedLeft = work.Left;
-                Top = Math.Max(work.Top, Math.Min(work.Bottom - Height, Top));
-                if (!_isExpanded)
-                {
-                    _isExpanded = true;
-                    ++_panelTransition;
-                    UiMotion.Animate(_panelTranslate, TranslateTransform.XProperty, 0, 0);
-                    MainPanel.Visibility = Visibility.Visible;
-                    PanelColumn.Width = new GridLength(PanelWidth - CollapsedVisible);
-                    Width = PanelWidth;
-                    MainPanel.RenderTransform = _panelTranslate;
-                    TriggerBar.Opacity = 0.4;
-                }
-                Logger.Run("Snap: left edge (anchored, no auto-collapse), Left={0}", Left);
-            }
+            _isLeftAnchored = false;
+            _expandedLeft = work.Right - PanelWidth;
+            _collapsedLeft = work.Right - CollapsedVisible;
+            Left = _expandedLeft;
+            // 松手时保持可见，鼠标离开后再由原计时器收起。
+            Logger.Run("Snap: right edge, expanded until pointer leaves");
         }
-        catch (Exception ex)
+        else if (Left <= work.Left + 80)
         {
-            Logger.Error("SnapToEdge failed: {0}", ex.Message);
+            _isLeftAnchored = true;
+            Left = _expandedLeft = work.Left;
+            Logger.Run("Snap: left edge, expanded");
         }
+        else
+        {
+            _expandedLeft = Left;
+            _collapsedLeft = Left + PanelWidth - CollapsedVisible;
+        }
+        MainPanel.InvalidateVisual();
     }
-
     #endregion
 
     #region 侧边栏伸缩动画
@@ -561,7 +580,7 @@ public partial class MainWindow : Window
     private void ExpandPanel()
     {
         _collapseTimer?.Stop();
-        if (_isExpanded) return;
+        if (_isWindowDragging || _isExpanded) return;
         _isExpanded = true;
         ++_panelTransition;
         var from = MainPanel.Visibility == Visibility.Collapsed ? PanelWidth - CollapsedVisible : _panelTranslate.X;
@@ -577,7 +596,7 @@ public partial class MainWindow : Window
 
     private void CollapsePanel()
     {
-        if (!_isExpanded) return;
+        if (_isWindowDragging || !_isExpanded) return;
         if (_isPinned || _menuOpen) return;
         if (_isLeftAnchored) return; // 左锚定：保持展开，不收起不跳右
         _isExpanded = false;
@@ -596,7 +615,7 @@ public partial class MainWindow : Window
     }
 
     private void Window_MouseEnter(object sender, MouseEventArgs e) => ExpandPanel();
-    private void Window_MouseLeave(object sender, MouseEventArgs e) => _collapseTimer?.Start();
+    private void Window_MouseLeave(object sender, MouseEventArgs e) { if (!_isWindowDragging) _collapseTimer?.Start(); }
     private void TriggerBar_MouseEnter(object sender, MouseEventArgs e) { TriggerBar.Opacity = 0.7; ExpandPanel(); }
     private void CollapseBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -1408,7 +1427,7 @@ public partial class MainWindow : Window
     private void ResizeThumb_DragDelta(object sender, DragDeltaEventArgs e)
     {
         var newHeight = Height + e.VerticalChange;
-        var workArea = SystemParameters.WorkArea;
+        var workArea = CurrentMonitorWorkArea();
         newHeight = Math.Max(300, Math.Min(workArea.Height, newHeight));
         Height = newHeight;
         if (Top + Height > workArea.Bottom) Top = workArea.Bottom - Height;
@@ -1823,6 +1842,9 @@ public partial class MainWindow : Window
 
     [DllImport("user32.dll")]
     private static extern bool GetCursorPos(out POINT lpPoint);
+
+    [DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint dwFlags);
 
     [DllImport("user32.dll")]
     private static extern IntPtr MonitorFromPoint(POINT pt, uint dwFlags);
