@@ -10,6 +10,16 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## Local development: migration and backup (Windows v1.3.0, not yet released)
+
+Open **迁移与备份（配置 + 素材）** in Settings. Export a `.liuzhuan.zip` on the old PC, import it using a migration-capable build on the new PC, then exit and reopen Liuzhuan.
+
+- Includes referenced original files, text, favorites, thumbnails, HEIC/clipboard preferences, LAN port/password, and startup preference.
+- Verifies file hashes and remaps local paths; does not reuse the old data-directory path or window position.
+- Creates a separate library and switches on next launch; no merging or overwriting of the old library. The previous config pointer is saved as `data/config.before-import-*.json` under the default data directory.
+- Missing originals are reported. Cancellation or validation failure does not activate the new library. Keep the package private: it includes content and pairing credentials.
+- Scan a new QR code on the new PC. Only files referenced by the current library are packaged, not the entire disk or all historical uploads.
+
 ## ✨ Features
 
 ### New in v1.2.0 (includes M27–M29)

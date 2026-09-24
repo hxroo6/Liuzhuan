@@ -1491,6 +1491,21 @@ public partial class MainWindow : Window
 
         menu.Items.Add(new Separator());
 
+        var migrationItem = new MenuItem { Header = "迁移与备份（配置 + 素材）…" };
+        migrationItem.Click += (_, _) =>
+        {
+            var window = new Views.MigrationWindow(() => MigrationService.Snapshot(_dataStore.Items, new MigrationService.Settings
+            {
+                ClipboardMonitorEnabled = AppSettings.ClipboardMonitorEnabled,
+                HeicConversion = AppSettings.HeicConversion,
+                LanEnabled = LanConfig.Enabled, Port = LanConfig.Port, Password = LanConfig.Password,
+                AutoStart = StartupService.IsEnabled()
+            }), QuickExit) { Owner = this };
+            window.ShowDialog();
+        };
+        menu.Items.Add(migrationItem);
+        menu.Items.Add(new Separator());
+
         // 缓存路径
         var dataDirItem = new MenuItem
         {

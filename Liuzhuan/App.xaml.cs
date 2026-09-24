@@ -41,6 +41,22 @@ public partial class App : Application
         Logger.Run("OS: {0}", Environment.OSVersion.VersionString);
         Logger.Run(".NET Runtime: {0}", Environment.Version);
 
+        // 在创建 MainWindow/DataStore 和读取静态配置之前应用迁移；运行中的保存仍留在旧库。
+        try
+        {
+            var imported = Services.MigrationService.ApplyPending(DataDir);
+            if (imported != null)
+            {
+                Services.StartupService.SetEnabled(imported.AutoStart);
+                Logger.Run("Migration applied; previous library and config retained");
+            }
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Migration activation failed: {0}", ex.Message);
+            MessageBox.Show("迁移配置未能完整应用：" + ex.Message + "\n请保留原素材库并检查数据目录。", "迁移提示", MessageBoxButton.OK, MessageBoxImage.Warning);
+        }
+
         // 全局异常处理 — 尽可能捕获所有未处理异常，写入日志
         DispatcherUnhandledException += (s, args) =>
         {

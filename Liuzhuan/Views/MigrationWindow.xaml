@@ -1,0 +1,35 @@
+<Window x:Class="Liuzhuan.Views.MigrationWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="迁移与备份" Width="570" Height="580" MinWidth="500" MinHeight="520" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="13">
+    <Grid Margin="24" Background="{StaticResource PanelBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <ScrollViewer VerticalScrollBarVisibility="Auto">
+            <StackPanel>
+                <TextBlock Text="换台电脑，继续使用" FontSize="24" FontWeight="SemiBold"/>
+                <TextBlock Text="配置和素材一起带走，导入后自动适配新路径。" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,22" TextWrapping="Wrap"/>
+                <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="18" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="从这台电脑导出" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="包含素材原文件、文字、收藏、缩略图，以及 HEIC 转换、剪贴板监控、局域网和开机自启设置。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,14"/>
+                        <Button x:Name="ExportButton" Content="导出迁移包…" Style="{StaticResource ActionButtonStyle}" Padding="18,10" HorizontalAlignment="Left" Click="Export_Click"/>
+                    </StackPanel>
+                </Border>
+                <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="18">
+                    <StackPanel>
+                        <TextBlock Text="在这台电脑恢复" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="导入到独立素材库，退出并重新打开流转后生效。不会合并或覆盖现有素材库；原库和原配置保留。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,14"/>
+                        <Button x:Name="ImportButton" Content="导入迁移包…" Style="{StaticResource ActionButtonStyle}" Padding="18,10" HorizontalAlignment="Left" Click="Import_Click"/>
+                    </StackPanel>
+                </Border>
+                <TextBlock Text="迁移包含素材内容与配对口令，请妥善保管。新电脑需安装支持迁移功能的流转，并重新扫码连接手机。" TextWrapping="Wrap" Foreground="{StaticResource WarmBrush}" Margin="0,16,0,8"/>
+            </StackPanel>
+        </ScrollViewer>
+        <StackPanel Grid.Row="1" Margin="0,14,0,0">
+            <ProgressBar x:Name="Progress" Height="4" Visibility="Collapsed" IsIndeterminate="True" Foreground="{StaticResource AccentBrush}"/>
+            <TextBlock x:Name="Status" Text="请选择导出或导入。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,12" MaxHeight="100"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="CancelButton" Content="取消操作" Visibility="Collapsed" Click="Cancel_Click" Style="{StaticResource ActionButtonStyle}" Padding="16,9" Margin="0,0,8,0"/>
+                <Button x:Name="FinishButton" Content="完成并退出流转" Visibility="Collapsed" Click="Finish_Click" Style="{StaticResource ActionButtonStyle}" Padding="16,9" Margin="0,0,8,0"/>
+                <Button x:Name="CloseButton" Content="关闭" Click="Close_Click" Style="{StaticResource ActionButtonStyle}" Padding="16,9"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

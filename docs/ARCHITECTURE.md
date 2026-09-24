@@ -190,3 +190,12 @@
 ### 电脑设置菜单可读性（2026-09-25）
 - App.xaml 统一 ContextMenu / MenuItem / 子菜单 Popup 模板：深色底、13 号字、36 DIP 最小行高，勾选/悬停/展开状态明确；长文字换行，长菜单可滚动。菜单分隔符同时覆盖 MenuItem.SeparatorStyleKey，避免系统主题回退。
 - HEIC 模式和保存逻辑保持原状；设置菜单去掉 10 号字号，关于窗口显示程序集版本。已按 150% DPI 离屏渲染检查主菜单及 HEIC 子菜单，不等同于真实桌面截图。
+
+### 迁移与备份（电脑端 v1.3.0 本地开发版）
+- `MigrationWindow` 提供导出、导入预览、后台复制进度、取消及退出入口；设置菜单接入。导出在 UI 线程获取素材与设置快照，文件 IO 在后台运行。
+- `MigrationService` 定义 v1 `.liuzhuan.zip`（manifest.json + files/<guid>/<name>）。按原路径去重复引用，打包文件字节、文字、收藏、时间和缩略图；不打包程序、日志、旧绝对目录配置或非索引历史文件。逐文件 SHA-256，临时输出成功后才替换目标 ZIP。
+- 导入严格校验版本、清单、文件大小、SHA-256 与引用路径，拒绝重复/穿越路径；创建默认 data/imports/<guid> 独立目录，把素材路径写为新机器绝对路径。索引上限 32 MiB、10 万条；文件总量上限 1 TiB，并检查磁盘可用空间。
+- 配置通过强类型白名单迁移：ClipboardMonitorEnabled、HeicConversion、LAN Enabled/Port/Password、AutoStart。开机自启在新机器使用当前 exe 路径重新应用，不复制注册表命令。
+- `migration-pending.json` 仅记录待切换库的生成 ID；`App.OnStartup` 在构造 MainWindow/DataStore、加载静态配置之前调用 ApplyPending，备份旧 config.json 后原子更新数据目录指针。原库保持不动，避免运行中 DataStore 延迟保存写进新库；生效后移除 pending。
+- 如需人工回退：先退出流转，备份当前默认 data/config.json，再将对应 config.before-import-*.json 复制为 config.json；保留所有 imports 目录。配置备份只保存路径指针，原素材文件仍在原位置。
+- 检查入口 `scripts/MigrationChecks` 使用独立临时目录，验证旧原路径不可用下的迁移、同名文件/重复引用、收藏文字和配置、生产 DataStore 加载、取消清理、损坏/路径攻击拒绝；不触碰实际用户素材或自启注册表。
