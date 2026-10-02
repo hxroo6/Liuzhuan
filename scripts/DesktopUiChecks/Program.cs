@@ -84,6 +84,74 @@ internal static class Program
             using var stream=File.Create(Path.Combine(output,name)); encoder.Save(stream);
         }
         Render("desktop-default.png");
+        void SelectionAction(string method) => typeof(MainWindow).GetMethod(method, BindingFlags.Instance | BindingFlags.NonPublic)!
+            .Invoke(window, new object[] { window, new RoutedEventArgs() });
+        grid.SelectAll();
+        Check(((Border)window.FindName("SelectionBar")).Visibility == Visibility.Visible && grid.SelectedItems.Count == grid.Items.Count,
+            "selection toolbar shows the full current selection");
+        Check(!((Button)window.FindName("SelectionCopyButton")).IsEnabled || args.Length <= 1,
+            "mixed file and text selection directs users to save instead of partial copy");
+        Render("desktop-batch-selection.png");
+        SelectionAction("InvertSelection_Click");
+        Check(grid.SelectedItems.Count == 0 && ((Border)window.FindName("SelectionBar")).Visibility == Visibility.Collapsed,
+            "inverting all selected items clears selection and toolbar");
+        grid.SelectedItem = grid.Items[1];
+        SelectionAction("InvertSelection_Click");
+        Check(grid.SelectedItems.Count == grid.Items.Count - 1 && !grid.SelectedItems.Contains(grid.Items[1]),
+            "inverting a subset selects only the remaining visible materials");
+        SelectionAction("FavoriteSelection_Click");
+        Check(grid.SelectedItems.Cast<MaterialItem>().All(x => x.IsFavorite) && (string)((Button)window.FindName("SelectionFavoriteButton")).Content == "取消收藏",
+            "batch favorite updates selected items and the action state");
+        SelectionAction("FavoriteSelection_Click");
+        Check(store.Items.All(x => !x.IsFavorite), "batch unfavorite restores material state");
+        SelectionAction("ClearSelection_Click");
+        var exportPreview = new Liuzhuan.Views.MaterialExportWindow(MaterialExportService.Snapshot(store.Items));
+        var exportRoot = (FrameworkElement)exportPreview.Content;
+        exportRoot.Measure(new Size(560, 460)); exportRoot.Arrange(new Rect(0, 0, 560, 460)); exportRoot.UpdateLayout();
+        var exportShot = new RenderTargetBitmap(560, 460, 96, 96, PixelFormats.Pbgra32); exportShot.Render(exportRoot);
+        var exportEncoder = new PngBitmapEncoder(); exportEncoder.Frames.Add(BitmapFrame.Create(exportShot));
+        using (var exportFile = File.Create(Path.Combine(output, "desktop-selection-export.png"))) exportEncoder.Save(exportFile);
+        Check(((TextBlock)exportPreview.FindName("Summary")).Text.Contains(store.Items.Count.ToString()), "save dialog captures the selected material count");
+        var textSelection = store.Items.Where(x => !x.IsFile).Take(2).ToList();
+        Check(DragDropService.TryCreateSelectionData(textSelection, out var textData, out _) &&
+            (string)textData.GetData(DataFormats.UnicodeText) == string.Join(Environment.NewLine + Environment.NewLine, textSelection.Select(x => x.TextContent)),
+            "batch text drag data preserves complete content and visible order");
+        if (args.Length > 1)
+        {
+            var filesSelection = new List<MaterialItem> { new() { Type=MaterialType.Image, FilePath=args[1] }, new() { Type=MaterialType.Other, FilePath=typeof(MainWindow).Assembly.Location } };
+            Check(DragDropService.TryCreateSelectionData(filesSelection, out var filesData, out _) && ((string[])filesData.GetData(DataFormats.FileDrop)).Length == 2,
+                "batch file drag data contains every selected source file");
+            filesSelection.Add(textSelection[0]);
+            Check(!DragDropService.TryCreateSelectionData(filesSelection, out _, out _), "mixed selection cannot silently export only some drag data");
+            filesSelection.RemoveAt(2); filesSelection[1].FilePath = Path.Combine(output, "missing-source.bin");
+            Check(!DragDropService.TryCreateSelectionData(filesSelection, out _, out _), "missing source blocks the entire batch drag");
+        }
+        // 缺失文件避免单击分支改写用户剪贴板；只驱动选择与卡片鼠标处理。
+        var missingCards = new[] {
+            store.Add(new MaterialItem { Type=MaterialType.Other, DisplayName="missing-one.bin", FilePath=Path.Combine(output,"missing-one.bin") }),
+            store.Add(new MaterialItem { Type=MaterialType.Other, DisplayName="missing-two.bin", FilePath=Path.Combine(output,"missing-two.bin") }) };
+        Invoke("RefreshView");
+        foreach (var clicked in missingCards)
+        {
+            grid.UnselectAll();
+            foreach (var card in missingCards) grid.SelectedItems.Add(card);
+            var cardBorder = new Border { DataContext=clicked };
+            var press = new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, System.Windows.Input.MouseButton.Left)
+                { RoutedEvent=System.Windows.Input.Mouse.MouseDownEvent, Source=cardBorder };
+            typeof(MainWindow).GetMethod("Card_MouseLeftButtonDown",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(window,new object[]{cardBorder,press});
+            Check(press.Handled && grid.SelectedItems.Count == 2, "pressing a selected card retains the whole group for dragging");
+            var release = new System.Windows.Input.MouseButtonEventArgs(System.Windows.Input.Mouse.PrimaryDevice, Environment.TickCount, System.Windows.Input.MouseButton.Left);
+            typeof(MainWindow).GetMethod("Card_MouseLeftButtonUp",BindingFlags.Instance|BindingFlags.NonPublic)!.Invoke(window,new object[]{cardBorder,release});
+            Check(grid.SelectedItems.Count == 1 && ReferenceEquals(grid.SelectedItem, clicked), "single click release reduces a group to exactly the clicked card");
+        }
+        store.RemoveMultiple(missingCards.Select(x=>x.Id).ToList()); Invoke("RefreshView");
+        var filterBox = (TextBox)window.FindName("SearchBox");
+        filterBox.Text = "灵感笔记 2"; SelectionAction("SelectAll_Click");
+        Check(grid.SelectedItems.Count == 1 && grid.Items.Count == 1, "select all respects the current search results");
+        SelectionAction("InvertSelection_Click");
+        Check(grid.SelectedItems.Count == 0, "invert cannot select hidden search results");
+        filterBox.Clear();
+        Render("desktop-default.png"); // 搜索会回收容器，先完成布局再检查图像元素。
         Image? FindThumbnail(DependencyObject parent)
         {
             if (parent is Image image && image.Name == "ThumbImage") return image;

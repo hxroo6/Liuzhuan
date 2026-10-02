@@ -1,0 +1,29 @@
+<Window x:Class="Liuzhuan.Views.MaterialExportWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="另存选中素材" Width="560" Height="460" MinWidth="500" MinHeight="420" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="13">
+    <Grid Margin="24" Background="{StaticResource PanelBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="把这组素材带走" FontSize="24" FontWeight="SemiBold"/>
+            <TextBlock x:Name="Summary" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,8,0,20"/>
+            <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="16">
+                <StackPanel>
+                    <TextBlock Text="保存位置" FontSize="14" FontWeight="SemiBold"/>
+                    <DockPanel Margin="0,10,0,0">
+                        <Button x:Name="BrowseButton" DockPanel.Dock="Right" Content="选择…" Click="Browse_Click" Style="{StaticResource ActionButtonStyle}" Padding="12,9" Margin="8,0,0,0"/>
+                        <TextBox x:Name="Destination" Padding="8" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" CaretBrush="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}" VerticalContentAlignment="Center" AutomationProperties.Name="素材保存位置"/>
+                    </DockPanel>
+                    <TextBlock Text="在所选位置创建独立文件夹，同名自动编号。文字保存为 TXT，原文件保持完整。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,0"/>
+                </StackPanel>
+            </Border>
+            <TextBlock Text="适合整理与交付素材。换机复用整个素材库和配置，请使用设置中的「迁移与备份」。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,14,0,0"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1" Margin="0,16,0,0">
+            <ProgressBar x:Name="Progress" Height="5" Foreground="{StaticResource AccentBrush}" Minimum="0" Maximum="100" Visibility="Collapsed"/>
+            <TextBlock x:Name="Status" Text="选择保存位置后，点击另存。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,14" MaxHeight="70"/>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                <Button x:Name="OpenButton" Content="打开文件夹" Click="Open_Click" Visibility="Collapsed" Style="{StaticResource ActionButtonStyle}" Padding="14,9" Margin="0,0,8,0"/>
+                <Button x:Name="CloseButton" Content="关闭" Click="Close_Click" Style="{StaticResource ActionButtonStyle}" Padding="14,9" Margin="0,0,8,0"/>
+                <Button x:Name="SaveButton" Content="另存素材" Click="Save_Click" Style="{StaticResource ActionButtonStyle}" Padding="14,9"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

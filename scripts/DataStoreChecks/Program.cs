@@ -1,0 +1,216 @@
+using System.IO;
+using Liuzhuan;
+using Liuzhuan.Models;
+using Liuzhuan.Services;
+
+internal static class Program
+{
+    private static int _checks;
+
+    private static void Main()
+    {
+        var root = Path.Combine(Path.GetTempPath(), "liuzhuan-datastore-check-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Liuzhuan.Utils.Logger.Init(root);
+
+        void Scenario(string name, Action<DataStore> test)
+        {
+            var dataDir = Path.Combine(root, name);
+            Directory.CreateDirectory(dataDir);
+            // Never construct App or invoke OnStartup: every store writes only to this isolated directory.
+            typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null, dataDir);
+            using var store = new DataStore();
+            test(store);
+        }
+
+        Scenario("undo-single", store =>
+        {
+            var item = Text("one");
+            store.Add(item);
+            var events = Observe(store);
+            store.Remove(item.Id);
+            events.Clear();
+            var sequence = store.CurrentSequence;
+            Check(store.Undo(), "undo consumes the latest deletion");
+            Check(events.SequenceEqual(new[] { new Change("add", item.Id, sequence + 1) }), "undo emits one new add event with a fresh sequence");
+            Check(ReferenceEquals(store.Items.Single(), item), "undo retains the original material and timestamp");
+            Check(!store.CanUndo && !store.Undo(), "empty undo history makes no changes");
+        });
+
+        Scenario("undo-batch", store =>
+        {
+            var originals = Seed(store, "a", "b", "c", "d", "e");
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            // Caller order and duplicate IDs must not change library order or duplicate events.
+            store.RemoveMultiple(new() { "d", "b", "b", "unknown" });
+            Check(events.SequenceEqual(new[] { new Change("remove", "b", sequence + 1), new Change("remove", "d", sequence + 2) }), "batch deletion emits distinct IDs with continuous sequences");
+            Check(Ids(store).SequenceEqual(new[] { "a", "c", "e" }), "batch deletion leaves unrelated materials in order");
+            store.Add(Text("new"));
+            events.Clear();
+            sequence = store.CurrentSequence;
+            store.Undo();
+            Check(Ids(store).SequenceEqual(new[] { "new", "a", "b", "c", "d", "e" }), "undo restores original positions while retaining newly added materials first");
+            Check(events.SequenceEqual(new[] { new Change("add", "d", sequence + 1), new Change("add", "b", sequence + 2) }), "batch undo broadcasts older restorations first with distinct sequences");
+            Check(store.Items.Where(x => originals.Contains(x)).All(x => x.AddedTime == originals.First(o => o.Id == x.Id).AddedTime), "batch undo preserves material timestamps");
+        });
+
+        Scenario("undo-duplicate", store =>
+        {
+            var originals = Seed(store, "a", "b", "c");
+            store.RemoveMultiple(new() { "b", "c" });
+            var replacement = Text("b", "replacement");
+            store.Add(replacement);
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            store.Undo();
+            Check(store.Items.Count(x => x.Id == "b") == 1 && ReferenceEquals(store.Items.First(x => x.Id == "b"), replacement), "undo never replaces or duplicates an ID re-added since deletion");
+            Check(events.SequenceEqual(new[] { new Change("add", "c", sequence + 1) }), "skipped duplicate IDs emit no event and consume no sequence");
+            Check(ReferenceEquals(store.Items.First(x => x.Id == "c"), originals[2]), "non-conflicting materials still restore");
+        });
+
+        Scenario("clear-type", store =>
+        {
+            store.Add(Text("other"));
+            store.Add(new MaterialItem { Id = "image-favorite", Type = MaterialType.Image, FilePath = "favorite.png", IsFavorite = true });
+            store.Add(new MaterialItem { Id = "image-remove", Type = MaterialType.Image, FilePath = "remove.png" });
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            store.ClearByType(MaterialType.Image);
+            Check(Ids(store).SequenceEqual(new[] { "image-favorite", "other" }), "category clear preserves favorites and other types");
+            Check(events.SequenceEqual(new[] { new Change("remove", "image-remove", sequence + 1) }), "partial category clear broadcasts deletion instead of a global clear");
+            events.Clear();
+            store.Undo();
+            Check(Ids(store).SequenceEqual(new[] { "image-remove", "image-favorite", "other" }) && events.Count == 1 && events[0].Kind == "add", "category clear can be undone and mirrored incrementally");
+        });
+
+        Scenario("clear-favorites", store =>
+        {
+            Seed(store, "a", "b", "c", "d");
+            store.SetFavorite("b", true);
+            store.SetFavorite("d", true);
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            store.ClearAll();
+            Check(Ids(store).SequenceEqual(new[] { "b", "d" }), "clear all preserves favorites on the computer");
+            Check(events.SequenceEqual(new[] { new Change("remove", "a", sequence + 1), new Change("remove", "c", sequence + 2) }), "clear all with favorites sends only removed IDs");
+            store.Undo();
+            Check(Ids(store).SequenceEqual(new[] { "a", "b", "c", "d" }), "undo clear restores favorite and ordinary material order");
+        });
+
+        Scenario("clear-empty", store =>
+        {
+            Seed(store, "a", "b", "c");
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            store.ClearAll();
+            Check(store.Items.Count == 0 && events.SequenceEqual(new[] { new Change("clear", "", sequence + 1) }), "true global clear emits one clear event and one sequence");
+            store.Add(Text("new"));
+            store.Undo();
+            Check(Ids(store).SequenceEqual(new[] { "new", "a", "b", "c" }), "undo an emptied library appends older restored materials behind new arrivals");
+        });
+
+        Scenario("no-op", store =>
+        {
+            var favorite = Text("favorite");
+            favorite.IsFavorite = true;
+            store.Add(favorite);
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            store.Remove("unknown");
+            store.RemoveMultiple(new() { "unknown", "unknown" });
+            store.ClearByType(MaterialType.Image);
+            store.ClearAll();
+            Check(events.Count == 0 && store.CurrentSequence == sequence && !store.CanUndo, "no-op deletions and clears preserve sequences and undo history");
+        });
+
+        Scenario("bounded-history", store =>
+        {
+            Seed(store, Enumerable.Range(0, 55).Select(i => "item-" + i).ToArray());
+            for (var i = 0; i < 55; i++) store.Remove("item-" + i);
+            Check(store.UndoCount == 50, "deletion history remains bounded to 50 steps");
+            var allRetainedStepsRestore = true;
+            for (var i = 0; i < 50; i++) allRetainedStepsRestore &= store.Undo();
+            Check(allRetainedStepsRestore, "all 50 retained deletion steps can be undone");
+            Check(!store.Undo() && store.Items.Count == 50, "older discarded deletion steps cannot reappear");
+        });
+
+        Scenario("incremental-mirror", store =>
+        {
+            var mirror = new HashSet<string>(StringComparer.Ordinal);
+            var lastSequence = 0L;
+            var continuous = true;
+            void Next() { continuous &= store.CurrentSequence == lastSequence + 1; lastSequence = store.CurrentSequence; }
+            store.ItemAdded += item => { Next(); mirror.Add(item.Id); };
+            store.ItemRemoved += id => { Next(); mirror.Remove(id); };
+            store.ItemCleared += () => { Next(); mirror.Clear(); };
+            var random = new Random(5319);
+            var nextId = 0;
+            var consistent = true;
+            for (var i = 0; i < 150; i++)
+            {
+                var ids = Ids(store).ToArray();
+                switch (random.Next(7))
+                {
+                    case 0: store.Add(Text("random-" + nextId++)); break;
+                    case 1: store.Remove(ids.Length == 0 ? "missing" : ids[random.Next(ids.Length)]); break;
+                    case 2: store.RemoveMultiple(ids.Where(_ => random.Next(2) == 0).ToList()); break;
+                    case 3: store.ClearByType(MaterialType.Text); break;
+                    case 4: store.ClearAll(); break;
+                    case 5: store.Undo(); break;
+                    case 6: if (ids.Length > 0) store.SetFavorite(ids[random.Next(ids.Length)], random.Next(2) == 0); break;
+                }
+                consistent &= mirror.SetEquals(Ids(store));
+            }
+            Check(consistent, "a delta-only remote mirror matches the store after 150 mixed operations");
+            Check(continuous && lastSequence == store.CurrentSequence, "mixed operations emit exactly one continuous sequence per actual event");
+        });
+
+        Scenario("original-file", store =>
+        {
+            var path = Path.Combine(root, "original.bin");
+            File.WriteAllBytes(path, new byte[] { 0, 1, 2, 127, 255 });
+            var item = new MaterialItem { Id = "file", Type = MaterialType.Other, FilePath = path, DisplayName = "original", ThumbnailPath = "thumbnail", IsFavorite = true };
+            store.Add(item);
+            store.Remove("file");
+            Check(File.ReadAllBytes(path).SequenceEqual(new byte[] { 0, 1, 2, 127, 255 }), "deletion preserves original file bytes");
+            store.Undo();
+            Check(ReferenceEquals(store.Items.Single(), item) && item.IsFavorite && item.ThumbnailPath == "thumbnail", "undo retains favorites, source paths and thumbnail metadata");
+        });
+        Scenario("original-file", store =>
+        {
+            Check(store.Items.Count == 1 && store.Items[0].Id == "file" && store.Items[0].IsFavorite && File.Exists(store.Items[0].FilePath), "restored materials persist and reload from the isolated library");
+        });
+
+        Console.WriteLine($"PASS {_checks} data-store checks; isolated artifacts: {root}");
+    }
+
+    private static MaterialItem Text(string id, string? content = null) => new() { Id = id, Type = MaterialType.Text, DisplayName = id, TextContent = content ?? id };
+
+    private static MaterialItem[] Seed(DataStore store, params string[] ids)
+    {
+        var items = ids.Select((id, i) => new MaterialItem { Id = id, Type = MaterialType.Text, DisplayName = id, TextContent = id, AddedTime = new DateTime(2026, 1, 1).AddMinutes(-i) }).ToArray();
+        foreach (var item in items.Reverse()) store.Add(item);
+        return items;
+    }
+
+    private static IEnumerable<string> Ids(DataStore store) => store.Items.Select(x => x.Id);
+
+    private static List<Change> Observe(DataStore store)
+    {
+        var events = new List<Change>();
+        store.ItemAdded += item => events.Add(new("add", item.Id, store.CurrentSequence));
+        store.ItemRemoved += id => events.Add(new("remove", id, store.CurrentSequence));
+        store.ItemCleared += () => events.Add(new("clear", "", store.CurrentSequence));
+        return events;
+    }
+
+    private static void Check(bool condition, string message)
+    {
+        if (!condition) throw new InvalidOperationException(message);
+        _checks++;
+        Console.WriteLine("PASS " + message);
+    }
+
+    private sealed record Change(string Kind, string Id, long Sequence);
+}

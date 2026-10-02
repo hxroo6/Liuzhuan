@@ -10,6 +10,15 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## v1.4.0: batch organization and saving a selection (local build)
+
+- Ctrl/Shift-select materials to reveal copy, favorite, save, and remove actions. Select all, invert, and clear operate within the current category and search results.
+- Drag multiple files together, or combine selected text in list order. Mixed files and text can be saved together to a folder.
+- **Save selected materials** creates a separate folder with collision-safe names. Materials with source paths preserve complete original bytes, while plain text becomes UTF-8 TXT. Includes progress, cancellation, and opening the result folder; originals are retained.
+- Fix undo not restoring materials on connected phones, and partial/category clears incorrectly clearing unrelated phone materials or favorites.
+
+Shortcuts: Ctrl+A select all, Ctrl+C copy, Ctrl+Shift+S save, Del remove, Ctrl+Z undo, and Esc clear selection. Save is for organizing or delivering a selection; use Migration and Backup when moving the entire library and configuration. Failed/cancelled saves attempt to remove their output; locked files may leave remnants and are reported as incomplete. End-to-end device behavior still requires verification.
+
 ## v1.3.1: stable dragging and edge snapping
 
 - Fix obsolete queued animations moving content out of view after dragging or rapid expand/collapse, leaving only a dark panel.

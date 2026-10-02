@@ -31,7 +31,9 @@ public class DataStore : IDisposable
     private bool _disposed;
 
     // 删除撤回历史（最多50步）
-    private readonly List<List<MaterialItem>> _undoStack = new();
+    private sealed record RemovedItem(MaterialItem Item, int OriginalIndex);
+    private sealed record UndoStep(List<RemovedItem> Removed, string[] OriginalOrder);
+    private readonly List<UndoStep> _undoStack = new();
     private const int MaxUndoSteps = 50;
 
     // 变更序号（用于 LAN 增量同步的 gap 检测；内存计数，重启归零）
@@ -127,36 +129,21 @@ public class DataStore : IDisposable
         var item = _items.FirstOrDefault(x => x.Id == id);
         if (item != null)
         {
-            NextSequence();
-            PushUndo(new List<MaterialItem> { item });
-            _items.Remove(item);
-            ScheduleSave();
+            RemoveItems(new List<MaterialItem> { item });
             Logger.Run("DataStore: removed item Id={0} Name={1}", id, item.DisplayName);
-            ItemRemoved?.Invoke(id);
         }
     }
 
     /// <summary>批量删除多条素材（记录撤回）</summary>
     public void RemoveMultiple(List<string> ids)
     {
-        var removed = new List<MaterialItem>();
-        foreach (var id in ids)
-        {
-            var item = _items.FirstOrDefault(x => x.Id == id);
-            if (item != null)
-            {
-                removed.Add(item);
-                _items.Remove(item);
-            }
-        }
+        // Capture in library order, independently of selection order or repeated IDs.
+        var selectedIds = ids.ToHashSet(StringComparer.Ordinal);
+        var removed = _items.Where(x => selectedIds.Contains(x.Id)).ToList();
         if (removed.Count > 0)
         {
-            NextSequence();
-            PushUndo(removed);
-            ScheduleSave();
+            RemoveItems(removed);
             Logger.Run("DataStore: removed {0} items (batch)", removed.Count);
-            foreach (var item in removed)
-                ItemRemoved?.Invoke(item.Id);
         }
     }
 
@@ -165,20 +152,25 @@ public class DataStore : IDisposable
     {
         if (_undoStack.Count == 0) return false;
 
-        var restored = _undoStack[^1];
+        var step = _undoStack[^1];
         _undoStack.RemoveAt(_undoStack.Count - 1);
 
-        foreach (var item in restored)
+        var liveIds = _items.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
+        var restoredCount = 0;
+        // Older entries first keeps both insertion anchors and incremental broadcast order stable.
+        foreach (var removed in step.Removed.AsEnumerable().Reverse())
         {
-            // 避免重复
-            if (!_items.Any(x => x.Id == item.Id))
-            {
-                _items.Insert(0, item);
-            }
+            var item = removed.Item;
+            if (!liveIds.Add(item.Id)) continue;
+
+            _items.Insert(GetRestoreIndex(step.OriginalOrder, removed.OriginalIndex), item);
+            NextSequence();
+            ItemAdded?.Invoke(item);
+            restoredCount++;
         }
 
-        ScheduleSave();
-        Logger.Run("DataStore: undo restored {0} items", restored.Count);
+        if (restoredCount > 0) ScheduleSave();
+        Logger.Run("DataStore: undo restored {0} items", restoredCount);
         return true;
     }
 
@@ -190,9 +182,49 @@ public class DataStore : IDisposable
 
     private void PushUndo(List<MaterialItem> removedItems)
     {
-        _undoStack.Add(removedItems);
+        var removedSet = removedItems.ToHashSet();
+        var removed = _items.Select((item, index) => new RemovedItem(item, index))
+            .Where(x => removedSet.Contains(x.Item)).ToList();
+        _undoStack.Add(new UndoStep(removed, _items.Select(x => x.Id).ToArray()));
         if (_undoStack.Count > MaxUndoSteps)
             _undoStack.RemoveAt(0);
+    }
+
+    private int GetRestoreIndex(string[] originalOrder, int originalIndex)
+    {
+        // Surviving neighbours preserve the old order even when new materials arrived since deletion.
+        for (var i = originalIndex + 1; i < originalOrder.Length; i++)
+        {
+            var next = _items.FirstOrDefault(x => x.Id == originalOrder[i]);
+            if (next != null) return _items.IndexOf(next);
+        }
+        for (var i = originalIndex - 1; i >= 0; i--)
+        {
+            var previous = _items.FirstOrDefault(x => x.Id == originalOrder[i]);
+            if (previous != null) return _items.IndexOf(previous) + 1;
+        }
+        return _items.Count;
+    }
+
+    private void RemoveItems(List<MaterialItem> removed, bool allowGlobalClear = false)
+    {
+        PushUndo(removed);
+        foreach (var item in removed) _items.Remove(item);
+        ScheduleSave();
+
+        if (allowGlobalClear && _items.Count == 0)
+        {
+            NextSequence();
+            ItemCleared?.Invoke();
+            return;
+        }
+
+        // Every transmitted delta gets its own sequence; partial clears must keep other IDs on phones.
+        foreach (var item in removed)
+        {
+            NextSequence();
+            ItemRemoved?.Invoke(item.Id);
+        }
     }
 
     /// <summary>清空指定分类的素材（记录撤回，收藏项不受影响）</summary>
@@ -201,13 +233,8 @@ public class DataStore : IDisposable
         var toRemove = _items.Where(x => x.Type == type && !x.IsFavorite).ToList();
         if (toRemove.Count > 0)
         {
-            NextSequence();
-            PushUndo(toRemove);
-            foreach (var item in toRemove)
-                _items.Remove(item);
-            ScheduleSave();
+            RemoveItems(toRemove, allowGlobalClear: true);
             Logger.Run("DataStore: cleared type={0}, count={1} (favorites kept)", type, toRemove.Count);
-            ItemCleared?.Invoke();
         }
     }
 
@@ -217,13 +244,8 @@ public class DataStore : IDisposable
         var toRemove = _items.Where(x => !x.IsFavorite).ToList();
         if (toRemove.Count > 0)
         {
-            NextSequence();
-            PushUndo(toRemove);
-            foreach (var item in toRemove)
-                _items.Remove(item);
-            ScheduleSave();
+            RemoveItems(toRemove, allowGlobalClear: true);
             Logger.Run("DataStore: cleared all, count={0} (favorites kept)", toRemove.Count);
-            ItemCleared?.Invoke();
         }
     }
 

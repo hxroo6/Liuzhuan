@@ -674,6 +674,10 @@ public partial class MainWindow : Window
     private void ManageBtn_Click(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu();
+        var select = new MenuItem { Header = "全选当前列表 · Ctrl+A", IsEnabled = _currentView.Count > 0 };
+        select.Click += SelectAll_Click;
+        menu.Items.Add(select);
+        menu.Items.Add(new Separator());
         var current = new MenuItem { Header = "清空当前分类…" };
         current.Click += ClearCurrentBtn_Click;
         var all = new MenuItem { Header = "清空全部素材…" };
@@ -692,7 +696,9 @@ public partial class MainWindow : Window
 
     private void MaterialSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
+        if (_changingSelection) return;
         if (StatusText != null) UpdateStatusText();
+        UpdateSelectionBar();
     }
 
     #endregion
@@ -789,6 +795,7 @@ public partial class MainWindow : Window
         EmptyTitle.Text = _searchKeyword.Length > 0 ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
         EmptyDescription.Text = _searchKeyword.Length > 0 ? "试试更短的关键词，或清除搜索" : _currentTab == "Favorites" ? "点击素材上的星标，常用内容随时取用" : "拖入文件，或点击上方「添加文件」";
         UpdateStatusText();
+        UpdateSelectionBar();
     }
 
     private void UpdateStatusText()
@@ -870,6 +877,12 @@ public partial class MainWindow : Window
             _dragItem = item;
             _isDragging = false;
             _clickStartTime = DateTime.Now;
+            // 在已选组合上按下时先保留多选，才能拖出整组；普通单击释放再改为单选。
+            if (Keyboard.Modifiers == ModifierKeys.None && GetSelectedItems().Count > 1 && GetSelectedItems().Contains(item))
+            {
+                GetActiveListView()?.Focus();
+                e.Handled = true;
+            }
 
             // 检测双击：同一项目 500ms 内再次按下
             var now = DateTime.Now;
@@ -896,6 +909,8 @@ public partial class MainWindow : Window
     {
         if (_dragItem != null && !_isDragging && Keyboard.Modifiers == ModifierKeys.None)
         {
+            var list = GetActiveListView();
+            if (list != null) { list.UnselectAll(); list.SelectedItem = _dragItem; }
             // 单击复制到剪贴板
             CopyItemToClipboard(_dragItem);
         }
@@ -1047,11 +1062,12 @@ public partial class MainWindow : Window
             if (view.ItemContainerGenerator.ContainerFromItem(item) is ListViewItem container) UiMotion.Reset(container, immediately: true);
         try
         {
-            var data = DragDropService.CreateDragOutData(item);
-            var effects = DragDropService.GetDragOutEffects(item);
-            if (effects == DragDropEffects.None) return;
-            Logger.Run("DragOut: Type={0} Name={1}", item.Type, item.DisplayName);
-            DragDrop.DoDragDrop((DependencyObject)this, data, effects);
+            var selected = GetSelectedItems();
+            var targets = selected.Count > 1 && selected.Contains(item) ? selected : new List<MaterialItem> { item };
+            if (!DragDropService.TryCreateSelectionData(targets, out var data, out var error))
+            { ShowFeedback(error); return; }
+            Logger.Run("DragOut: {0} selected items", targets.Count);
+            DragDrop.DoDragDrop(this, data, DragDropEffects.Copy);
         }
         catch (Exception ex)
         {
@@ -1089,6 +1105,14 @@ public partial class MainWindow : Window
         // 收集选中的项
         var selectedItems = GetSelectedItems();
         var targetItems = selectedItems.Count > 1 && selectedItems.Contains(item) ? selectedItems : new List<MaterialItem> { item };
+
+        var copyItem = new MenuItem { Header = $"复制（{targetItems.Count} 项）" };
+        copyItem.Click += (_, _) => CopySelection(targetItems);
+        menu.Items.Add(copyItem);
+        var exportItem = new MenuItem { Header = $"另存到文件夹…（{targetItems.Count} 项）" };
+        exportItem.Click += (_, _) => ExportSelection(targetItems);
+        menu.Items.Add(exportItem);
+        menu.Items.Add(new Separator());
 
         // 删除
         var deleteItem = new MenuItem { Header = $"删除选中（{targetItems.Count} 项）", Foreground = (Brush)FindResource("TextBrush") };
@@ -1146,15 +1170,9 @@ public partial class MainWindow : Window
 
     private List<MaterialItem> GetSelectedItems()
     {
-        var result = new List<MaterialItem>();
         var activeList = GetActiveListView();
-        if (activeList?.SelectedItems != null)
-        {
-            foreach (var sel in activeList.SelectedItems)
-                if (sel is MaterialItem mi)
-                    result.Add(mi);
-        }
-        return result;
+        // 批量复制、另存和拖出始终遵循当前列表顺序。
+        return activeList == null ? new() : _currentView.Where(x => activeList.SelectedItems.Contains(x)).ToList();
     }
 
     private ListView? GetActiveListView()
@@ -1186,6 +1204,7 @@ public partial class MainWindow : Window
                 _dataStore.SetFavorite(id, !item.IsFavorite);
                 ShowFeedback(item.IsFavorite ? "已加入收藏" : "已取消收藏");
                 if (_currentTab == "Favorites") RefreshView();
+                UpdateSelectionBar();
                 // INotifyPropertyChanged 会自动更新星星 UI
                 Logger.Run("Favorite toggled: {0} -> {1}", item.DisplayName, !item.IsFavorite);
             }
@@ -1219,30 +1238,11 @@ public partial class MainWindow : Window
         { GetActiveListView()?.SelectAll(); e.Handled = true; return; }
         if (!SearchBox.IsKeyboardFocusWithin && e.Key == Key.C && Keyboard.Modifiers == ModifierKeys.Control)
         {
-            var selection = GetSelectedItems();
-            if (selection.Count == 1) CopyItemToClipboard(selection[0]);
-            else if (selection.Count > 1)
-            {
-                try
-                {
-                    if (selection.All(x => x.IsFile && File.Exists(x.FilePath)))
-                    {
-                        var files = new System.Collections.Specialized.StringCollection();
-                        files.AddRange(selection.Select(x => x.FilePath).ToArray());
-                        Clipboard.SetFileDropList(files);
-                        ShowFeedback($"已复制 {selection.Count} 个文件");
-                    }
-                    else if (selection.All(x => !x.IsFile))
-                    {
-                        Clipboard.SetText(string.Join(Environment.NewLine + Environment.NewLine, selection.Select(x => x.TextContent)));
-                        ShowFeedback($"已复制 {selection.Count} 段文字");
-                    }
-                    else ShowFeedback("请分别选择文件或文字后复制");
-                }
-                catch (Exception ex) { Logger.Error("Selection copy failed: {0}", ex.Message); ShowFeedback("复制失败，请稍后重试"); }
-            }
+            CopySelection(GetSelectedItems());
             e.Handled = true; return;
         }
+        if (!SearchBox.IsKeyboardFocusWithin && e.Key == Key.S && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
+        { ExportSelection(GetSelectedItems()); e.Handled = true; return; }
         // Del 键删除选中项（焦点不在搜索框时）
         if (e.Key == Key.Delete && !SearchBox.IsKeyboardFocusWithin)
         {
@@ -1666,7 +1666,7 @@ public partial class MainWindow : Window
         var appVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.2.0";
         var aboutItem = new MenuItem { Header = $"关于流转 v{appVersion}", Foreground = (Brush)FindResource("TextBrush") };
         aboutItem.Click += (s, e) => MessageBox.Show(
-            $"流转 v{appVersion}\n跨应用素材暂存中转站\n\n核心：拖拽暂存 · 即用即拖 · 不改动源文件\n\n快捷键：\nDel — 删除选中\nCtrl+Z — 撤回删除\nCtrl+V — 粘贴剪贴板\nCtrl+F — 搜索",
+            $"流转 v{appVersion}\n跨应用素材暂存中转站\n\n核心：拖拽暂存 · 即用即拖 · 不改动源文件\n\n快捷键：\nCtrl+A — 全选当前列表\nCtrl+C — 复制选中素材\nCtrl+Shift+S — 另存选中素材\nDel — 移除选中\nCtrl+Z — 撤回删除\nCtrl+V — 粘贴剪贴板\nCtrl+F — 搜索\nCtrl/Shift + 单击 — 多选",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
         menu.Items.Add(aboutItem);
 

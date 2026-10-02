@@ -384,6 +384,22 @@
 
                 <Border Grid.Row="3" Background="{StaticResource PanelLightBrush}" Padding="12,8,12,10">
                     <StackPanel>
+                        <Border x:Name="SelectionBar" Visibility="Collapsed" Background="#243F3E" CornerRadius="10" Padding="10,8" Margin="0,0,0,8">
+                            <StackPanel>
+                                <DockPanel Margin="0,0,0,7">
+                                    <Button DockPanel.Dock="Right" Content="取消" Click="ClearSelection_Click" Style="{StaticResource IconButtonStyle}" Width="34" Height="20" FontSize="11" ToolTip="取消选择 · Esc"/>
+                                    <Button DockPanel.Dock="Right" Content="反选" Click="InvertSelection_Click" Style="{StaticResource IconButtonStyle}" Width="34" Height="20" FontSize="11" Margin="0,0,4,0" ToolTip="反选当前搜索和分类中的素材"/>
+                                    <Button DockPanel.Dock="Right" Content="全选" Click="SelectAll_Click" Style="{StaticResource IconButtonStyle}" Width="34" Height="20" FontSize="11" Margin="0,0,4,0" ToolTip="全选当前列表 · Ctrl+A"/>
+                                    <TextBlock x:Name="SelectionCountText" Foreground="{StaticResource AccentBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                                </DockPanel>
+                                <UniformGrid Rows="1" Columns="4">
+                                    <Button x:Name="SelectionCopyButton" Content="复制" Click="CopySelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0" ToolTip="批量复制 · Ctrl+C"/>
+                                    <Button x:Name="SelectionFavoriteButton" Content="收藏" Click="FavoriteSelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0"/>
+                                    <Button x:Name="SelectionExportButton" Content="另存…" Click="ExportSelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0" ToolTip="将选中素材复制到独立文件夹 · Ctrl+Shift+S"/>
+                                    <Button Content="移除" Click="RemoveSelection_Click" Style="{StaticResource ActionButtonStyle}" Foreground="{StaticResource ErrorBrush}" Background="#4B3537" Padding="6,6" ToolTip="移除选中索引，可撤回；保留原文件 · Del"/>
+                                </UniformGrid>
+                            </StackPanel>
+                        </Border>
                         <TextBlock x:Name="FeedbackText" Text="单击复制 · 拖出使用 · 右键更多" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Content="更多" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Click="ManageBtn_Click" ToolTip="清空分类与全部清空"/>

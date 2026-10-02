@@ -205,3 +205,10 @@
 - BeginWindowDrag 暂停热区与收起定时器、取消主面板动画并恢复完整布局；拖动中不响应伸缩，EndWindowDrag 统一贴边并恢复定时器。右侧释放保持展开，移开鼠标后按原延迟收起。
 - 贴边工作区按窗口所在显示器及其当前缩放换算为 DIP；热区只响应同一显示器，不因鼠标换屏移动窗口。显示器变化时重新定位，清除旧左锚定状态。
 - DesktopUiChecks 新增排队后归零、同帧收起展开、属性间动画独立、拖动中保持可见等回归，完整 43 项通过；150% 离屏渲染完整。真实鼠标跨屏、混合 DPI 和显卡合成仍需实机验证。
+
+### 批量操作与内容另存（电脑端 v1.4.0 本地版本）
+- MainWindow.Selection 管理可见列表的选择栏和操作；按当前视图顺序取得选中项。搜索及分类只操作当前结果；卡片按下保留多选以拖出，普通松开转为单项复制。
+- DragDropService.TryCreateSelectionData 供批量复制和拖出共用；全部文件提供 FileDrop，全部文字按顺序组合 UnicodeText，混选/缺失文件拒绝整体操作并提示另存。
+- MaterialExportWindow 捕获不可变快照后调用 MaterialExportService。后台生成独立子目录，顺序流式复制；有 FilePath 的文字素材复制全文原文件，纯文本按 UTF-8 编码。每项状态和节流字节进度反馈至 UI，取消按缓冲检查；仅清理记录在案的输出，不递归删除目标目录。
+- DataStore 撤回记录原始顺序及位置；恢复逐条递增 sequence 并发 ItemAdded。批量删除逐条序号；保留其他项的清空使用 ItemRemoved，真正删空才使用 ItemCleared。现有 Android 协议兼容，删除后的 gap 可触发既有快照重同步。
+- 自动检查入口：DesktopUiChecks（界面/选择/拖拽数据/动画）、MaterialExportChecks（临时文件字节与路径/取消）、DataStoreChecks（增量镜像及撤回顺序）。均使用隔离内容，不启动实际素材库。

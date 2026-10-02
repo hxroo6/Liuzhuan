@@ -366,6 +366,26 @@ public static class DragDropService
         return DragDropEffects.Copy;
     }
 
+    /// <summary>批量复制与拖出共用数据。缺失文件或混选时拒绝整体操作，避免静默遗漏。</summary>
+    public static bool TryCreateSelectionData(IReadOnlyList<MaterialItem> items, out DataObject data, out string error)
+    {
+        data = new DataObject(); error = "";
+        if (items.Count == 0) { error = "先选择素材"; return false; }
+        if (items.All(x => x.IsFile))
+        {
+            if (items.Any(x => !File.Exists(x.FilePath))) { error = "部分原文件已移动或不存在，请重新添加后再试"; return false; }
+            data.SetData(DataFormats.FileDrop, items.Select(x => x.FilePath).Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+        }
+        else if (items.All(x => !x.IsFile))
+        {
+            var text = string.Join(Environment.NewLine + Environment.NewLine, items.Select(x => x.TextContent));
+            data.SetData(DataFormats.Text, text);
+            data.SetData(DataFormats.UnicodeText, text);
+        }
+        else { error = "文件与文字请分别复制或拖出，也可一起另存到文件夹"; return false; }
+        return true;
+    }
+
     #region Private helpers
 
     #region Win32 Clipboard CF_DIB → PNG
