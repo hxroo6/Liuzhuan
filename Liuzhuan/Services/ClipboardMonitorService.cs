@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Windows;
 using System.Windows.Interop;
 using Liuzhuan.Utils;
@@ -17,12 +18,13 @@ public class ClipboardMonitorService
     private HwndSource? _source;
     private Action<string>? _onText;
     private string _lastText = "";
-    private long _lastTime;
+    private IntPtr _hwnd;
 
     /// <summary>启动监听（需要窗口句柄；开启时自动读取一次当前剪贴板）</summary>
-    public void Start(IntPtr hwnd, Action<string> onText)
+    public void Start(IntPtr hwnd, Action<string> onText, bool readCurrent = true)
     {
         Stop();
+        _hwnd = hwnd;
         _onText = onText;
         _source = HwndSource.FromHwnd(hwnd);
         _source?.AddHook(WndProc);
@@ -30,7 +32,7 @@ public class ClipboardMonitorService
         {
             Logger.Run("ClipboardMonitor: listening (WM_CLIPBOARDUPDATE)");
             // 开启瞬间读取一次当前剪贴板
-            ReadClipboard("start");
+            if (readCurrent) ReadClipboard("start");
         }
         else
         {
@@ -42,10 +44,12 @@ public class ClipboardMonitorService
     {
         if (_source != null)
         {
+            RemoveClipboardFormatListener(_hwnd);
             _source.RemoveHook(WndProc);
             _source = null;
         }
         _onText = null;
+        _hwnd = IntPtr.Zero;
         Logger.Run("ClipboardMonitor: stopped");
     }
 
@@ -62,16 +66,31 @@ public class ClipboardMonitorService
     {
         try
         {
+            if (AppSettings.IsClipboardPaused || AppSettings.ClipboardPrivacyLoadError != null) return;
+            var clipboardSequence = GetClipboardSequenceNumber();
+            var owner = GetClipboardOwner();
+            GetWindowThreadProcessId(owner, out var processId);
+            // Do not recapture this app's explicit copy operations.
+            if (processId == Environment.ProcessId) return;
+            string? ownerApp = null;
+            if (processId > 0)
+            {
+                try { using var process = Process.GetProcessById((int)processId); ownerApp = process.ProcessName + ".exe"; }
+                catch { /* exited or inaccessible owner remains unknown */ }
+            }
+            if (!ClipboardPrivacyPolicy.ShouldCapture(DateTimeOffset.UtcNow, AppSettings.ClipboardPausedUntil,
+                AppSettings.ExcludedClipboardApps, ownerApp)) return;
             var text = Clipboard.GetText().Trim();
+            // Ownership and content must come from the same clipboard update.
+            if (clipboardSequence != GetClipboardSequenceNumber()) return;
+            // Delayed clipboard rendering can pump STA messages, including a privacy change.
+            if (AppSettings.ClipboardPrivacyLoadError != null || !ClipboardPrivacyPolicy.ShouldCapture(
+                DateTimeOffset.UtcNow, AppSettings.ClipboardPausedUntil, AppSettings.ExcludedClipboardApps, ownerApp)) return;
             if (text.Length < 2) return;
-
-            var now = Environment.TickCount64;
-            // 去重：内容相同（流转自身复制也会触发）或 600ms 内重复 → 忽略
+            // Suppress duplicate notifications, while retaining distinct rapid copies.
             if (text == _lastText) return;
-            if (now - _lastTime < 600) return;
 
             _lastText = text;
-            _lastTime = now;
             Logger.Run("ClipboardMonitor: captured ({0}) len={1}", trigger, text.Length);
             _onText?.Invoke(text);
         }
@@ -88,5 +107,11 @@ public class ClipboardMonitorService
 
     [DllImport("user32.dll", SetLastError = true)]
     private static extern bool RemoveClipboardFormatListener(IntPtr hwnd);
+    [DllImport("user32.dll")]
+    private static extern IntPtr GetClipboardOwner();
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(IntPtr hwnd, out uint processId);
+    [DllImport("user32.dll")]
+    private static extern uint GetClipboardSequenceNumber();
     #endregion
 }

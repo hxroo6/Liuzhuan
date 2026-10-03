@@ -43,8 +43,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -280,7 +282,6 @@ fun MainScreen(
         materials.filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50)
     }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
-    var autoSend by remember { mutableStateOf(true) }
 
     fun selectPage(page: Int) {
         if (selectedTab == page) return
@@ -334,8 +335,9 @@ fun MainScreen(
             ip = s.serverIp
             port = s.serverPort
             password = s.password
-            autoSend = s.autoSendClipboard
-            LanHub.autoSendClipboard = s.autoSendClipboard // 同步给无障碍服务
+            withContext(Dispatchers.IO) {
+                com.liuzhuan.app.clipboard.ClipboardPrivacy.migrateLegacyAutomaticEnabled(s.autoSendClipboard)
+            }
         }
     }
 
@@ -348,7 +350,7 @@ fun MainScreen(
             serverIp = ip.trim(),
             serverPort = port.trim().ifBlank { "8899" },
             password = password.trim(),
-            autoSendClipboard = autoSend,
+            autoSendClipboard = com.liuzhuan.app.clipboard.ClipboardPrivacy.state.value.automaticEnabled,
             deviceName = android.os.Build.MODEL
         )
         settings = newSettings
@@ -598,6 +600,18 @@ fun MainScreen(
                 Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("自动同步", style = MaterialTheme.typography.titleSmall)
+                        ClipboardPrivacyControls(settingsReady = settings != null) { checked ->
+                            val saved = settings ?: return@ClipboardPrivacyControls
+                            // 隐私组件已确认落盘；旧连接偏好仅保留兼容副本，不能反向覆盖隐私规则。
+                            val mirrored = saved.copy(autoSendClipboard = checked)
+                            settings = mirrored
+                            scope.launch {
+                                try { store.save(mirrored) }
+                                catch (ex: CancellationException) { throw ex }
+                                catch (_: Exception) { android.util.Log.w("ClipboardPrivacy", "旧连接偏好副本未能保存，隐私规则仍然生效") }
+                            }
+                        }
+                        HorizontalDivider()
                         // 返回页面时重新检测（修复：系统开启了但 App 里显示未开启）
                         // 三态检测：开关/服务进程/系统绑定，防止 Settings 残留字符串误报
                         var accState by remember { mutableStateOf(accessibilityState(context)) }
@@ -621,7 +635,7 @@ fun MainScreen(
                         Text(
                             when {
                                 serviceRunning || systemBound ->
-                                    "✅ 运行中：复制文字将自动同步到电脑"
+                                    "无障碍服务已连接"
                                 switchOn ->
                                     "⚠️ 开关已开但服务未运行（重装后授权丢失），请到无障碍设置关闭后重新开启"
                                 else ->
@@ -756,35 +770,7 @@ fun MainScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                         HorizontalDivider()
-                        // ===== 剪贴板自动发送开关 =====
-                        Row(
-                            Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text("后台自动发送剪贴板", style = MaterialTheme.typography.bodyMedium)
-                                Text(
-                                    "LSPosed 模式支持后台复制；标准模式可切回流转发送",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Switch(
-                                checked = autoSend,
-                                onCheckedChange = { checked ->
-                                    autoSend = checked
-                                    LanHub.autoSendClipboard = checked // 立即同步给无障碍服务
-                                    scope.launch {
-                                        store.save(
-                                            settings?.copy(autoSendClipboard = checked)
-                                                ?: SettingsStore.Settings(autoSendClipboard = checked)
-                                        )
-                                    }
-                                    toast(context, if (checked) "已开启自动发送" else "已关闭自动发送")
-                                }
-                            )
-                        }
+                        TextButton(onClick = { selectPage(0) }) { Text("管理自动同步与隐私") }
                     }
                 }
             } else {

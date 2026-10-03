@@ -1,7 +1,6 @@
 package com.liuzhuan.app.clipboard
 
 import android.util.Log
-import com.liuzhuan.app.LanHub
 
 /**
  * 剪贴板事件分发器 —— 所有 ClipboardEvent 必须经过这里。
@@ -20,13 +19,13 @@ object ClipboardEventDispatcher {
         // validate
         if (text.length < 2) return
 
-        // filter：后台自动发送开关（@Volatile，MainActivity 实时同步）
-        if (!LanHub.autoSendClipboard) {
-            ClipboardMonitorCoordinator.setDiagnostic("已忽略（自动发送开关关闭）")
+        // 在去重/发送/排队前应用自动同步隐私规则；显式手动动作保持可用。
+        val normalized = ClipboardPrivacy.stampIfAllowed(event.copy(text = text))
+        if (normalized == null) {
+            val reason = ClipboardPrivacy.blockReason(event) ?: return
+            ClipboardMonitorCoordinator.setDiagnostic("已忽略（${ClipboardPrivacy.describe(reason)}）")
             return
         }
-
-        val normalized = event.copy(text = text)
 
         // deduplicate
         if (!ClipboardMonitorCoordinator.deduplicator.shouldProcess(normalized)) {

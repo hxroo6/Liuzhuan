@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../Liuzhuan/Services/DataStore.cs" Link="Production/DataStore.cs" />
+    <Compile Include="../../Liuzhuan/Services/SourceRelinkService.cs" Link="Production/SourceRelinkService.cs" />
     <Compile Include="../../Liuzhuan/Services/ConfigService.cs" Link="Production/ConfigService.cs" />
     <Compile Include="../../Liuzhuan/Services/Lan/LanItemSummary.cs" Link="Production/LanItemSummary.cs" />
     <Compile Include="../../Liuzhuan/Models/MaterialItem.cs" Link="Production/MaterialItem.cs" />

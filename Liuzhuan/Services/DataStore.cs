@@ -83,6 +83,7 @@ public class DataStore : IDisposable
     /// <summary>添加素材（去重：同路径/同文本内容不重复添加）</summary>
     public MaterialItem Add(MaterialItem item)
     {
+        item.RefreshSourceStatus();
         NextSequence(); // 每次变更递增序号（去重置顶也算一次变更）
         // 去重检查
         if (item.IsFile)
@@ -309,6 +310,93 @@ public class DataStore : IDisposable
         return updates.Count;
     }
 
+    /// <summary>主动检查来源并刷新卡片状态；失效素材保留索引和整理信息。</summary>
+    public int RefreshSourceStatuses(IEnumerable<string>? ids = null)
+    {
+        var selectedIds = ids?.ToHashSet(StringComparer.Ordinal);
+        var missing = 0;
+        foreach (var item in _items.Where(x => selectedIds == null || selectedIds.Contains(x.Id)))
+        {
+            item.RefreshSourceStatus();
+            if (item.IsSourceMissing) missing++;
+        }
+        return missing;
+    }
+
+    /// <summary>界面线程应用后台检查结果；过期路径不写回，也不重复访问磁盘。</summary>
+    public int ApplySourceStatuses(IReadOnlyList<SourceRelinkStatus> results)
+    {
+        ArgumentNullException.ThrowIfNull(results);
+        var missing = 0;
+        var appliedIds = new HashSet<string>(StringComparer.Ordinal);
+        var live = _items.ToLookup(x => x.Id, StringComparer.Ordinal);
+        foreach (var result in results)
+        {
+            if (result == null) continue;
+            var item = live[result.Id].FirstOrDefault();
+            if (item == null || item.FilePath != result.OriginalPath || !appliedIds.Add(item.Id)) continue;
+            item.ApplySourceStatus(result.Exists);
+            if (item.IsSourceMissing) missing++;
+        }
+        return missing;
+    }
+
+    /// <summary>用户确认后的来源修复；不移动素材、改 ID 或复制/删除来源。</summary>
+    public MaterialItem RelinkSource(SourceRelinkPlan plan)
+    {
+        ArgumentNullException.ThrowIfNull(plan);
+        RelinkSources(new[] { plan });
+        return _items.First(x => x.Id == plan.Source.Id);
+    }
+
+    /// <summary>先验证整个确认批次，再更新路径并逐条发既有 ItemAdded 增量。</summary>
+    public int RelinkSources(IEnumerable<SourceRelinkPlan> plans)
+    {
+        ArgumentNullException.ThrowIfNull(plans);
+        var requested = plans.ToArray();
+        var updates = new List<(MaterialItem Item, SourceRelinkPlan Plan)>();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var plan in requested)
+        {
+            if (plan == null || plan.Source == null) throw new ArgumentException("来源修复计划无效，请重新选择。", nameof(plans));
+            if (!ids.Add(plan.Source.Id)) throw new ArgumentException("同一条素材不能在一次操作中重复修复。", nameof(plans));
+            var item = _items.FirstOrDefault(x => x.Id == plan.Source.Id)
+                ?? throw new InvalidOperationException("素材已被移除，请重新选择。");
+            if (item.Type != plan.Source.Type || item.Size != plan.Source.Size ||
+                !string.Equals(item.FilePath, plan.Source.FilePath, StringComparison.Ordinal))
+                throw new InvalidOperationException("素材来源已变化，请重新查找并确认。");
+            var verified = SourceRelinkService.ValidatePlan(plan);
+            if (!paths.Add(verified.CandidatePath))
+                throw new InvalidOperationException("同一文件匹配多条素材，请逐条选择不同来源。");
+            if (_items.Any(x => x.Id != item.Id && !string.IsNullOrWhiteSpace(x.FilePath) &&
+                SourceRelinkService.PathsEqual(x.FilePath, verified.CandidatePath)))
+                throw new InvalidOperationException("该文件已在素材库中，请选择其他来源或保留已有素材。");
+            updates.Add((item, verified));
+        }
+
+        foreach (var (item, plan) in updates)
+        {
+            item.FilePath = plan.CandidatePath;
+            item.Size = plan.CandidateSize;
+            item.ThumbnailPath = string.Empty;
+            item.ThumbnailSource = null;
+            item.Duration = 0;
+            item.RefreshSourceStatus();
+        }
+        if (updates.Count > 0)
+        {
+            ScheduleSave();
+            foreach (var (item, _) in updates)
+            {
+                NextSequence();
+                ItemAdded?.Invoke(item);
+            }
+            Logger.Run("DataStore: relinked {0} source files", updates.Count);
+        }
+        return updates.Count;
+    }
+
     /// <summary>获取过滤列表：groupName null 不限、空字符串未分组；tag null/空不限。</summary>
     public IEnumerable<MaterialItem> GetFiltered(string tabKey, string? groupName = null, string? tag = null)
     {
@@ -360,14 +448,10 @@ public class DataStore : IDisposable
             var items = JsonSerializer.Deserialize<List<MaterialItem>>(json, JsonOpts);
             if (items != null)
             {
-                // 验证文件类素材的源文件是否还存在
+                // 缺失来源也保留索引，避免收藏、标签、备注因文件移动被静默丢弃。
                 foreach (var item in items)
                 {
-                    if (item.IsFile && !File.Exists(item.FilePath))
-                    {
-                        Logger.Run("DataStore: skipping missing file on load: {0}", item.FilePath);
-                        continue;
-                    }
+                    item.RefreshSourceStatus();
                     _items.Add(item);
                 }
 

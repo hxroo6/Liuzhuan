@@ -27,7 +27,28 @@ public class MaterialItem : INotifyPropertyChanged
 {
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
-    public MaterialType Type { get; set; }
+    private MaterialType _type;
+    private long _sourceRevision;
+    public MaterialType Type
+    {
+        get => _type;
+        set
+        {
+            if (_type == value) return;
+            _type = value;
+            Interlocked.Increment(ref _sourceRevision);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(KindLabel));
+            OnPropertyChanged(nameof(DetailLabel));
+            OnPropertyChanged(nameof(IsFile));
+            OnPropertyChanged(nameof(HasFileSource));
+            RefreshSourceStatus();
+        }
+    }
+
+    /// <summary>来源变化代数，防止 A→B→A 的旧异步结果重新写入；不持久化。</summary>
+    [JsonIgnore]
+    public long SourceRevision => Interlocked.Read(ref _sourceRevision);
 
     [JsonIgnore]
     public string KindLabel => Type switch
@@ -41,8 +62,51 @@ public class MaterialItem : INotifyPropertyChanged
         ? $"{TextContent.Length} 字 · {AddedTime:MM/dd}"
         : $"{Utils.FileClassifier.FormatSize(Size)} · {AddedTime:MM/dd}";
 
-    /// <summary>本地文件绝对路径（文字类为 null）</summary>
-    public string FilePath { get; set; } = string.Empty;
+    private string _filePath = string.Empty;
+    /// <summary>本地文件绝对路径；纯文字为空，文字文件也可有路径。</summary>
+    public string FilePath
+    {
+        get => _filePath;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_filePath != next)
+            {
+                _filePath = next;
+                Interlocked.Increment(ref _sourceRevision);
+                OnPropertyChanged();
+                OnPropertyChanged(nameof(HasFileSource));
+            }
+            RefreshSourceStatus();
+        }
+    }
+
+    private bool _isSourceMissing;
+    [JsonIgnore]
+    public bool HasFileSource => IsFile || !string.IsNullOrWhiteSpace(_filePath);
+
+    /// <summary>上一次显式检查的文件状态；不把会过期的 Exists 结果写入索引。</summary>
+    [JsonIgnore]
+    public bool IsSourceMissing => _isSourceMissing;
+
+    [JsonIgnore]
+    public string SourceStatusLabel => _isSourceMissing ? "原文件失效" : string.Empty;
+
+    /// <summary>加载、来源修复及用户主动检查时更新状态，不在 UI getter 中访问磁盘。</summary>
+    public bool RefreshSourceStatus()
+    {
+        return ApplySourceStatus(File.Exists(_filePath));
+    }
+
+    internal bool ApplySourceStatus(bool exists)
+    {
+        var missing = HasFileSource && !exists;
+        if (_isSourceMissing == missing) return false;
+        _isSourceMissing = missing;
+        OnPropertyChanged(nameof(IsSourceMissing));
+        OnPropertyChanged(nameof(SourceStatusLabel));
+        return true;
+    }
 
     /// <summary>显示名称</summary>
     public string DisplayName { get; set; } = string.Empty;
@@ -53,8 +117,19 @@ public class MaterialItem : INotifyPropertyChanged
     /// <summary>拖入时间戳</summary>
     public DateTime AddedTime { get; set; } = DateTime.Now;
 
-    /// <summary>文件大小（字节，文字类为内容字符数）</summary>
-    public long Size { get; set; }
+    private long _size;
+    /// <summary>文件大小（字节，纯文字为内容字符数）</summary>
+    public long Size
+    {
+        get => _size;
+        set
+        {
+            if (_size == value) return;
+            _size = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DetailLabel));
+        }
+    }
 
     private string _thumbnailPath = string.Empty;
     /// <summary>缩略图缓存路径（持久化用）</summary>

@@ -29,6 +29,10 @@
             <Setter Property="FontSize" Value="10"/><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="Margin" Value="0,4,0,0"/>
             <Style.Triggers><DataTrigger Binding="{Binding HasMetadata}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
         </Style>
+        <Style x:Key="MaterialMissingStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/><Setter Property="Foreground" Value="{StaticResource WarmBrush}"/><Setter Property="Margin" Value="0,4,0,0"/>
+            <Style.Triggers><DataTrigger Binding="{Binding IsSourceMissing}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+        </Style>
         <!-- 素材卡片模板（网格用：图片/视频/其他文件）— 自适应比例，紧凑排列 -->
         <DataTemplate x:Key="GridCardTemplate" DataType="{x:Type models:MaterialItem}">
             <Border x:Name="CardBorder" Margin="2" Background="{StaticResource PanelLightBrush}"
@@ -107,6 +111,7 @@
                         <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextBrush}" FontSize="12" TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="{Binding DetailLabel}" Foreground="{StaticResource TextDimBrush}" FontSize="10" Margin="0,4,0,0"/>
                         <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
+                        <TextBlock Text="{Binding SourceStatusLabel}" Style="{StaticResource MaterialMissingStyle}" ToolTip="原文件可能已移动或暂时无法访问。右键可检查并重新定位。"/>
                     </StackPanel>
                 </Grid>
 
@@ -146,6 +151,7 @@
                 <Grid>                    <TextBlock Text="灵感摘录" Foreground="{StaticResource WarmBrush}" FontSize="10" Margin="10,10,0,0" VerticalAlignment="Top"/>
                     <StackPanel Margin="10,0,30,10" VerticalAlignment="Bottom"><TextBlock Text="{Binding DetailLabel}" Foreground="{StaticResource TextDimBrush}" FontSize="10"/>
                         <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
+                        <TextBlock Text="{Binding SourceStatusLabel}" Style="{StaticResource MaterialMissingStyle}" ToolTip="原文件可能已移动或暂时无法访问。右键可检查并重新定位。"/>
                     </StackPanel>
                     <TextBlock x:Name="TextBody" Text="{Binding TextContent}"
                                Foreground="{StaticResource TextBrush}"
@@ -225,6 +231,7 @@
                                    FontSize="12" TextTrimming="CharacterEllipsis"
                                    Margin="0,1,0,0"/>
                         <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
+                        <TextBlock Text="{Binding SourceStatusLabel}" Style="{StaticResource MaterialMissingStyle}" ToolTip="原文件可能已移动或暂时无法访问。右键可检查并重新定位。"/>
                     </StackPanel>
 
                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
@@ -418,6 +425,7 @@
                             </StackPanel>
                         </Border>
                         <TextBlock x:Name="FeedbackText" Text="单击复制 · 拖出使用 · 右键更多" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis" Margin="0,0,0,6"/>
+                        <Button x:Name="ClipboardPrivacyBanner" Visibility="Collapsed" Click="ClipboardPrivacy_Click" Style="{StaticResource ActionButtonStyle}" Foreground="{StaticResource WarmBrush}" Background="#4B3637" Padding="8,6" Margin="0,0,0,6" HorizontalContentAlignment="Left" FontSize="11"/>
                         <DockPanel>
                             <Button DockPanel.Dock="Right" Content="更多" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Click="ManageBtn_Click" ToolTip="清空分类与全部清空"/>
                             <Button DockPanel.Dock="Right" Content="收发" Style="{StaticResource ActionButtonStyle}" Padding="8,4" Margin="0,0,6,0" Click="TransfersBtn_Click" ToolTip="查看收发任务"/>

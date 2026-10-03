@@ -229,3 +229,13 @@
 - UdpDiscovery 固定 UDP 8901，OFFER 保持原字段并返回实际 WS 端口；局部捕获 socket/token 加生命周期锁，Stop/重启不让旧任务操作新 socket。Android 单调截止时间限制接收预算，保留 IO 与取消。
 - LanClient 删除/清空回调透传现有 sequence；MaterialRepository 对全部增量验序，更新同 ID 摘要并消费每次变化。PC SnapshotProvider 显式给全局序，包括空库；SnapshotDispatcher 将捕获与发送放在素材变更的同一 UI 调度，协议字段不变。
 - 检查入口：SavedViewChecks、DesktopUiChecks、MigrationChecks、SnapshotChecks（临时端口实际 WS）、LanAddressChecks/UdpDiscoveryChecks（固定 8901 实际 UDP，先停用户程序）、AndroidSyncChecks（链接生产 Repository 和模型，只有日志/Proto 类型为桩）。真机后台复制和物理跨屏仍单独验收。
+
+### 来源管理、隐私与图片动作（两端 v1.7.0 本地版本）
+- MaterialItem 缓存 IsSourceMissing（不持久化），DataStore.Load 保留失效索引。SourceRelinkService 捕获只读快照，后台检查或查找候选；DataStore 在所属线程按 ID+旧路径应用检查结果。重新定位先验证整个批次，再更新路径/大小/缩略图；保留 ID、时间、位置及组织字段，每条更新有 fresh sequence。
+- SourceRepairWindow 在具体文件夹后台扫描，不扫描盘符根目录或链接；文件名、类型及已知大小只用于候选提示，歧义/扫描受限不当作唯一结果。批量应用前提供路径审阅与明确确认。已被旧程序删除的索引不在新版本自动恢复范围内。
+- DeferredMaterialLoader 以源路径、类型、SourceRevision 和每项加载代数校验 UI 回写；过期任务不能覆盖新缩略图/时长或触发完成回调。
+- PC ClipboardMonitorService 在读内容前检查暂停与 owner 进程排除，读取前后校验 clipboard sequence。名单非空时未知 owner 保守跳过；自身复制不回采，不同内容快速复制不因旧 600ms 节流丢失。恢复启动监听不导入现有剪贴板内容。
+- AppSettings 原子保存 ExcludedClipboardApps/ClipboardPausedUntil，损坏隐私配置阻止自动采集并保留原文件；隐私窗口与素材栏显示暂停状态，以有界一次性期限任务刷新，不轮询剪贴板。迁移仅保存排除名单，不带临时暂停；Text 文件有源路径时打包完整字节。
+- Android ClipboardPrivacyPolicy 为无 Context 的纯策略，ClipboardPrivacyPreferences 负责设备本地持久化；版本标记限制旧设置仅在首次迁移时生效，配置先在 IO 线程确认写入再发布，损坏或保存失败时保守阻止自动采集。捕获时间、来源及运行期版本约束 Dispatcher、异步 Action、两处 flush、ClipReceiver 文件旁路与自动文件重试。设置在连接页自动同步卡片，显式分享/发送不受自动规则影响；核心 scope、检测评分、LSPosed Hook 和服务保活不变。
+- ImageProcessingService 独立 STA 使用 WIC 首帧解码、EXIF方向转换、只缩小和 PNG/JPEG 编码；JPEG 白底，输出不携带拍摄元数据。限制 6400 万像素/32768 单边，逐项失败可继续，输出新建独立目录，取消只清理自身文件。原生编解码期间取消需等待当前操作结束；HEIC 实际兼容取决于系统解码器。
+- 检查：SourceRelinkChecks、DataStoreChecks、DeferredMaterialChecks、PrivacyChecks、AndroidPrivacyChecks（可复跑 PowerShell runner）、ImageProcessingChecks、DesktopUiChecks 与 MigrationChecks；真实手机、GPU/混合 DPI 和不同路由器仍独立验收。

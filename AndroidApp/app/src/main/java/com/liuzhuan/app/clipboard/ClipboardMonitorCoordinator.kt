@@ -69,6 +69,7 @@ object ClipboardMonitorCoordinator {
         if (initialized) return
         synchronized(this) {
             if (initialized) return
+            ClipboardPrivacy.init(context.applicationContext)
             initialized = true
             captureManager = ClipboardCaptureManagerImpl(context.applicationContext)
             pipeline.add(PushToPcAction(queue))
@@ -139,7 +140,9 @@ object ClipboardMonitorCoordinator {
         pending.forEach { ev ->
             val text = ev.text ?: return@forEach
             Log.d(TAG, "[OUT_QUEUE] flush send id=${ev.diagnosticId}")
-            client.pushClipboard(text, ev.sourcePackage ?: "android")
+            ClipboardPrivacy.runIfAllowed(ev) {
+                client.pushClipboard(text, ev.sourcePackage ?: "android")
+            }
         }
         Log.d(TAG, "[OUT_QUEUE] flush complete")
     }

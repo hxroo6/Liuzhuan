@@ -1,0 +1,50 @@
+<Window x:Class="Liuzhuan.Views.SourceRepairWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="素材来源管理" Width="800" Height="600" MinWidth="650" MinHeight="480" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}"><Setter Property="FontSize" Value="13"/></Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="RowBorder" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Margin="0,2"><ContentPresenter HorizontalAlignment="Stretch"/></Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="RowBorder" Property="Background" Value="#233B3D"/></Trigger>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="RowBorder" Property="Background" Value="#294640"/><Setter TargetName="RowBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24" Background="{StaticResource PanelBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="找回素材的原文件" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock Text="文件被移动或暂时无法访问时，保留素材索引、收藏与整理信息。重新定位只更新路径，原文件保持不变。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,16"/>
+        </StackPanel>
+        <WrapPanel Grid.Row="1" Margin="0,0,0,12">
+            <Button x:Name="CheckButton" Content="重新检查" Click="Check_Click" Padding="12,7" Margin="0,0,8,0"/>
+            <Button x:Name="FindButton" Content="在文件夹中查找…" Click="Find_Click" Padding="12,7" Margin="0,0,8,0"/>
+            <Button x:Name="ChooseButton" Content="为选中项选择新文件…" Click="Choose_Click" Padding="12,7"/>
+        </WrapPanel>
+        <Border Grid.Row="2" Background="{StaticResource PanelLightBrush}" CornerRadius="10" Padding="10">
+            <Grid>
+                <ListBox x:Name="SourceList" Background="Transparent" Foreground="{StaticResource TextBrush}" BorderThickness="0" ScrollViewer.HorizontalScrollBarVisibility="Disabled" HorizontalContentAlignment="Stretch">
+                    <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="8,8,8,12">
+                        <TextBlock Text="{Binding Name}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                        <TextBlock Text="{Binding OriginalPath}" FontSize="12" Foreground="{StaticResource TextDimBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding CandidatePath}" FontSize="12" Foreground="{StaticResource AccentBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                        <TextBlock Text="{Binding Status}" FontSize="12" Foreground="{StaticResource WarmBrush}" Margin="0,6,0,0" TextWrapping="Wrap"/>
+                    </StackPanel></DataTemplate></ListBox.ItemTemplate>
+                </ListBox>
+                <TextBlock x:Name="EmptyText" Text="原文件均可访问" Visibility="Collapsed" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{StaticResource TextDimBrush}" FontSize="16"/>
+            </Grid>
+        </Border>
+        <StackPanel Grid.Row="3" Margin="0,12,0,16">
+            <TextBlock Text="文件夹候选按原文件名、类型及已知大小匹配，不代表内容完全相同。检查候选路径后再应用；同名歧义请逐条选择。" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" FontSize="12"/>
+            <TextBlock x:Name="StatusText" TextWrapping="Wrap" Margin="0,8,0,0" Foreground="{StaticResource AccentBrush}"/>
+        </StackPanel>
+        <DockPanel Grid.Row="4" LastChildFill="False">
+            <Button x:Name="CloseButton" DockPanel.Dock="Right" Content="关闭" Click="Close_Click" Padding="18,7"/>
+            <Button x:Name="ApplyButton" DockPanel.Dock="Right" Content="应用唯一候选" IsEnabled="False" Click="Apply_Click" Padding="18,7" Margin="0,0,10,0"/>
+        </DockPanel>
+    </Grid>
+</Window>

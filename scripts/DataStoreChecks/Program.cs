@@ -182,6 +182,47 @@ internal static class Program
             Check(store.Items.Count == 1 && store.Items[0].Id == "file" && store.Items[0].IsFavorite && File.Exists(store.Items[0].FilePath), "restored materials persist and reload from the isolated library");
         });
 
+        Scenario("missing-preservation", store =>
+        {
+            var missing = new MaterialItem
+            {
+                Id = "missing", Type = MaterialType.Other, FilePath = Path.Combine(root, "moved-original.bin"),
+                DisplayName = "important", IsFavorite = true, GroupName = "project", Tags = new[] { "tag" }, Note = "keep memo"
+            };
+            store.Add(missing);
+            store.Add(new MaterialItem { Id = "text-file", Type = MaterialType.Text, FilePath = Path.Combine(root, "moved.txt"), TextContent = "preview" });
+            store.Add(Text("inline", "inline-only"));
+            Check(missing.IsSourceMissing && missing.SourceStatusLabel.Length > 0, "missing source remains an indexed item with a visible source state");
+            Check(store.Items.Single(x => x.Id == "text-file").IsSourceMissing && !store.Items.Single(x => x.Id == "inline").IsSourceMissing, "file-backed text reports missing sources while inline text remains usable");
+        });
+        Scenario("missing-preservation", store =>
+        {
+            var missing = store.Items.Single(x => x.Id == "missing");
+            Check(store.Items.Count == 3 && missing.IsFavorite && missing.GroupName == "project" && missing.Tags.Single() == "tag" && missing.Note == "keep memo" && missing.IsSourceMissing, "load retains absent sources with favorites and all organization metadata");
+            var json = File.ReadAllText(Path.Combine(ConfigService.GetEffectiveDataDir(), "data.json"));
+            Check(!json.Contains("IsSourceMissing") && !json.Contains("SourceStatusLabel") && !json.Contains("HasFileSource"), "cached source availability is never persisted to data.json");
+            var events = Observe(store);
+            var sequence = store.CurrentSequence;
+            Check(store.RefreshSourceStatuses() == 2 && store.CurrentSequence == sequence && events.Count == 0, "source-state checking does not alter LAN sequences or remove materials");
+            File.WriteAllText(missing.FilePath, "restored bytes");
+            var changes = new List<string?>();
+            missing.PropertyChanged += (_, args) => changes.Add(args.PropertyName);
+            Check(store.RefreshSourceStatuses(new[] { missing.Id }) == 0 && !missing.IsSourceMissing && changes.Contains(nameof(MaterialItem.IsSourceMissing)) && changes.Contains(nameof(MaterialItem.SourceStatusLabel)), "explicit recheck restores cached availability and notifies status bindings");
+            File.Delete(missing.FilePath);
+            var snapshot = SourceRelinkService.Snapshot(store.Items);
+            var results = SourceRelinkService.CheckSourcesAsync(snapshot).GetAwaiter().GetResult();
+            Check(!missing.IsSourceMissing, "background checking does not change live models or raise UI notifications");
+            Check(store.ApplySourceStatuses(results) == 2 && missing.IsSourceMissing, "UI-thread application accepts matching background path checks");
+            missing.FilePath = Path.Combine(root, "new-path.bin");
+            Check(store.ApplySourceStatuses(new[] { new SourceRelinkStatus(missing.Id, snapshot.Single(x => x.Id == missing.Id).FilePath, true) }) == 0 && missing.IsSourceMissing, "stale source checks cannot mark a different current path available");
+            store.ApplySourceStatuses(new[] { new SourceRelinkStatus(missing.Id, missing.FilePath, true) });
+            Check(!missing.IsSourceMissing && !File.Exists(missing.FilePath), "applying a background result uses its cached existence without probing disk again");
+            store.Remove(missing.Id);
+            Check(store.ApplySourceStatuses(new[] { new SourceRelinkStatus(missing.Id, missing.FilePath, true) }) == 0, "checks for removed materials cannot restore deleted indices");
+            store.Undo();
+            Check(ReferenceEquals(store.Items.Single(x => x.Id == missing.Id), missing) && missing.Note == "keep memo" && missing.IsFavorite, "missing-source deletion remains undoable without losing metadata");
+        });
+
         Console.WriteLine($"PASS {_checks} data-store checks; isolated artifacts: {root}");
     }
 

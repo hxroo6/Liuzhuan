@@ -100,6 +100,7 @@ public partial class MainWindow : Window
         SetupTrayIcon();
         SetupGlobalHotkey();
         SetupLanServer();
+        RestoreClipboardMonitor();
         try
         {
             Icon = new System.Windows.Media.Imaging.BitmapImage(
@@ -680,6 +681,13 @@ public partial class MainWindow : Window
         var select = new MenuItem { Header = "全选当前列表 · Ctrl+A", IsEnabled = _currentView.Count > 0 };
         select.Click += SelectAll_Click;
         menu.Items.Add(select);
+        var sources = new MenuItem { Header = "素材来源管理与重新定位…" };
+        sources.Click += (_, _) => ManageSources();
+        menu.Items.Add(sources);
+        var images = GetSelectedItems();
+        var imageAction = new MenuItem { Header = "处理选中图片（缩放 / PNG / JPEG）…", IsEnabled = images.Count > 0 && images.All(x => x.Type == MaterialType.Image) };
+        imageAction.Click += (_, _) => ProcessImages(images);
+        menu.Items.Add(imageAction);
         menu.Items.Add(new Separator());
         var current = new MenuItem { Header = _currentTab == "Favorites" ? "取消当前结果的收藏…" : "移除当前结果（保留收藏）…" };
         current.Click += ClearCurrentBtn_Click;
@@ -823,6 +831,7 @@ public partial class MainWindow : Window
         StatusText.ToolTip = $"{typeName} {count} 项{searchHint}" + (_groupFilter != null ? $" · 分组：{(_groupFilter.Length > 0 ? _groupFilter : "未分组")}" : "") + (_tagFilter != null ? $" · 标签：{_tagFilter}" : "");
         if (ConnectionText != null)
             ConnectionText.Text = _lanServer.ClientCount > 0 ? $"已连接 {_lanServer.ClientCount} 台设备" : LanConfig.Enabled ? "局域网 · 等待连接" : "局域网同步已关闭";
+        UpdatePrivacyStatus();
     }
 
     #endregion
@@ -941,7 +950,7 @@ public partial class MainWindow : Window
                 Logger.Run("Click copy: file -> clipboard ({0})", item.DisplayName);
                 ShowFeedback($"已复制：{item.DisplayName}");
             }
-            else ShowFeedback("原文件已移动或不存在，请重新添加");
+            else { item.RefreshSourceStatus(); ShowFeedback("原文件无法访问，可在「更多 → 来源管理」重新定位"); }
         }
         catch (Exception ex)
         {
@@ -1120,6 +1129,18 @@ public partial class MainWindow : Window
         var organizeItem = new MenuItem { Header = $"整理分组、标签和备注…（{targetItems.Count} 项）", InputGestureText = "F2" };
         organizeItem.Click += (_, _) => OrganizeItems(targetItems);
         menu.Items.Add(organizeItem);
+        if (targetItems.All(x => x.Type == MaterialType.Image))
+        {
+            var imageAction = new MenuItem { Header = $"处理图片…（{targetItems.Count} 项）" };
+            imageAction.Click += (_, _) => ProcessImages(targetItems);
+            menu.Items.Add(imageAction);
+        }
+        if (item.HasFileSource)
+        {
+            var sourceAction = new MenuItem { Header = "检查原文件与重新定位…" };
+            sourceAction.Click += (_, _) => ManageSources(item.Id);
+            menu.Items.Add(sourceAction);
+        }
         menu.Items.Add(new Separator());
 
         // 删除
@@ -1484,8 +1505,12 @@ public partial class MainWindow : Window
                 _clipMonitor.Stop();
                 Logger.Run("Settings: clipboard monitor OFF");
             }
+            UpdatePrivacyStatus();
         };
         menu.Items.Add(clipMonitorItem);
+        var privacyItem = new MenuItem { Header = AppSettings.ClipboardPrivacyLoadError != null ? "剪贴板隐私 · 需检查配置…" : AppSettings.IsClipboardPaused ? "剪贴板隐私 · 已暂停…" : "剪贴板隐私与应用排除…" };
+        privacyItem.Click += ClipboardPrivacy_Click;
+        menu.Items.Add(privacyItem);
 
         var heicMenu = new MenuItem { Header = "接收 HEIC 自动转换", Foreground = (Brush)FindResource("TextBrush") };
         foreach (var option in new[] {
@@ -1515,6 +1540,7 @@ public partial class MainWindow : Window
             var window = new Views.MigrationWindow(() => MigrationService.Snapshot(_dataStore.Items, new MigrationService.Settings
             {
                 ClipboardMonitorEnabled = AppSettings.ClipboardMonitorEnabled,
+                ExcludedClipboardApps = AppSettings.ExcludedClipboardApps,
                 HeicConversion = AppSettings.HeicConversion,
                 LanEnabled = LanConfig.Enabled, Port = LanConfig.Port, Password = LanConfig.Password,
                 AutoStart = StartupService.IsEnabled(), SavedViews = _savedViews.Views.ToList()
@@ -1780,6 +1806,7 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
+        _privacyDeadlineTimer?.Stop();
         ++_panelTransition;
         _panelTranslate.BeginAnimation(TranslateTransform.XProperty, null);
         _hotspotTimer?.Stop();

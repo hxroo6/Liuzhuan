@@ -120,9 +120,20 @@ class LanClient(
     }
 
     /** 上传文件/图片到电脑（HTTP POST 到 /upload 端点，复用 PC 端 FileHttpServer） */
-    fun pushFile(bytes: ByteArray, name: String, mime: String, taskId:String=java.util.UUID.randomUUID().toString()) {
+    fun pushFile(bytes: ByteArray, name: String, mime: String, taskId:String=java.util.UUID.randomUUID().toString(),
+                 automaticEvent: com.liuzhuan.app.clipboard.ClipboardEvent? = null) {
+        if (automaticEvent == null) pushFileAccepted(bytes, name, mime, taskId, null)
+        else if (!com.liuzhuan.app.clipboard.ClipboardPrivacy.runIfAllowed(automaticEvent) {
+                pushFileAccepted(bytes, name, mime, taskId, automaticEvent)
+            }) {
+            com.liuzhuan.app.TransferTasks.finish(taskId, false, "隐私规则已拦截这次自动复制，请重新复制或手动选择文件")
+        }
+    }
+
+    private fun pushFileAccepted(bytes: ByteArray, name: String, mime: String, taskId: String,
+                                 automaticEvent: com.liuzhuan.app.clipboard.ClipboardEvent?) {
         com.liuzhuan.app.TransferTasks.start(name,"手机 → 电脑",taskId,retry={
-            com.liuzhuan.app.LanHub.client?.pushFile(bytes,name,mime,taskId)
+            com.liuzhuan.app.LanHub.client?.pushFile(bytes,name,mime,taskId,automaticEvent)
                 ?: com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
         })
         val s = lastSettings ?: run {

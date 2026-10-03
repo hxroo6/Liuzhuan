@@ -4,6 +4,7 @@ import android.util.Log
 import com.liuzhuan.app.LanHub
 import com.liuzhuan.app.clipboard.ClipboardEvent
 import com.liuzhuan.app.clipboard.ClipboardEventQueue
+import com.liuzhuan.app.clipboard.ClipboardPrivacy
 import com.liuzhuan.app.net.LanClient
 
 /**
@@ -19,6 +20,7 @@ class PushToPcAction(
 ) : ClipboardAction {
 
     override suspend fun execute(event: ClipboardEvent) {
+        if (ClipboardPrivacy.blockReason(event) != null) return
         val client = LanHub.client
         val id = event.diagnosticId
         val appState = com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.appStateTag()
@@ -29,7 +31,7 @@ class PushToPcAction(
             }
             send(client, event)
         } else {
-            queue.enqueue(event)
+            if (!ClipboardPrivacy.runIfAllowed(event) { queue.enqueue(event) }) return
             Log.d(
                 TAG,
                 "[OUT_QUEUE][$id] enqueue size=${queue.size()} appState=$appState reason=disconnected"
@@ -44,7 +46,8 @@ class PushToPcAction(
         val text = event.text ?: return
         val id = event.diagnosticId
         Log.d(TAG, "[ACTION][$id] PushToPcAction.execute connected=${client.state is LanClient.State.Connected}")
-        val ok = client.pushClipboard(text, event.sourcePackage ?: "android")
+        var ok = false
+        if (!ClipboardPrivacy.runIfAllowed(event) { ok = client.pushClipboard(text, event.sourcePackage ?: "android") }) return
         Log.d(
             TAG,
             "[WS][$id] sent=$ok source=${event.source} type=${event.type} len=${text.length} fp=${event.fingerprint.take(8)}"

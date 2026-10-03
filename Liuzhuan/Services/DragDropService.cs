@@ -201,9 +201,7 @@ public static class DragDropService
     /// </summary>
     public static void LoadDeferredPropertiesAsync(MaterialItem item, Action? onCompleted = null)
     {
-        if (!item.IsFile) return;
-
-        Task.Run(() =>
+        _ = DeferredMaterialLoader.LoadAsync(item, source =>
         {
             try
             {
@@ -211,40 +209,25 @@ public static class DragDropService
                 double duration = 0;
 
                 // 缩略图 —— 后台线程生成，结果带回 UI 线程
-                if (item.Type == MaterialType.Video || item.Type == MaterialType.Image)
+                if (source.Type == MaterialType.Video || source.Type == MaterialType.Image)
                 {
-                    thumbPath = ThumbnailService.GetCachedThumbnailPath(item.FilePath);
+                    thumbPath = ThumbnailService.GetCachedThumbnailPath(source.FilePath);
                 }
 
                 // 音视频时长
-                if (item.Type == MaterialType.Audio || item.Type == MaterialType.Video)
+                if (source.Type == MaterialType.Audio || source.Type == MaterialType.Video)
                 {
-                    duration = GetMediaDuration(item.FilePath);
+                    duration = GetMediaDuration(source.FilePath);
                 }
 
-                return (thumbPath, duration);
+                return Task.FromResult(new DeferredMaterialProperties(thumbPath, duration));
             }
             catch (Exception ex)
             {
                 Logger.Error("LoadDeferredPropertiesAsync failed: {0}", ex.Message);
-                return (null, 0.0);
+                return Task.FromResult(new DeferredMaterialProperties(null, 0.0));
             }
-        }).ContinueWith(t =>
-        {
-            // UI 线程：赋值 PropertyChanged 在此触发
-            if (!string.IsNullOrEmpty(t.Result.thumbPath))
-            {
-                item.ThumbnailPath = t.Result.thumbPath;
-                item.TryLoadThumbnailSync();
-                Logger.Run("Deferred: thumbnail loaded for {0}", item.DisplayName);
-            }
-            if (t.Result.duration > 0)
-            {
-                item.Duration = t.Result.duration;
-                Logger.Run("Deferred: duration loaded for {0}: {1}s", item.DisplayName, t.Result.duration);
-            }
-            onCompleted?.Invoke();
-        }, TaskScheduler.FromCurrentSynchronizationContext());
+        }, onCompleted);
     }
 
     /// <summary>

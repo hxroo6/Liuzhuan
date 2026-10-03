@@ -26,10 +26,12 @@ internal static class Program
             new MaterialItem { Id="c", Type=MaterialType.Other, DisplayName="同名素材", FilePath=secondSource },
             new MaterialItem { Id="d", Type=MaterialType.Other, DisplayName="重复引用", FilePath=source }
         };
-        var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true,
+        var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, ExcludedClipboardApps=new[]{"KeePassXC.exe"}, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true,
             SavedViews=new(){new SavedMaterialView{Name="收藏参考",Tab="Favorites",GroupName="视觉参考",Tag="封面",Keyword="备注"},new SavedMaterialView{Name="未分组",GroupName=""}} };
         void Check(bool ok,string name){if(!ok)throw new Exception(name);Console.WriteLine("PASS "+name);}
         var snapshot=MigrationService.Snapshot(items, settings);
+        settings.ExcludedClipboardApps[0]="changed.exe";
+        Check(snapshot.Settings.ExcludedClipboardApps!.SequenceEqual(new[]{"KeePassXC.exe"}), "snapshot isolates automatic-capture exclusions");
         settings.SavedViews.Clear();
         Check(snapshot.Settings.SavedViews!.Count==2, "snapshot isolates saved filter rules from later configuration changes");
         items[0].Tags[0]="原库随后修改";
@@ -61,6 +63,8 @@ internal static class Program
         var importedRules=new SavedViewStore(imported);
         Check(importedRules.LoadError==null && importedRules.Views.Count==2 && importedRules.Views[0].Keyword=="备注", "new PC reloads portable saved rules from its imported library");
         Check(applied.AutoStart && applied.LanEnabled && applied.Port==8999 && applied.Password=="test-only" && applied.HeicConversion==HeicConversionMode.Jpeg,"portable settings restored");
+        var privacyConfig=JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(imported,"appsettings.json")));
+        Check(applied.ExcludedClipboardApps!.SequenceEqual(new[]{"KeePassXC.exe"}) && privacyConfig.GetProperty("ExcludedClipboardApps")[0].GetString()=="KeePassXC.exe" && !privacyConfig.TryGetProperty("ClipboardPausedUntil",out _),"migration carries app exclusions but does not carry a temporary pause");
         Check(Directory.GetFiles(target,"config.before-import-*.json").Any(p=>File.ReadAllText(p)==oldConfig) && File.ReadAllText(Path.Combine(existing,"keep.txt"))=="old library","original config backup and original library retained");
         Check(MigrationService.ApplyPending(target)==null,"activation is one-shot");
         typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,target);
@@ -101,6 +105,7 @@ internal static class Program
         await Reject(Variant("duplicate",z=>{using var s=new StreamWriter(z.CreateEntry("manifest.json").Open());s.Write("{}");}),"rejects duplicate ZIP entries");
         await Reject(Variant("version",z=>EditManifest(z,m=>m.Version=900)),"rejects unsupported version");
         await Reject(Variant("external-ref",z=>EditManifest(z,m=>m.Items[0].FilePath="C:/external.txt")),"rejects external material paths");
+        await Reject(Variant("invalid-exclusions",z=>EditManifest(z,m=>m.Settings.ExcludedClipboardApps=new[]{"F:/bad.exe"})),"rejects invalid app exclusions before activation");
         await Reject(Variant("hash",z=>EditManifest(z,m=>m.Files[0].Sha256=new string('0',64))),"rejects tampered bytes before activation");
         await Reject(Variant("size",z=>EditManifest(z,m=>m.Files[0].Size++)),"rejects truncated/incorrect file lengths");
         await Reject(Variant("missing-fields",z=>{z.GetEntry("manifest.json")!.Delete();using var s=new StreamWriter(z.CreateEntry("manifest.json").Open());s.Write("{}");}),"rejects incomplete manifest");
@@ -109,6 +114,14 @@ internal static class Program
             try{await MigrationService.PrepareImportAsync(package,dest,new DirectProgress(_=>cancel.Cancel()),cancel.Token);}catch(OperationCanceledException){stopped=true;}
             Check(stopped && !File.Exists(Path.Combine(dest,"migration-pending.json")) && !Directory.EnumerateFiles(dest,"*",SearchOption.AllDirectories).Any(),"cancelled import cleans staging and never activates");
         }
+        var fullText=Path.Combine(root,"完整原文.txt");var originalText=new string('文',5000);File.WriteAllText(fullText,originalText);
+        var textSnapshot=MigrationService.Snapshot(new[]{new MaterialItem{Type=MaterialType.Text,FilePath=fullText,TextContent="仅作预览",DisplayName="完整原文",Note="保留原文文件"}},settings);
+        var textPackage=Path.Combine(root,"text-file.zip");await MigrationService.ExportAsync(textPackage,textSnapshot,null,default);
+        Check(MigrationService.ReadManifest(textPackage).Files.Count==1,"text-file migration packs the original bytes instead of only its short preview");
+        File.Move(fullText,fullText+".old");
+        var textImported=await MigrationService.PrepareImportAsync(textPackage,Path.Combine(root,"text-new-pc"),null,default);
+        var textItem=JsonSerializer.Deserialize<List<MaterialItem>>(File.ReadAllText(Path.Combine(textImported,"data.json")),MigrationService.Json)!.Single();
+        Check(textItem.HasFileSource && File.ReadAllText(textItem.FilePath)==originalText && textItem.TextContent=="仅作预览" && textItem.Note=="保留原文文件","import retains the complete text source and its existing preview and note");
         var existingPackage=Path.Combine(root,"keep.zip"); File.WriteAllText(existingPackage,"preserve existing output");
         using(var cancel=new CancellationTokenSource()){
             var valid=MigrationService.Snapshot(new[]{new MaterialItem{Type=MaterialType.Other,FilePath=Path.Combine(moved,"同名素材.bin")}},settings);

@@ -30,4 +30,12 @@ class ClipboardEventQueue(private val maxSize: Int = 50) {
 
     @Synchronized
     fun size(): Int = queue.size
+
+    /** 隐私设置变化后，自动缓存不在恢复连接时补发；显式动作不受影响。 */
+    @Synchronized
+    fun discardAutomatic() {
+        val manual = queue.filter { it.source == ClipboardCaptureSource.MANUAL }
+        queue.clear()
+        queue.addAll(manual)
+    }
 }

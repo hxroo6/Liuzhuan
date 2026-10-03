@@ -10,6 +10,16 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## v1.7.0: source repair, clipboard privacy, and image actions (local build)
+
+- **更多 → 素材来源管理与重新定位** keeps missing-file records, favorites, tags, and notes. Choose a replacement individually, or scan a specific folder in the background and review candidates before applying them. Ambiguous matches are not bound automatically; scans are cancellable. Records already removed by older builds cannot be reconstructed automatically.
+- **设置 → 剪贴板隐私与应用排除** excludes desktop processes (for example `WeChat.exe`); the phone's connection-page automatic-sync card excludes Android package IDs. Pause for 15 minutes or one hour, or resume manually. With exclusions configured, unknown automatic sources are skipped. Changing phone privacy rules invalidates captured but unsent automatic events. Explicit sending, sharing, and receiving remain available; existing materials are retained. This does not promise to identify every password.
+- Select images and choose **处理图片** from their context menu to create PNG/JPEG copies, constrain the longest edge without upscaling, and choose JPEG quality. JPEG transparency is composited onto white. Each batch has its own output folder with actual dimensions, byte sizes, and per-item errors; originals remain untouched. Output can be larger than the source.
+- Image actions produce only the primary/first frame and strip photographic metadata. HEIC/HEIF and other formats depend on installed Windows decoders; animation and vectors are not preserved. Cancellation takes effect at controllable stages after any current native decode/encode completes.
+- Desktop app exclusions travel with migration archives, while temporary pause deadlines do not. Text-file migration retains the complete source file. Deferred thumbnails validate the source and load generation so old callbacks cannot replace a repaired image.
+
+Update both apps; after replacing the APK, turn the Liuzhuan accessibility service off and on again. Automated and offscreen UI checks cover this release; real phone background copying, mixed-DPI dragging, and different network environments still need device acceptance. See the [product roadmap](docs/PRODUCT_ROADMAP.md) for official competitor references and future work.
+
 ## v1.6.0: saved filters and stable synchronization (local build)
 
 - Open **常用 ▾ → 保存当前筛选** to save a named combination of category, group, tag, and search. Open it with one click later; newly matching materials appear automatically. Update criteria, rename, or remove rules, with a limit of 30.

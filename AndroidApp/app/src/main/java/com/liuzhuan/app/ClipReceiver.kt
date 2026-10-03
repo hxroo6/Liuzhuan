@@ -7,6 +7,7 @@ import com.liuzhuan.app.clipboard.ClipboardCaptureSource
 import com.liuzhuan.app.clipboard.ClipboardContentType
 import com.liuzhuan.app.clipboard.ClipboardEvent
 import com.liuzhuan.app.clipboard.ClipboardEventDispatcher
+import com.liuzhuan.app.clipboard.ClipboardPrivacy
 import com.liuzhuan.app.clipboard.fingerprintOf
 import java.util.concurrent.atomic.AtomicLong
 
@@ -26,17 +27,28 @@ class ClipReceiver : BroadcastReceiver() {
         if (intent.action != ACTION_CLIP) return
         // 握手 token 校验：非 ClipHook 发来的广播（伪造）直接丢弃
         if (intent.getStringExtra(EXTRA_TOKEN) != TOKEN) return
+        ClipboardPrivacy.init(context.applicationContext)
         val pkg = intent.getStringExtra(EXTRA_PKG)
+        val metadata = ClipboardEvent(null,
+            intent.getLongExtra(EXTRA_TS, System.currentTimeMillis()), pkg,
+            ClipboardCaptureSource.XPOSED_HOOK, emptyList(), "",
+            privacyRevision = ClipboardPrivacy.revision)
+        val blocked = ClipboardPrivacy.blockReason(metadata)
+        if (blocked != null) {
+            android.util.Log.d(TAG, "hook ignored pkg=$pkg reason=$blocked")
+            com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic("已忽略（${ClipboardPrivacy.describe(blocked)}）")
+            return
+        }
         val kind = intent.getStringExtra(EXTRA_KIND) ?: KIND_TEXT
 
         if (kind == KIND_FILE) {
-            handleFile(intent, pkg)
+            handleFile(intent, pkg, metadata)
         } else {
-            handleText(intent, pkg)
+            handleText(intent, pkg, metadata)
         }
     }
 
-    private fun handleText(intent: Intent, pkg: String?) {
+    private fun handleText(intent: Intent, pkg: String?, metadata: ClipboardEvent) {
         val text = intent.getStringExtra(EXTRA_TEXT) ?: return
         val ts = intent.getLongExtra(EXTRA_TS, System.currentTimeMillis())
         val id = "HOOK-${String.format("%06d", idCounter.incrementAndGet())}"
@@ -50,7 +62,8 @@ class ClipReceiver : BroadcastReceiver() {
             mimeTypes = listOf("text/plain"),
             fingerprint = fingerprintOf(text, listOf("text/plain")),
             type = ClipboardContentType.TEXT,
-            diagnosticId = id
+            diagnosticId = id,
+            privacyRevision = metadata.privacyRevision
         )
         ClipboardEventDispatcher.dispatch(event)
         // 同步内容级已知状态：LSPosed 不经 tryReadClipboard，读取层的 30s 已知比对
@@ -61,7 +74,7 @@ class ClipReceiver : BroadcastReceiver() {
         android.util.Log.d(TAG, "[$id] text dispatched")
     }
 
-    private fun handleFile(intent: Intent, pkg: String?) {
+    private fun handleFile(intent: Intent, pkg: String?, metadata: ClipboardEvent) {
         val b64 = intent.getStringExtra(EXTRA_FILE_B64) ?: return
         val mime = intent.getStringExtra(EXTRA_FILE_MIME) ?: "application/octet-stream"
         val size = intent.getIntExtra(EXTRA_FILE_SIZE, 0)
@@ -70,7 +83,9 @@ class ClipReceiver : BroadcastReceiver() {
         try {
             val bytes = android.util.Base64.decode(b64, android.util.Base64.DEFAULT)
             val name = fileBaseName(mime, System.currentTimeMillis())
-            LanHub.client?.pushFile(bytes, name, mime)
+            ClipboardPrivacy.runIfAllowed(metadata) {
+                LanHub.client?.pushFile(bytes, name, mime, automaticEvent = metadata)
+            }
             android.util.Log.d(TAG, "[$id] file upload queued via HTTP")
         } catch (t: Throwable) {
             android.util.Log.d(TAG, "[$id] file decode/upload error ${t.javaClass.simpleName}")

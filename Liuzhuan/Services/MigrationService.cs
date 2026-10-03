@@ -14,6 +14,7 @@ public static class MigrationService
     public sealed class Settings
     {
         public bool ClipboardMonitorEnabled { get; set; }
+        public string[]? ExcludedClipboardApps { get; set; } = Array.Empty<string>();
         public HeicConversionMode HeicConversion { get; set; } = HeicConversionMode.Png;
         public bool LanEnabled { get; set; }
         public int Port { get; set; } = 8899;
@@ -84,9 +85,9 @@ public static class MigrationService
                 foreach (var item in manifest.Items)
                 {
                     ct.ThrowIfCancellationRequested();
-                    if (item.IsFile)
+                    if (item.HasFileSource)
                     {
-                        if (!File.Exists(item.FilePath)) throw new FileNotFoundException("素材原文件不存在，请移除失效素材后重试：" + item.DisplayName);
+                        if (!File.Exists(item.FilePath)) throw new FileNotFoundException("素材原文件无法访问，请在来源管理中重新定位，或移除失效索引后重试：" + item.DisplayName);
                         item.FilePath = await Pack(item.FilePath);
                         item.Size = manifest.Files.Single(f => f.Path == item.FilePath).Size;
                     }
@@ -124,6 +125,8 @@ public static class MigrationService
         var cfg = manifest.Settings;
         try { cfg.SavedViews = SavedViewStore.NormalizeAll(cfg.SavedViews); }
         catch (ArgumentException ex) { throw new InvalidDataException("常用筛选无效。", ex); }
+        try { cfg.ExcludedClipboardApps = ClipboardPrivacyPolicy.NormalizeApps(cfg.ExcludedClipboardApps); }
+        catch (ArgumentException ex) { throw new InvalidDataException("剪贴板应用排除配置无效。", ex); }
         if (!Enum.IsDefined(typeof(HeicConversionMode), cfg.HeicConversion) || cfg.Port is < 1 or > 65533 || cfg.Password == null || cfg.Password.Length > 128)
             throw new InvalidDataException("迁移包配置无效。");
         if (manifest.Items.Count > 100000) throw new InvalidDataException("素材条目过多。");
@@ -154,7 +157,7 @@ public static class MigrationService
             {
                 throw new InvalidDataException("素材分组、标签或备注无效。", ex);
             }
-            if ((item.IsFile && !paths.Contains(item.FilePath)) || (!item.IsFile && item.FilePath != "") || (item.ThumbnailPath != "" && !paths.Contains(item.ThumbnailPath)))
+            if ((item.HasFileSource && !paths.Contains(item.FilePath)) || (item.ThumbnailPath != "" && !paths.Contains(item.ThumbnailPath)))
                 throw new InvalidDataException("素材引用了包外文件。");
         }
         return manifest;
@@ -192,12 +195,12 @@ public static class MigrationService
             }
             foreach (var item in manifest.Items)
             {
-                if (item.IsFile) item.FilePath = ContainedPath(root, item.FilePath);
+                if (item.HasFileSource) item.FilePath = ContainedPath(root, item.FilePath);
                 if (item.ThumbnailPath != "") item.ThumbnailPath = ContainedPath(root, item.ThumbnailPath);
             }
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "data.json"), JsonSerializer.Serialize(manifest.Items, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "savedviews.json"), JsonSerializer.Serialize(manifest.Settings.SavedViews, Json), ct);
-            await File.WriteAllTextAsync(System.IO.Path.Combine(root, "appsettings.json"), JsonSerializer.Serialize(new { manifest.Settings.ClipboardMonitorEnabled, HeicConversion = manifest.Settings.HeicConversion.ToString() }, Json), ct);
+            await File.WriteAllTextAsync(System.IO.Path.Combine(root, "appsettings.json"), JsonSerializer.Serialize(new { manifest.Settings.ClipboardMonitorEnabled, manifest.Settings.ExcludedClipboardApps, HeicConversion = manifest.Settings.HeicConversion.ToString() }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "lan.json"), JsonSerializer.Serialize(new { Enabled = manifest.Settings.LanEnabled, manifest.Settings.Port, manifest.Settings.Password }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "migration-settings.json"), JsonSerializer.Serialize(manifest.Settings, Json), ct);
             ct.ThrowIfCancellationRequested();

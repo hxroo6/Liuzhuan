@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net7.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Liuzhuan/Services/DataStore.cs" Link="Production/DataStore.cs" />
+    <Compile Include="../../Liuzhuan/Services/SourceRelinkService.cs" Link="Production/SourceRelinkService.cs" />
+    <Compile Include="../../Liuzhuan/Services/ConfigService.cs" Link="Production/ConfigService.cs" />
+    <Compile Include="../../Liuzhuan/Services/Lan/LanItemSummary.cs" Link="Production/LanItemSummary.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialItem.cs" Link="Production/MaterialItem.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialOrganization.cs" Link="Production/MaterialOrganization.cs" />
+    <Compile Include="../../Liuzhuan/Utils/FileClassifier.cs" Link="Production/FileClassifier.cs" />
+    <Compile Include="../../Liuzhuan/Utils/Logger.cs" Link="Production/Logger.cs" />
+    <Compile Include="../DataStoreChecks/TestApp.cs" Link="TestApp.cs" />
+  </ItemGroup>
+</Project>

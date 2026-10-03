@@ -1,0 +1,38 @@
+<Window x:Class="Liuzhuan.Views.ClipboardPrivacyWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="剪贴板隐私" Width="560" Height="470" WindowStartupLocation="CenterOwner" ResizeMode="NoResize"
+        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="13">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}"><Setter Property="FontSize" Value="13"/></Style>
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="{StaticResource PanelLightBrush}"/><Setter Property="Foreground" Value="{StaticResource TextBrush}"/>
+            <Setter Property="CaretBrush" Value="{StaticResource AccentBrush}"/><Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/><Setter Property="BorderThickness" Value="1"/>
+            <Style.Triggers><Trigger Property="IsKeyboardFocusWithin" Value="True"><Setter Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger></Style.Triggers>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24" Background="{StaticResource PanelBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="掌控自动采集" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock Text="仅影响本机复制自动收藏。手动粘贴、分享和接收素材仍可使用。" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,8,0,16"/>
+        </StackPanel>
+        <StackPanel Grid.Row="1">
+            <TextBlock x:Name="StateText" Foreground="{StaticResource AccentBrush}" Margin="0,0,0,8"/>
+            <WrapPanel Margin="0,0,0,18">
+                <Button Content="暂停 15 分钟" Click="Pause15_Click" Padding="12,6" Margin="0,0,8,0"/>
+                <Button Content="暂停 1 小时" Click="PauseHour_Click" Padding="12,6" Margin="0,0,8,0"/>
+                <Button Content="恢复自动采集" Click="Resume_Click" Padding="12,6"/>
+            </WrapPanel>
+        </StackPanel>
+        <TextBlock Grid.Row="2" Text="排除应用 · 每行一个进程名称" Margin="0,0,0,8"/>
+        <TextBox Grid.Row="3" x:Name="AppsText" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" Padding="10" FontSize="14" TextWrapping="NoWrap"/>
+        <StackPanel Grid.Row="4" Margin="0,10,0,14">
+            <TextBlock Text="例如 WeChat.exe、KeePassXC.exe，可从任务管理器的「详细信息」查看。名单非空时，无法识别来源的自动采集也会跳过。此设置不会删除已保存素材。" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" FontSize="12"/>
+            <TextBlock x:Name="ErrorText" Foreground="{StaticResource WarmBrush}" TextWrapping="Wrap" Margin="0,8,0,0"/>
+        </StackPanel>
+        <DockPanel Grid.Row="5" LastChildFill="False">
+            <Button DockPanel.Dock="Right" Content="保存并关闭" IsDefault="True" Click="Save_Click" Padding="18,7"/>
+            <Button DockPanel.Dock="Right" Content="关闭" IsCancel="True" Padding="18,7" Margin="0,0,10,0"/>
+        </DockPanel>
+    </Grid>
+</Window>
