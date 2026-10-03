@@ -19,6 +19,7 @@ public static class MigrationService
         public int Port { get; set; } = 8899;
         public string Password { get; set; } = "";
         public bool AutoStart { get; set; }
+        public List<SavedMaterialView>? SavedViews { get; set; } = new();
     }
     public sealed class Payload
     {
@@ -46,7 +47,7 @@ public static class MigrationService
     public static Manifest Snapshot(IEnumerable<MaterialItem> items, Settings settings) => new()
     {
         Items = JsonSerializer.Deserialize<List<MaterialItem>>(JsonSerializer.Serialize(items.ToList(), Json), Json)!,
-        Settings = settings
+        Settings = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings, Json), Json)!
     };
 
     public static async Task ExportAsync(string destination, Manifest snapshot, IProgress<string>? progress, CancellationToken ct)
@@ -121,6 +122,8 @@ public static class MigrationService
         if (manifest.Format != "LiuzhuanMigration" || manifest.Version != 1 || manifest.Settings == null || manifest.Items == null || manifest.Files == null)
             throw new InvalidDataException("迁移包版本不支持，请使用匹配版本的流转。");
         var cfg = manifest.Settings;
+        try { cfg.SavedViews = SavedViewStore.NormalizeAll(cfg.SavedViews); }
+        catch (ArgumentException ex) { throw new InvalidDataException("常用筛选无效。", ex); }
         if (!Enum.IsDefined(typeof(HeicConversionMode), cfg.HeicConversion) || cfg.Port is < 1 or > 65533 || cfg.Password == null || cfg.Password.Length > 128)
             throw new InvalidDataException("迁移包配置无效。");
         if (manifest.Items.Count > 100000) throw new InvalidDataException("素材条目过多。");
@@ -193,6 +196,7 @@ public static class MigrationService
                 if (item.ThumbnailPath != "") item.ThumbnailPath = ContainedPath(root, item.ThumbnailPath);
             }
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "data.json"), JsonSerializer.Serialize(manifest.Items, Json), ct);
+            await File.WriteAllTextAsync(System.IO.Path.Combine(root, "savedviews.json"), JsonSerializer.Serialize(manifest.Settings.SavedViews, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "appsettings.json"), JsonSerializer.Serialize(new { manifest.Settings.ClipboardMonitorEnabled, HeicConversion = manifest.Settings.HeicConversion.ToString() }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "lan.json"), JsonSerializer.Serialize(new { Enabled = manifest.Settings.LanEnabled, manifest.Settings.Port, manifest.Settings.Password }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "migration-settings.json"), JsonSerializer.Serialize(manifest.Settings, Json), ct);

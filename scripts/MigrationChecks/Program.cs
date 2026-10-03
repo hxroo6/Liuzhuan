@@ -26,9 +26,12 @@ internal static class Program
             new MaterialItem { Id="c", Type=MaterialType.Other, DisplayName="同名素材", FilePath=secondSource },
             new MaterialItem { Id="d", Type=MaterialType.Other, DisplayName="重复引用", FilePath=source }
         };
-        var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true };
+        var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true,
+            SavedViews=new(){new SavedMaterialView{Name="收藏参考",Tab="Favorites",GroupName="视觉参考",Tag="封面",Keyword="备注"},new SavedMaterialView{Name="未分组",GroupName=""}} };
         void Check(bool ok,string name){if(!ok)throw new Exception(name);Console.WriteLine("PASS "+name);}
         var snapshot=MigrationService.Snapshot(items, settings);
+        settings.SavedViews.Clear();
+        Check(snapshot.Settings.SavedViews!.Count==2, "snapshot isolates saved filter rules from later configuration changes");
         items[0].Tags[0]="原库随后修改";
         items[0].GroupName="原库的新分组";
         items[0].Note="原库的新备注";
@@ -36,6 +39,7 @@ internal static class Program
         var package=Path.Combine(root,"roundtrip.zip");
         await MigrationService.ExportAsync(package,snapshot,null,default);
         var manifest=MigrationService.ReadManifest(package);
+        Check(manifest.Settings.SavedViews!.Count==2 && manifest.Settings.SavedViews[0].Tag=="封面" && manifest.Settings.SavedViews[1].GroupName=="", "export preserves named rules and ungrouped criteria");
         Check(manifest.Version==1 && manifest.Items[0].GroupName=="视觉参考" && manifest.Items[0].Tags.SequenceEqual(new[]{"封面", "待用"}) && manifest.Items[0].Note=="换机后保留的备注\n第二行", "version-1 export retains groups, tags and multiline notes");
         Check(manifest.Files.Count==3,"deduplicates repeated paths while retaining same-name distinct files");
         Check(manifest.Items[0].FilePath.StartsWith("files/") && snapshot.Items[0].FilePath==source,"portable paths; original UI snapshot unchanged");
@@ -54,6 +58,8 @@ internal static class Program
         Check(File.ReadAllBytes(restored[0].FilePath).SequenceEqual(File.ReadAllBytes(Path.Combine(moved,"同名素材.bin"))) && File.ReadAllText(restored[2].FilePath)=="another file","original file bytes survive relocation and filename collisions");
         Check(restored[0].Size==new FileInfo(restored[0].FilePath).Length && File.Exists(restored[0].ThumbnailPath),"file size refreshed and thumbnail path remapped");
         var applied=MigrationService.ApplyPending(target)!;
+        var importedRules=new SavedViewStore(imported);
+        Check(importedRules.LoadError==null && importedRules.Views.Count==2 && importedRules.Views[0].Keyword=="备注", "new PC reloads portable saved rules from its imported library");
         Check(applied.AutoStart && applied.LanEnabled && applied.Port==8999 && applied.Password=="test-only" && applied.HeicConversion==HeicConversionMode.Jpeg,"portable settings restored");
         Check(Directory.GetFiles(target,"config.before-import-*.json").Any(p=>File.ReadAllText(p)==oldConfig) && File.ReadAllText(Path.Combine(existing,"keep.txt"))=="old library","original config backup and original library retained");
         Check(MigrationService.ApplyPending(target)==null,"activation is one-shot");
@@ -67,9 +73,11 @@ internal static class Program
         void EditManifest(ZipArchive z,Action<MigrationService.Manifest> edit){var e=z.GetEntry("manifest.json")!;MigrationService.Manifest m;using(var s=e.Open())m=JsonSerializer.Deserialize<MigrationService.Manifest>(s,MigrationService.Json)!;edit(m);e.Delete();using var output=z.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(output,m,MigrationService.Json);}
         void EditManifestJson(ZipArchive z,Action<JsonObject> edit){var e=z.GetEntry("manifest.json")!;JsonObject m;using(var s=e.Open())m=JsonNode.Parse(s)!.AsObject();edit(m);e.Delete();using var output=z.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(output,m,MigrationService.Json);}
         var legacyPackage=Variant("legacy-organization",z=>EditManifestJson(z,m=>{
+            m["Settings"]!.AsObject().Remove("SavedViews");
             foreach(var item in m["Items"]!.AsArray()) {var obj=item!.AsObject();obj.Remove("GroupName");obj.Remove("Tags");obj.Remove("Note");}
         }));
         var legacyManifest=MigrationService.ReadManifest(legacyPackage);
+        Check(legacyManifest.Settings.SavedViews!.Count==0, "old migration packages without saved rules remain supported");
         Check(legacyManifest.Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "legacy packages without organization fields normalize to empty");
         var legacyTarget=Path.Combine(root,"legacy-pc");
         await MigrationService.PrepareImportAsync(legacyPackage,legacyTarget,null,default,legacyManifest);
@@ -82,6 +90,8 @@ internal static class Program
         Check(MigrationService.ReadManifest(nullPackage).Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "explicit null organization values normalize to empty");
         async Task Reject(string path,string label){var dest=Path.Combine(root,Guid.NewGuid().ToString("N"));bool failed=false;try{await MigrationService.PrepareImportAsync(path,dest,null,default);}catch(Exception e)when(e is InvalidDataException or JsonException){failed=true;}Check(failed && !File.Exists(Path.Combine(dest,"migration-pending.json")) && !File.Exists(Path.Combine(dest,"config.json")),label);}
         await Reject(Variant("group-too-long",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]=new string('组',49))),"rejects overlong group before activation");
+        await Reject(Variant("invalid-saved-rule",z=>EditManifestJson(z,m=>m["Settings"]!["SavedViews"]![0]!["Tab"]="Unknown")),"rejects invalid saved rules before activation");
+        await Reject(Variant("duplicate-saved-rule",z=>EditManifestJson(z,m=>m["Settings"]!["SavedViews"]![1]!["Name"]="收藏参考")),"rejects duplicate rule names before activation");
         await Reject(Variant("group-control",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]="第一行\n第二行")),"rejects multiline group before activation");
         await Reject(Variant("tag-separator",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(JsonValue.Create("设计,稿")))),"rejects a single tag containing an editor separator before activation");
         await Reject(Variant("too-many-tags",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(Enumerable.Range(0,21).Select(i=>JsonValue.Create("标签"+i)).ToArray()))),"rejects too many tags before activation");

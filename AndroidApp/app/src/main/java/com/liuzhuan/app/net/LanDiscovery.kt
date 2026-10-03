@@ -2,7 +2,6 @@ package com.liuzhuan.app.net
 
 import java.net.DatagramPacket
 import java.net.DatagramSocket
-import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.InetSocketAddress
 import kotlinx.coroutines.Dispatchers
@@ -16,6 +15,7 @@ import kotlinx.coroutines.ensureActive
  */
 object LanDiscovery {
 
+    // 发现端口固定，OFFER 中的控制面端口允许电脑自定义。
     const val DISCOVER_PORT = 8901
     private const val MAGIC = "LIUZHUAN_DISCOVER"
     private const val OFFER = "LIUZHUAN_OFFER"
@@ -36,10 +36,14 @@ object LanDiscovery {
             val broadcastAddr = InetSocketAddress(destination, discoveryPort)
             socket.send(DatagramPacket(sendData, sendData.size, broadcastAddr))
 
-            val end = System.currentTimeMillis() + timeoutMs
+            // 单调时钟避免系统时间校准让搜索提前结束或持续不退。
+            val started = System.nanoTime()
             val buf = ByteArray(1024)
-            while (System.currentTimeMillis() < end) {
+            while (true) {
                 currentCoroutineContext().ensureActive()
+                val remainingMs = timeoutMs - (System.nanoTime() - started) / 1_000_000
+                if (remainingMs <= 0) break
+                socket.soTimeout = remainingMs.coerceIn(1, 150).toInt()
                 try {
                     val pkt = DatagramPacket(buf, buf.size)
                     socket.receive(pkt)

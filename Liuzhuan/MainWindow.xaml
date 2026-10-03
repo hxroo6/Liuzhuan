@@ -295,10 +295,11 @@
                         <TextBlock x:Name="ConnectionText" Text="局域网 · 等待连接" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
                     <Grid Grid.Row="3" Margin="0,3,0,0">
-                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="6"/><ColumnDefinition Width="*"/><ColumnDefinition Width="6"/><ColumnDefinition Width="90"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <Button x:Name="GroupFilterButton" Click="GroupFilter_Click" Style="{StaticResource ActionButtonStyle}" Background="{StaticResource PanelLightBrush}" Padding="9,5"><DockPanel><TextBlock DockPanel.Dock="Right" Text="▾" Margin="5,0,0,0"/><TextBlock x:Name="GroupFilterText" Text="分组：全部" FontSize="11" TextTrimming="CharacterEllipsis"/></DockPanel></Button>
                         <Button x:Name="TagFilterButton" Grid.Column="2" Click="TagFilter_Click" Style="{StaticResource ActionButtonStyle}" Background="{StaticResource PanelLightBrush}" Padding="9,5"><DockPanel><TextBlock DockPanel.Dock="Right" Text="▾" Margin="5,0,0,0"/><TextBlock x:Name="TagFilterText" Text="标签：全部" FontSize="11" TextTrimming="CharacterEllipsis"/></DockPanel></Button>
-                        <Button x:Name="OrganizationClearButton" Grid.Column="3" Content="×" Click="ClearOrganizationFilters_Click" Style="{StaticResource IconButtonStyle}" Width="26" Margin="4,0,0,0" Visibility="Collapsed" ToolTip="清除分组和标签筛选" AutomationProperties.Name="清除分组和标签筛选"/>
+                        <Button x:Name="SavedViewButton" Grid.Column="4" Click="SavedViews_Click" Style="{StaticResource ActionButtonStyle}" Background="{StaticResource PanelLightBrush}" Padding="8,5" ToolTip="保存及打开常用筛选"><DockPanel><TextBlock DockPanel.Dock="Right" Text="▾" Margin="4,0,0,0"/><TextBlock x:Name="SavedViewText" Text="常用" FontSize="11" TextTrimming="CharacterEllipsis"/></DockPanel></Button>
+                        <Button x:Name="OrganizationClearButton" Grid.Column="5" Content="×" Click="ClearOrganizationFilters_Click" Style="{StaticResource IconButtonStyle}" Width="26" Margin="4,0,0,0" Visibility="Collapsed" ToolTip="清除分组和标签筛选" AutomationProperties.Name="清除分组和标签筛选"/>
                     </Grid>
                 </Grid>
                 <Border Grid.Row="1" Margin="12,10,12,6" Padding="2" Background="{StaticResource PanelLightBrush}" CornerRadius="8">

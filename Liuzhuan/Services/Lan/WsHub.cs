@@ -24,6 +24,9 @@ public class WsHub
 
     /// <summary>最近素材摘要提供者（list_sync 用），由外部注入</summary>
     public Func<List<LanItemSummary>>? ListProvider { get; set; }
+    public Func<LanListSnapshot>? SnapshotProvider { get; set; }
+    /// <summary>Capture and enqueue the reply on the same owner thread as material broadcasts.</summary>
+    public Action<Action>? SnapshotDispatcher { get; set; }
 
     /// <summary>素材详情提供者（get_item 用）：id → 素材</summary>
     public Func<string, MaterialItem?>? ItemLookup { get; set; }
@@ -189,8 +192,20 @@ public class WsHub
     {
         try
         {
-            var items = ListProvider?.Invoke() ?? new List<LanItemSummary>();
-            var snapshotSeq = items.FirstOrDefault()?.Sequence ?? 0;
+            if (SnapshotDispatcher != null) SnapshotDispatcher(() => SendListSnapshot(socket));
+            else SendListSnapshot(socket);
+        }
+        catch (Exception ex)
+        {
+            Logger.Error("Lan: list_sync failed: {0}", ex.Message);
+        }
+    }
+
+    private void SendListSnapshot(IWebSocketConnection socket)
+    {
+            var snapshot = SnapshotProvider?.Invoke();
+            var items = snapshot?.Items ?? ListProvider?.Invoke() ?? new List<LanItemSummary>();
+            var snapshotSeq = snapshot?.Sequence ?? items.FirstOrDefault()?.Sequence ?? 0;
             Send(socket, new LanMessage
             {
                 Type = "list_data",
@@ -209,11 +224,6 @@ public class WsHub
                 }
             });
             Logger.Run("Lan: list_sync sent {0} items (sequence={1})", items.Count, snapshotSeq);
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("Lan: list_sync failed: {0}", ex.Message);
-        }
     }
 
     /// <summary>广播新增素材摘要给所有已连接设备（接收页实时同步）</summary>

@@ -29,6 +29,18 @@ public class LanServer : IDisposable
         set => _hub.ListProvider = value;
     }
 
+    public Func<LanListSnapshot>? SnapshotProvider
+    {
+        get => _hub.SnapshotProvider;
+        set => _hub.SnapshotProvider = value;
+    }
+
+    public Action<Action>? SnapshotDispatcher
+    {
+        get => _hub.SnapshotDispatcher;
+        set => _hub.SnapshotDispatcher = value;
+    }
+
     /// <summary>素材详情提供者（get_item / HTTP 下载），由 MainWindow 注入</summary>
     public Func<string, Models.MaterialItem?>? ItemLookup
     {

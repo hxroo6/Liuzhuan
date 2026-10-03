@@ -30,8 +30,8 @@ class LanClient(
     private val onLog: (String) -> Unit = {},
     private val onListData: (List<Proto.ItemSummary>, Long) -> Unit = { _, _ -> },
     private val onItemAdded: (Proto.ItemSummary) -> Unit = {},
-    private val onItemDeleted: (String) -> Unit = {},
-    private val onItemCleared: () -> Unit = {},
+    private val onItemDeleted: (String, Long) -> Unit = { _, _ -> },
+    private val onItemCleared: (Long) -> Unit = {},
     private val onItemData: (Proto.ItemData) -> Unit = {}
 ) {
     sealed class State {
@@ -222,12 +222,14 @@ class LanClient(
                     }
                     "item_deleted" -> {
                         val id = Proto.parseItemDeletedId(data)
-                        log("[SYNC] material deleted id=${id.take(8)} sequence=${Proto.parseSequence(data)}")
-                        onItemDeleted(id)
+                        val sequence = Proto.parseSequence(data)
+                        log("[SYNC] material deleted id=${id.take(8)} sequence=$sequence")
+                        onItemDeleted(id, sequence)
                     }
                     "item_cleared" -> {
-                        log("[SYNC] materials cleared")
-                        onItemCleared()
+                        val sequence = Proto.parseSequence(data)
+                        log("[SYNC] materials cleared sequence=$sequence")
+                        onItemCleared(sequence)
                     }
                     "item_data" -> onItemData(Proto.parseItemData(data))
                 }

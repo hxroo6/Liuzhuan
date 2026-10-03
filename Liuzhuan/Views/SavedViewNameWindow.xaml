@@ -1,0 +1,10 @@
+<Window x:Class="Liuzhuan.Views.SavedViewNameWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="保存常用筛选" Width="440" SizeToContent="Height" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="13">
+    <StackPanel Margin="24" Background="{StaticResource PanelBrush}">
+        <TextBlock x:Name="Heading" Text="下次一键找到这组素材" FontSize="21" FontWeight="SemiBold"/>
+        <TextBlock x:Name="Criteria" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,18"/>
+        <TextBlock Text="筛选名称" Margin="0,0,0,8"/>
+        <TextBox x:Name="NameInput" Padding="10,9" Background="{StaticResource PanelLightBrush}" BorderBrush="{StaticResource BorderBrush}" Foreground="{StaticResource TextBrush}" CaretBrush="{StaticResource AccentBrush}" AutomationProperties.Name="常用筛选名称"/>
+        <TextBlock x:Name="Status" Text="只保存条件；新增符合条件的素材会自动出现。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,20"/>
+        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="取消" IsCancel="True" Style="{StaticResource ActionButtonStyle}" Padding="16,8" Margin="0,0,8,0"/><Button Content="保存" IsDefault="True" Click="Save_Click" Style="{StaticResource ActionButtonStyle}" Padding="16,8"/></StackPanel>
+    </StackPanel>
+</Window>

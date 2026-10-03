@@ -6,12 +6,14 @@ using Liuzhuan.Utils;
 namespace Liuzhuan.Services.Lan;
 
 /// <summary>
-/// UDP 自动发现（端口 = 控制面 + 2，默认 8901）
+/// UDP 自动发现固定使用 8901；控制面端口可独立配置并通过 OFFER 返回。
 /// 手机端广播 LIUZHUAN_DISCOVER → 电脑端回复 LIUZHUAN_OFFER（IP/端口/设备名）
 /// 免去手动输入 IP 的麻烦
 /// </summary>
 public class UdpDiscovery : IDisposable
 {
+    public const int DiscoveryPort = 8901;
+    private readonly object _lifecycleLock = new();
     private UdpClient? _udp;
     private CancellationTokenSource? _cts;
     private const string DiscoverMagic = "LIUZHUAN_DISCOVER";
@@ -19,29 +21,54 @@ public class UdpDiscovery : IDisposable
 
     public void Start(int wsPort)
     {
-        if (_udp != null) return;
-        var port = wsPort + 2;
-        _udp = new UdpClient();
-        _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
-        _udp.Client.Bind(new IPEndPoint(IPAddress.Any, port));
-        _cts = new CancellationTokenSource();
-        _ = Task.Run(() => ListenLoop(_udp, wsPort, _cts.Token));
-        Logger.Run("UdpDiscovery: listening on UDP port {0}", port);
+        lock (_lifecycleLock)
+        {
+            if (_udp != null) return;
+            if (wsPort is < 1 or > 65534) throw new ArgumentOutOfRangeException(nameof(wsPort));
+            var udp = new UdpClient();
+            var cts = new CancellationTokenSource();
+            try
+            {
+                udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+                udp.Client.Bind(new IPEndPoint(IPAddress.Any, DiscoveryPort));
+                _udp = udp;
+                _cts = cts;
+                // 捕获本次实例，避免 Stop 把字段置空或重启后旧任务读到新 socket。
+                var token = cts.Token;
+                _ = Task.Run(() => ListenLoop(udp, wsPort, token));
+                Logger.Run("UdpDiscovery: listening on UDP port {0} (WS port {1})", DiscoveryPort, wsPort);
+            }
+            catch
+            {
+                udp.Dispose();
+                cts.Dispose();
+                _udp = null;
+                _cts = null;
+                throw;
+            }
+        }
     }
 
     public void Stop()
     {
-        try
+        lock (_lifecycleLock)
         {
-            _cts?.Cancel();
-            _udp?.Close();
+            var udp = _udp;
+            var cts = _cts;
             _udp = null;
             _cts = null;
-            Logger.Run("UdpDiscovery: stopped");
-        }
-        catch (Exception ex)
-        {
-            Logger.Error("UdpDiscovery.Stop failed: {0}", ex.Message);
+            if (udp == null) return;
+            try
+            {
+                cts?.Cancel();
+                udp.Dispose();
+                Logger.Run("UdpDiscovery: stopped");
+            }
+            catch (Exception ex)
+            {
+                Logger.Error("UdpDiscovery.Stop failed: {0}", ex.Message);
+            }
+            finally { cts?.Dispose(); }
         }
     }
 
@@ -65,9 +92,14 @@ public class UdpDiscovery : IDisposable
                 Logger.Run("UdpDiscovery: answered discover from {0}", result.RemoteEndPoint.Address);
             }
             catch (OperationCanceledException) { break; }
+            catch (ObjectDisposedException) when (ct.IsCancellationRequested) { break; }
+            catch (SocketException) when (ct.IsCancellationRequested) { break; }
             catch (Exception ex)
             {
                 Logger.Error("UdpDiscovery: {0}", ex.Message);
+                // 网卡切换等异常不应形成忙循环；取消时立即退出。
+                try { await Task.Delay(150, ct); }
+                catch (OperationCanceledException) { break; }
             }
         }
     }

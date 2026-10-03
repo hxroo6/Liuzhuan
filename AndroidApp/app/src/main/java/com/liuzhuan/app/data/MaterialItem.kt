@@ -14,7 +14,7 @@ data class MaterialItem(
     val name: String,
     val size: Long,
     val time: Long,            // Unix 秒
-    val sequence: Long = 0,    // 服务器自增序号（去重 / gap 检测 / 保序）
+    val sequence: Long = 0,    // 服务器变更序号（去重 / gap 检测），不作为素材创建时间
     val sourceDeviceId: String = ""
 )
 

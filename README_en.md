@@ -10,6 +10,15 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## v1.6.0: saved filters and stable synchronization (local build)
+
+- Open **常用 ▾ → 保存当前筛选** to save a named combination of category, group, tag, and search. Open it with one click later; newly matching materials appear automatically. Update criteria, rename, or remove rules, with a limit of 30.
+- Migration archives restore saved filters and still support older archives. Removing a rule retains all materials.
+- Desktop discovery always listens on UDP 8901 and advertises the actual connection port, so changing the desktop port no longer breaks phone discovery. QR pairing and file transfers retain their existing behavior.
+- Android tracks sequences across additions, deletions, and clears. A gap requests one snapshot, reconnecting resets the baseline, and undo sorts restored materials by their original time. Empty desktop snapshots retain the correct global sequence.
+
+See [competitor references and product roadmap](docs/PRODUCT_ROADMAP.md) for this round's rationale and future directions. Update both apps; after replacing the APK, turn the Liuzhuan accessibility service off and on again. Devices must still be reachable on the LAN. Phone discovery, real cross-monitor dragging, and Android frame rates need device acceptance.
+
 ## v1.5.0: groups, tags, and notes (local build)
 
 - Select materials and click **整理…**, press **F2**, or use the context menu. Each material can have one group, multiple tags, and a note. Enter a new name to create a group; leave it blank for ungrouped materials.

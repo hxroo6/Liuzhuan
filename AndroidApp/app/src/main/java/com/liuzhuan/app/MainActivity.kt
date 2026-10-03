@@ -92,6 +92,8 @@ class MainActivity : ComponentActivity() {
                 // 否则释放 Wi-Fi/CPU 保活锁，后台重连失败，后台复制事件只能积压、
                 // 直到切回前台才 flush（这正是「后台复制失效、切前台才发送」的根因）。
                 if (s == LanClient.State.Connected) {
+                    // 新连接的 sequence 可能从零开始；保留旧画面，等待权威快照。
+                    com.liuzhuan.app.data.MaterialRepository.markSyncing()
                     ContextCompat.startForegroundService(
                         this,
                         Intent(this, ForegroundService::class.java)
@@ -117,12 +119,12 @@ class MainActivity : ComponentActivity() {
                 com.liuzhuan.app.data.MaterialRepository.add(item.toMaterialItem())
             },
             // 接收页：增量删除 → Repository
-            onItemDeleted = { id ->
-                com.liuzhuan.app.data.MaterialRepository.delete(id)
+            onItemDeleted = { id, sequence ->
+                com.liuzhuan.app.data.MaterialRepository.delete(id, sequence)
             },
             // 接收页：清空 → Repository
-            onItemCleared = {
-                com.liuzhuan.app.data.MaterialRepository.clear()
+            onItemCleared = { sequence ->
+                com.liuzhuan.app.data.MaterialRepository.clear(sequence)
             },
             // 接收页：点击素材 → 文字复制 / 文件下载
             onItemData = { data ->

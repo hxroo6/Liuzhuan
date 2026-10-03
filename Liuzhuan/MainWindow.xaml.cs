@@ -22,6 +22,7 @@ namespace Liuzhuan;
 public partial class MainWindow : Window
 {
     private readonly DataStore _dataStore;
+    private readonly SavedViewStore _savedViews;
     private readonly ObservableCollection<MaterialItem> _currentView = new();
     private readonly HotkeyService _hotkeyService = new();
     private readonly LanServer _lanServer = new();
@@ -63,6 +64,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         _dataStore = new DataStore();
+        _savedViews = new SavedViewStore(ConfigService.GetEffectiveDataDir());
         GridView.ItemsSource = _currentView;
         TextView.ItemsSource = _currentView;
         ListView.ItemsSource = _currentView;
@@ -124,7 +126,8 @@ public partial class MainWindow : Window
             _lanServer.TextReceived += OnLanTextReceived;
             _lanServer.ClientCountChanged += OnLanClientCountChanged;
             _lanServer.FileUploaded += OnLanFileUploaded;
-            _lanServer.ListProvider = () => _dataStore.GetRecentSummaries(50);
+            _lanServer.SnapshotDispatcher = action => Dispatcher.Invoke(action);
+            _lanServer.SnapshotProvider = () => new LanListSnapshot(_dataStore.GetRecentSummaries(50), _dataStore.CurrentSequence);
             _lanServer.ItemLookup = id => _dataStore.Items.FirstOrDefault(x => x.Id == id);
             _dataStore.ItemAdded += OnDataStoreItemAdded;
             _dataStore.ItemRemoved += OnDataStoreItemRemoved;
@@ -795,6 +798,7 @@ public partial class MainWindow : Window
         EmptyTitle.Text = _searchKeyword.Length > 0 || HasOrganizationFilter ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
         EmptyDescription.Text = HasOrganizationFilter ? "试试其他分组或标签，或清除筛选" : _searchKeyword.Length > 0 ? "试试更短的关键词，或清除搜索" : _currentTab == "Favorites" ? "点击素材上的星标，常用内容随时取用" : "拖入文件，或点击上方「添加文件」";
         UpdateOrganizationFilters();
+        UpdateSavedViewIndicator();
         UpdateStatusText();
         UpdateSelectionBar();
     }
@@ -1513,7 +1517,7 @@ public partial class MainWindow : Window
                 ClipboardMonitorEnabled = AppSettings.ClipboardMonitorEnabled,
                 HeicConversion = AppSettings.HeicConversion,
                 LanEnabled = LanConfig.Enabled, Port = LanConfig.Port, Password = LanConfig.Password,
-                AutoStart = StartupService.IsEnabled()
+                AutoStart = StartupService.IsEnabled(), SavedViews = _savedViews.Views.ToList()
             }), QuickExit) { Owner = this };
             ShowToolDialog(window);
         };

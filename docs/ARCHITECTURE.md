@@ -17,7 +17,7 @@
 
 - **PC = Hub 服务器**：WPF (.NET 7)，Fleck WebSocket + 手写 TcpListener HTTP。
 - **Android = 客户端**：Kotlin 2.0.21 + Compose（BOM 2024.12.01）+ OkHttp 4.12 + DataStore；`minSdk=compileSdk=targetSdk=36`，只支持 Android 16+。namespace `com.liuzhuan.app`。
-- 端口实现有个间接层：`LanServer.Start()` 把 `LanConfig.Port`(8899) 传给三个子服务，HTTP 在 `Start(port+1)`，UDP 在 `UdpDiscovery.Start(wsPort)` 内部再 `+2` → **实际 8899/8900/8901**。Android 的 `LanDiscovery.DISCOVER_PORT=8901` 是硬编码（见 KNOWN_ISSUES 耦合项）。
+- 端口：`LanServer.Start()` 使用 `LanConfig.Port`(默认 8899) 作为 WS，HTTP 为 port+1；UDP 发现固定 8901，在 OFFER 中返回实际 WS 端口。修改连接端口不改变发现端口。
 - 认证：口令 6 位数字，WS 握手 data 带 `auth=sha256(口令)` + `ts`(Unix 秒)，服务器校验 ts ±300s 与哈希匹配；HTTP 文件上传/下载同规则。传输为局域网明文（Manifest `usesCleartextTraffic="true"`）。
 - 数据目录：PC 运行数据在 `App.DataDir = <exe>/../data`，即工作区根 `data/`（data.json、lan.json、appsettings.json、uploads/、thumbnails/）；`app/logs/run.log` 是运行日志。Android 配置在 DataStore "settings"。
 
@@ -79,7 +79,7 @@
 ### 2.4 接收页数据层
 
 - `MaterialRepository`：object 单例，StateFlow<List<MaterialItem>> + SyncState(IDLE/SYNCING/SYNCED/RESYNCING/ERROR)。内部 LinkedHashMap 以 id 为键。
-- 同步语义：`replaceAll`(快照)、`add`/`delete`/`clear`(增量)。**gap 检测只在 add 做**：收到 sequence > lastSequence+1 → RESYNCING + onSequenceGap 回调请求新快照。排序按 sequence 降序 fallback time。
+- 同步语义：`replaceAll`(快照)、`add`/`delete`/`clear`(增量)。三类增量统一先验序：陈旧/重复忽略，缺口保留当前画面并一次性请求新快照。同 ID 新序号更新摘要，不可见 ID 删除也消费序号；markSyncing 等待新连接快照，replaceAll 包括序号 0 都重置基线。排序按 time 降序，同秒保持快照次序并恢复最多 512 个近期删除 ID 的原位置。
 - UI：MainScreen `collectAsStateWithLifecycle` 主线程 collect；列表仅展示 take(50)。
 - 快照序列号语义注意：PC `list_data` 里每条 item 的 sequence 都是**全局计数器同一时刻的值**（见 §3.3），逐条单调递增只对 item_added 增量成立。
 
@@ -92,7 +92,7 @@
 
 | 组件 | 职责要点 |
 |---|---|
-| `MainWindow.xaml.cs` | 组合根：创建 DataStore/LanServer/ClipboardMonitorService；向 LanServer 注入 `ListProvider=()=>_dataStore.GetRecentSummaries(50)` 和 `ItemLookup`；订阅 DataStore 三事件做广播；`OnLanTextReceived`→`_dataStore.Add`(由此自动广播 item_added 给包括来源在内的所有设备)；PC 剪贴板监控开关(AppSettings.ClipboardMonitorEnabled)开启时把 PC 复制内容收入素材库 |
+| `MainWindow.xaml.cs` | 组合根：创建 DataStore/LanServer/ClipboardMonitorService；注入 SnapshotDispatcher/SnapshotProvider，在一次 UI 调度中捕获最近 50 项和 CurrentSequence 并排入 WS 发送，避免取快照后增量抢先；订阅 DataStore 三事件广播；OnLanTextReceived→Add 广播给所有设备；ItemLookup 提供详情，剪贴板开关控制复制收集 |
 | `Services/DataStore.cs` | ObservableCollection 素材库 + JSON 持久化（500ms 防抖、tmp 文件替换、锁重试 3 次）；变更序号 `_sequence`(Interlocked 递增，**内存计数重启归零**)；事件 ItemAdded/ItemRemoved/ItemCleared；删除撤回 undo 栈 50 步；加载时校验源文件存在性 |
 | `Services/Lan/WsHub.cs` | Fleck 会话管理 ConcurrentDictionary；消息 switch(hello/heartbeat/sync_text+clipboard_push/list_sync/get_item/bye)；welcome 前 AuthService 校验；**同名设备重连自动踢旧 session**；Broadcast* 三方法全局广播 |
 | `Services/Lan/LanServer.cs` | 组合根子服务(WsHub/FileHttpServer/UdpDiscovery)，`IsListening` 用 TCP 自连 127.0.0.1:Port 自检（Fleck 静默失败检测） |
@@ -221,3 +221,11 @@
 - 清空当前结果先捕获可见 ID；一般视图仅移除非收藏，收藏视图只取消收藏。工具窗口打开期间暂停自动收起，独立标志避免右键菜单关闭时解除保护。
 - 迁移包仍为格式 v1，新增可选组织字段，快照与导入包含它们；旧包兼容。旧程序重新保存索引会丢弃未知字段，因此要保留信息需使用 v1.5.0 或更新程序。普通内容另存不携带内部元数据。
 - 自动检查：OrganizationChecks 验证批量事务、持久化、搜索与兼容；DesktopUiChecks 增加编辑/筛选/移除/撤回与模态窗口保护；MigrationChecks 验证组织字段往返及无效输入拒绝。
+
+### 常用筛选与可靠同步（两端 v1.6.0 本地版本）
+- SavedMaterialView 保存 Name/Tab/Keyword/GroupName/Tag 条件，不保存素材 ID；null 分组不限、空字符串未分组。SavedViewStore 在当前有效素材目录保存 savedviews.json：最多 30 条、名称 40 字符、搜索 256 字符，编辑与迁移共用校验；原子写入后才更新内存，损坏文件不自动覆盖。
+- MainWindow.SavedViews 提供一键应用、保存、更新、重命名和删除；顶部入口不增加额外高度。实时筛选继续使用 DataStore.Search，规则自然包含后来匹配的素材。保存命名窗口使用模态收起保护。
+- MigrationService.Settings 增加可选 SavedViews，快照深复制设置，导入在独立库生成 savedviews.json；缺字段/null 视为空，超限/重复名/无效分类在激活前拒绝。
+- UdpDiscovery 固定 UDP 8901，OFFER 保持原字段并返回实际 WS 端口；局部捕获 socket/token 加生命周期锁，Stop/重启不让旧任务操作新 socket。Android 单调截止时间限制接收预算，保留 IO 与取消。
+- LanClient 删除/清空回调透传现有 sequence；MaterialRepository 对全部增量验序，更新同 ID 摘要并消费每次变化。PC SnapshotProvider 显式给全局序，包括空库；SnapshotDispatcher 将捕获与发送放在素材变更的同一 UI 调度，协议字段不变。
+- 检查入口：SavedViewChecks、DesktopUiChecks、MigrationChecks、SnapshotChecks（临时端口实际 WS）、LanAddressChecks/UdpDiscoveryChecks（固定 8901 实际 UDP，先停用户程序）、AndroidSyncChecks（链接生产 Repository 和模型，只有日志/Proto 类型为桩）。真机后台复制和物理跨屏仍单独验收。

@@ -15,8 +15,8 @@ import kotlinx.coroutines.flow.asStateFlow
  * - snapshot（replaceAll）：首次连接 / 重连后全量替换
  * - add / update / delete / clear：增量事件
  * - 去重：以 id 为唯一键（Map），避免 snapshot + delta 叠加产生重复
- * - 保序：按服务器 sequence + time 排序
- * - sequence gap 检测：发现丢包 → 请求 resync（由连接层重新拉 snapshot）
+ * - 素材排序：time 降序，同秒保持 snapshot 次序并记住近期删除位置
+ * - 全部增量共用 sequence 验序，丢包不应用后续增量，等待 resync snapshot
  */
 object MaterialRepository {
 
@@ -33,8 +33,15 @@ object MaterialRepository {
     @Volatile
     private var lastSequence: Long = 0
 
+    /** 建连或 gap 后先等权威快照，不让增量改动旧连接的画面。 */
+    private var awaitingSnapshot = true
+
     /** 本地镜像（id → item，LinkedHashMap 保序） */
     private val map = LinkedHashMap<String, MaterialItem>()
+
+    private val displayOrder = HashMap<String, Long>()
+    private val removedOrder = LinkedHashMap<String, Long>()
+    private var nextDisplayOrder = -1L
 
     /** gap 检测回调（连接层注册：发现丢包时重新请求 snapshot） */
     @Volatile
@@ -44,69 +51,102 @@ object MaterialRepository {
     @Synchronized
     fun replaceAll(items: List<MaterialItem>, sequence: Long) {
         map.clear()
-        items.forEach { map[it.id] = it }
-        if (sequence > 0) lastSequence = sequence
+        displayOrder.clear()
+        removedOrder.clear()
+        nextDisplayOrder = -1L
+        items.forEachIndexed { index, item ->
+            map[item.id] = item
+            displayOrder.putIfAbsent(item.id, index.toLong())
+        }
+        // 包括空库和服务器重启后的 0，不能沿用上个连接的高序号。
+        lastSequence = sequence.coerceAtLeast(0)
+        awaitingSnapshot = false
         emitSorted()
         _syncState.value = SyncState.SYNCED
         Log.d(TAG, "snapshot received count=${items.size} sequence=$sequence")
     }
 
-    /** 增量新增（去重 + gap 检测 + 保序） */
+    /** 新增/去重置顶也会携带新序号；更新同 ID 摘要并消费该次变化。 */
     @Synchronized
     fun add(item: MaterialItem) {
-        if (map.containsKey(item.id)) return
+        if (!acceptSequence(item.sequence)) return
+        val existing = map.containsKey(item.id)
+        val previousOrder = removedOrder.remove(item.id)
+        // 同秒的新素材/重复收集置于前面；撤回保留删除前位置。
+        displayOrder[item.id] = if (existing || previousOrder == null) nextDisplayOrder-- else previousOrder
         map[item.id] = item
         emitSorted()
-        // gap 检测：服务器序号应连续递增；跳跃说明丢包 → 触发 resync
-        if (item.sequence > 0) {
-            if (lastSequence > 0 && item.sequence > lastSequence + 1) {
-                Log.w(TAG, "sequence gap expected=${lastSequence + 1} actual=${item.sequence}")
-                _syncState.value = SyncState.RESYNCING
-                onSequenceGap?.invoke()
-            }
-            if (item.sequence > lastSequence) lastSequence = item.sequence
-        }
         Log.d(TAG, "material added id=${item.id.take(8)} sequence=${item.sequence}")
     }
 
     @Synchronized
     fun update(item: MaterialItem) {
-        map[item.id] = item
-        emitSorted()
-        Log.d(TAG, "material updated id=${item.id.take(8)}")
+        add(item)
     }
 
     @Synchronized
-    fun delete(id: String) {
+    fun delete(id: String, sequence: Long) {
+        if (!acceptSequence(sequence)) return
         if (map.remove(id) != null) {
+            displayOrder.remove(id)?.let { rememberRemovedOrder(id, it) }
             emitSorted()
             Log.d(TAG, "material deleted id=${id.take(8)}")
         }
     }
 
     @Synchronized
-    fun clear() {
+    fun clear(sequence: Long) {
+        if (!acceptSequence(sequence)) return
+        map.keys.forEach { id -> displayOrder[id]?.let { rememberRemovedOrder(id, it) } }
         map.clear()
+        displayOrder.clear()
         emitSorted()
         Log.d(TAG, "materials cleared")
     }
 
+    @Synchronized
     fun markSyncing() {
+        lastSequence = 0
+        awaitingSnapshot = true
         _syncState.value = SyncState.SYNCING
     }
 
+    @Synchronized
     fun markError() {
+        awaitingSnapshot = true
         _syncState.value = SyncState.ERROR
     }
 
-    /** 排序并发射（新→旧：sequence 降序，fallback time 降序） */
+    /** 所有增量先消费序号，再决定是否有实际素材变化。 */
+    private fun acceptSequence(sequence: Long): Boolean {
+        if (awaitingSnapshot || sequence <= lastSequence) return false
+        if (sequence != lastSequence + 1) {
+            Log.w(TAG, "sequence gap expected=${lastSequence + 1} actual=$sequence")
+            awaitingSnapshot = true
+            _syncState.value = SyncState.RESYNCING
+            onSequenceGap?.invoke()
+            return false
+        }
+        lastSequence = sequence
+        return true
+    }
+
+    private fun rememberRemovedOrder(id: String, order: Long) {
+        removedOrder.remove(id)
+        removedOrder[id] = order
+        // 仅保留最近删除的同秒排序辅助信息，避免长时间运行累积无界历史。
+        while (removedOrder.size > MAX_REMEMBERED_REMOVALS) removedOrder.remove(removedOrder.keys.first())
+    }
+
+    /** 序号代表变更，撤回不能因此把旧素材推到列表顶部。 */
     private fun emitSorted() {
         val sorted = map.values.sortedWith(
-            compareByDescending<MaterialItem> { it.sequence }
-                .thenByDescending { it.time }
+            compareByDescending<MaterialItem> { it.time }
+                .thenBy { displayOrder[it.id] ?: Long.MAX_VALUE }
         )
         _materials.value = sorted
     }
 
     private const val TAG = "MaterialRepo"
+    private const val MAX_REMEMBERED_REMOVALS = 512
 }
