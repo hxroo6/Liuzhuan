@@ -41,8 +41,9 @@
                     → ClipboardDeduplicator.shouldProcess       # LRU 64 条指纹 / 2s 时间窗
                     → ClipboardActionPipeline.process           # 进程级 IO scope 异步串行执行 Action
                     → PushToPcAction.execute
-                         Connected  → 先 drain 队列补发积压，再 pushClipboard 当前事件
-                         未连接     → ClipboardEventQueue.enqueue   # FIFO max 50
+                         → AutomaticClipboardDelivery.submit → ClipboardEventQueue # FIFO max 50
+                         → 单一进程级发送器 → LanClient → 等待 stored 回执
+                         → 支持幂等回执时有限重试；断线等待，过期/拒绝/隐私变更明确结束
 ```
 
 | 组件 | 职责要点 | 关键方法 |
@@ -53,17 +54,18 @@
 | `ClipboardCaptureManagerImpl` | 捕获编排；selection 走 `AccessibilityNodeInfo.textSelectionStart/End`（限深 2 层 ×16 子节点）；剪贴板走 `getPrimaryClip` best-effort | `onAccessibilityEvent`、`tryCaptureAfterCopy`、`tryReadClipboard`、`captureOnForeground` |
 | `ClipboardEventDispatcher` | object 单例，捕获事件的唯一出口 | `dispatch` |
 | `ClipboardDeduplicator` | 指纹去重 + 本机写入标记（回环防护） | `shouldProcess`、`markLocal` |
-| `ClipboardEventQueue` | 断线缓存 FIFO max 50，@Synchronized | `enqueue`、`drain` |
-| `PushToPcAction` | pipeline 中唯一动作；发送成功失败均写诊断 StateFlow | `execute` |
+| `ClipboardEventQueue` | 待确认缓存 FIFO max 50，原子更新；保留 5 分钟 | `enqueue`、`head`、`update`、`remove` |
+| `PushToPcAction` | pipeline 中唯一动作；提交进程级回执发送器 | `execute` |
+| `AutomaticClipboardDelivery` | 同一请求最多 3 次；协商能力、隐私、目标身份与期限约束 | `submit`、`wake`、`acknowledge`、`changeTarget` |
 
-统一事件模型 `ClipboardEvent`：text/timestamp/sourcePackage/source/mimeTypes/fingerprint(SHA-256)/type/diagnosticId(`COPY-xxxxxx` 贯穿全链日志)。
+统一事件模型 `ClipboardEvent`：text/timestamp/sourcePackage/source/mimeTypes/fingerprint(SHA-256)/type/diagnosticId(`COPY-xxxxxx` 贯穿全链日志)，另有稳定 requestId(UUID) 与本地 privacyRevision。
 
 ### 2.2 入口与装配（谁在何时接线）
 
 - **`ClipboardMonitorCoordinator`**：object 进程级单例，唯一装配点。持有 deduplicator/queue/pipeline/captureManager + appInForeground(ActivityLifecycleCallbacks) + diagnostic/diagnosticHistory(StateFlow)。`init(context)` 幂等双检锁，被两处调用：
   - `ClipMonitorService.onCreate`（无障碍已启用时）
   - `MainActivity.onCreate`（无障碍未启用时前台测试可用）
-- **`MainActivity.onCreate`**：创建 `LanClient`（7 个回调全部内联注册）存入 `LanHub.client`；注册 `MaterialRepository.onSequenceGap → client.requestSnapshot`。onState 回调里管理前台服务启停（Connected→startForegroundService+`Coordinator.onWsConnected()` flush 队列；AuthFailed/Paused→stopService；**Disconnected 不停**）。Activity 重建会先 disconnect 旧 client 再新建（launchMode=singleTask 缓解频率）。
+- **`MainActivity.onCreate`**：创建 `LanClient`（7 个回调全部内联注册）存入 `LanHub.client`；注册 `MaterialRepository.onSequenceGap → client.requestSnapshot`。onState 回调里管理前台服务启停（Connected→startForegroundService+`Coordinator.onWsConnected()` 唤醒回执发送器；AuthFailed/Paused→stopService；**Disconnected 不停**）。Activity 重建会先 disconnect 旧 client 再新建（launchMode=singleTask 缓解频率）。
 - **ON_RESUME 兜底**：接收页 Compose `DisposableEffect` 生命周期观察里刷新三态无障碍状态 + `captureManager.captureOnForeground()` 直接读剪贴板走同一 Dispatcher。
 - **直连路径（不经 Dispatcher/Pipeline）**：
   - `ProcessTextActivity`（ACTION_PROCESS_TEXT 选中文本直达）：pushClipboard 直发 + 写剪贴板 + markLocalText；
@@ -98,7 +100,7 @@
 | `Services/Lan/LanServer.cs` | 组合根子服务(WsHub/FileHttpServer/UdpDiscovery)，`IsListening` 用 TCP 自连 127.0.0.1:Port 自检（Fleck 静默失败检测） |
 | `Services/Lan/AuthService.cs` | sha256 口令哈希比对 + Unix 秒 ts ±300s 防重放；对照目标为 `LanConfig.PasswordHash` |
 | `Services/Lan/FileHttpServer.cs` | GET `/file/{id}?auth=`、GET `/thumbnail/{id}?auth=`、POST `/upload?name=&auth=`；上传先写 `.part`，收齐声明字节数后转为正式文件并触发 FileUploaded；三种端点使用同一口令鉴权 |
-| `Services/Lan/UdpDiscovery.cs` | 绑定 Port+2(8901)；收到 `LIUZHUAN_DISCOVER` 应答 `LIUZHUAN_OFFER|ip|wsPort|设备名` |
+| `Services/Lan/UdpDiscovery.cs` | 固定绑定 UDP 8901；收到 `LIUZHUAN_DISCOVER` 应答 `LIUZHUAN_OFFER|ip|wsPort|设备名` |
 | `Services/Lan/LanConfig.cs` | lan.json 持久化(键 Enabled/Port/Password)；`GeneratePassword()` 6 位纯数字；**Enabled 默认 false**（新环境首次部署需在 lan.json 置 true 或经 UI 开启） |
 | `Models/MaterialItem.cs` | 素材模型（INotifyPropertyChanged，含缩略图懒加载） |
 
@@ -239,3 +241,12 @@
 - Android ClipboardPrivacyPolicy 为无 Context 的纯策略，ClipboardPrivacyPreferences 负责设备本地持久化；版本标记限制旧设置仅在首次迁移时生效，配置先在 IO 线程确认写入再发布，损坏或保存失败时保守阻止自动采集。捕获时间、来源及运行期版本约束 Dispatcher、异步 Action、两处 flush、ClipReceiver 文件旁路与自动文件重试。设置在连接页自动同步卡片，显式分享/发送不受自动规则影响；核心 scope、检测评分、LSPosed Hook 和服务保活不变。
 - ImageProcessingService 独立 STA 使用 WIC 首帧解码、EXIF方向转换、只缩小和 PNG/JPEG 编码；JPEG 白底，输出不携带拍摄元数据。限制 6400 万像素/32768 单边，逐项失败可继续，输出新建独立目录，取消只清理自身文件。原生编解码期间取消需等待当前操作结束；HEIC 实际兼容取决于系统解码器。
 - 检查：SourceRelinkChecks、DataStoreChecks、DeferredMaterialChecks、PrivacyChecks、AndroidPrivacyChecks（可复跑 PowerShell runner）、ImageProcessingChecks、DesktopUiChecks 与 MigrationChecks；真实手机、GPU/混合 DPI 和不同路由器仍独立验收。
+
+### 回执、完整性与图片预设（两端 v1.8.0 本地版本）
+
+- 自动文字保留稳定请求编号，等待电脑登记回执；welcome 协商幂等回执支持。兼容服务器按请求重发回执，冲突载荷拒绝；旧端仅提交一次，明确未确认。发送状态、隐私规则和目标变化约束有限重试，进程内待发记录与服务器幂等缓存均有界；登记成功不等于持久化事务。
+- MaterialItem 的可选 MaterialIntegrityBaseline 保存 SHA-256、长度、确认时间与源路径/类型；SourceRevision、IntegrityRevision 使异步结果失效。IntegrityService.Snapshot → CheckAsync 只读后台文件，DataStore.ApplyIntegrityResults 应用当前结果，SetIntegrityBaselines 在确认后再次验证来源和元信息。
+- MaterialIntegrityWindow 打开不扫描，用户开始后读取当前列表；取消不应用部分结果。初次记录、接受外部编辑和移除基线均明确确认；“上次检查正常”只代表当次字节，不持续监控。
+- ImageProcessingPresetStore 原子保存素材库 imagepresets.json，严格校验版本、20 个上限与格式/尺寸/质量。ImageProcessingWindow 选择预设仅填参数；损坏预设保留原文件，显式恢复先保留并校验副本。MigrationService 可选 Settings.ImagePresets 写入独立新库，旧包无此字段仍可导入。
+- 迁移包的 payload SHA-256 校验传输字节；素材内容基线记录用户以前确认的内容。两者不能互相替代：来源已变化时导入保留旧基线，使后续检查仍报告变化。
+- 检查：AutoReceiptChecks 包含实际 LanClient/OkHttp ↔ WsHub、幂等与状态机，AndroidPrivacyChecks 保留捕获隐私回归；IntegrityChecks 检查实际文件、取消与迁移，ImagePresetChecks/ImageProcessingChecks 检查参数持久化及真实图片/UI，DesktopUiChecks/迁移/快照/HTTP 检查共同回归。物理安卓、后台 ROM 行为和真实 GPU/DPI 单独验收。

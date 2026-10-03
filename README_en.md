@@ -10,6 +10,15 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## v1.8.0: delivery receipts, file verification, and image presets (local build)
+
+- Automatic clipboard text waits for a receipt confirming PC material registration. Stable request IDs and bounded retries distinguish pending, registered, and unconfirmed deliveries on compatible builds. Privacy rules, event age, and the target PC constrain retries; legacy PCs receive only one submission and report unconfirmed delivery instead of blind retransmission.
+- Open **更多 → 素材内容完整性检查**, or choose **检查文件内容** from a file material's context menu, to compute SHA-256 in the background. Results distinguish an absent baseline, matching content, changed content, a missing source, and a read failure. Checking is opt-in and cancellable. Recording the first baseline or accepting externally edited content requires confirmation; source files are never modified.
+- **处理图片 → 常用预设** saves named format, longest-edge, and JPEG-quality settings. Select to fill in parameters, update, rename, or delete up to 20 presets. Selecting a preset does not start processing; output remains an independent copy.
+- Verification baselines and image presets travel with migration archives. Older libraries and archives remain readable. Source changes and stale background jobs cannot apply old results to a new path.
+
+Receipts and deduplication are bounded in-memory state, not a permanent exactly-once guarantee across process restarts. Registered means accepted by the PC material store, not a durable disk transaction. Verification detects changes relative to an explicitly accepted baseline; it cannot restore lost or damaged content. Real-phone background copying, mixed-DPI dragging, and different networks require separate acceptance. After installing the APK over an existing version, toggle the Liuzhuan accessibility service off and on.
+
 ## v1.7.0: source repair, clipboard privacy, and image actions (local build)
 
 - **更多 → 素材来源管理与重新定位** keeps missing-file records, favorites, tags, and notes. Choose a replacement individually, or scan a specific folder in the background and review candidates before applying them. Ambiguous matches are not bound automatically; scans are cancellable. Records already removed by older builds cannot be reconstructed automatically.

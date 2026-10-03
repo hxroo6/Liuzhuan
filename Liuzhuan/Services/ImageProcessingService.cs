@@ -6,9 +6,7 @@ using Liuzhuan.Models;
 
 namespace Liuzhuan.Services;
 
-public enum ImageOutputFormat { Jpeg, Png }
 public sealed record ImageProcessingSource(string Id, string DisplayName, string FilePath);
-public sealed record ImageProcessingOptions(ImageOutputFormat Format = ImageOutputFormat.Jpeg, int? MaxEdge = 1920, int JpegQuality = 85);
 public sealed record ImageProcessingItemResult(string Id, string DisplayName, string SourcePath, string? OutputPath,
     int SourceWidth, int SourceHeight, int OutputWidth, int OutputHeight, long InputBytes, long OutputBytes, string? Error)
 {

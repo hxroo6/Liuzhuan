@@ -395,6 +395,7 @@ internal static class Program
                 "animation checks never initialize desktop hotspot or network startup");
         }
         finally { SetMotionOverride(null); }
+        IntegrityUiChecks.Run(store, output);
         store.Dispose();
         Console.WriteLine("Rendered to " + output);
     }

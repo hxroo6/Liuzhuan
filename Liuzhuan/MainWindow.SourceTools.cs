@@ -24,4 +24,14 @@ public partial class MainWindow
         CloseHoverPreview();
         ShowToolDialog(new Views.ImageProcessingWindow(ImageProcessingService.Snapshot(items)) { Owner = this });
     }
+
+    private void CheckMaterialIntegrity(IReadOnlyList<MaterialItem> items)
+    {
+        var files = items.Where(x => x.HasFileSource).ToList();
+        if (files.Count == 0)
+        { ShowFeedback("请选择带原文件的素材后检查内容"); return; }
+        CloseHoverPreview();
+        ShowToolDialog(new Views.MaterialIntegrityWindow(_dataStore, files) { Owner = this });
+        RefreshView();
+    }
 }

@@ -684,6 +684,10 @@ public partial class MainWindow : Window
         var sources = new MenuItem { Header = "素材来源管理与重新定位…" };
         sources.Click += (_, _) => ManageSources();
         menu.Items.Add(sources);
+        var integrityFiles = _dataStore.Items.Where(x => x.HasFileSource).ToList();
+        var integrity = new MenuItem { Header = "素材内容完整性检查…", IsEnabled = integrityFiles.Count > 0 };
+        integrity.Click += (_, _) => CheckMaterialIntegrity(integrityFiles);
+        menu.Items.Add(integrity);
         var images = GetSelectedItems();
         var imageAction = new MenuItem { Header = "处理选中图片（缩放 / PNG / JPEG）…", IsEnabled = images.Count > 0 && images.All(x => x.Type == MaterialType.Image) };
         imageAction.Click += (_, _) => ProcessImages(images);
@@ -1137,6 +1141,10 @@ public partial class MainWindow : Window
         }
         if (item.HasFileSource)
         {
+            var integrityFiles = targetItems.Where(x => x.HasFileSource).ToList();
+            var integrityAction = new MenuItem { Header = $"检查文件内容…（{integrityFiles.Count} 项）" };
+            integrityAction.Click += (_, _) => CheckMaterialIntegrity(integrityFiles);
+            menu.Items.Add(integrityAction);
             var sourceAction = new MenuItem { Header = "检查原文件与重新定位…" };
             sourceAction.Click += (_, _) => ManageSources(item.Id);
             menu.Items.Add(sourceAction);
@@ -1543,7 +1551,8 @@ public partial class MainWindow : Window
                 ExcludedClipboardApps = AppSettings.ExcludedClipboardApps,
                 HeicConversion = AppSettings.HeicConversion,
                 LanEnabled = LanConfig.Enabled, Port = LanConfig.Port, Password = LanConfig.Password,
-                AutoStart = StartupService.IsEnabled(), SavedViews = _savedViews.Views.ToList()
+                AutoStart = StartupService.IsEnabled(), SavedViews = _savedViews.Views.ToList(),
+                ImagePresets = new ImageProcessingPresetStore(ConfigService.GetEffectiveDataDir()).ExportDocument()
             }), QuickExit) { Owner = this };
             ShowToolDialog(window);
         };

@@ -43,6 +43,7 @@ public class MaterialItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(IsFile));
             OnPropertyChanged(nameof(HasFileSource));
             RefreshSourceStatus();
+            ResetIntegrityStatus();
         }
     }
 
@@ -76,6 +77,7 @@ public class MaterialItem : INotifyPropertyChanged
                 Interlocked.Increment(ref _sourceRevision);
                 OnPropertyChanged();
                 OnPropertyChanged(nameof(HasFileSource));
+                ResetIntegrityStatus();
             }
             RefreshSourceStatus();
         }
@@ -106,6 +108,45 @@ public class MaterialItem : INotifyPropertyChanged
         OnPropertyChanged(nameof(IsSourceMissing));
         OnPropertyChanged(nameof(SourceStatusLabel));
         return true;
+    }
+
+    private MaterialIntegrityBaseline? _integrityBaseline;
+    private long _integrityRevision;
+    private MaterialIntegrityStatus _integrityStatus = MaterialIntegrityStatus.Unrecorded;
+    private string _integrityDetail = string.Empty;
+    public MaterialIntegrityBaseline? IntegrityBaseline
+    {
+        get => _integrityBaseline;
+        set
+        {
+            if (_integrityBaseline == value) return;
+            _integrityBaseline = value;
+            Interlocked.Increment(ref _integrityRevision);
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(HasIntegrityBaseline));
+            ResetIntegrityStatus();
+        }
+    }
+    [JsonIgnore] public long IntegrityRevision => Interlocked.Read(ref _integrityRevision);
+    [JsonIgnore] public bool HasIntegrityBaseline => _integrityBaseline != null &&
+        _integrityBaseline.SourceType == Type && string.Equals(_integrityBaseline.SourcePath, FilePath, StringComparison.OrdinalIgnoreCase);
+    [JsonIgnore] public MaterialIntegrityStatus IntegrityStatus => _integrityStatus;
+    [JsonIgnore] public string IntegrityDetail => _integrityDetail;
+    [JsonIgnore] public string IntegrityStatusLabel => _integrityStatus switch
+    {
+        MaterialIntegrityStatus.Normal => "上次检查正常", MaterialIntegrityStatus.Changed => "内容发生变化",
+        MaterialIntegrityStatus.Missing => "原文件缺失", MaterialIntegrityStatus.Unrecorded => "未记录当前来源基线",
+        MaterialIntegrityStatus.ReadFailed => "读取失败", _ => "已记录 · 尚未检查"
+    };
+    private void ResetIntegrityStatus()
+    {
+        OnPropertyChanged(nameof(HasIntegrityBaseline));
+        ApplyIntegrityStatus(HasIntegrityBaseline ? MaterialIntegrityStatus.NotChecked : MaterialIntegrityStatus.Unrecorded, string.Empty);
+    }
+    internal void ApplyIntegrityStatus(MaterialIntegrityStatus status, string detail)
+    {
+        _integrityStatus = status; _integrityDetail = detail;
+        OnPropertyChanged(nameof(IntegrityStatus)); OnPropertyChanged(nameof(IntegrityStatusLabel)); OnPropertyChanged(nameof(IntegrityDetail));
     }
 
     /// <summary>显示名称</summary>

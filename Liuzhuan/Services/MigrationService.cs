@@ -21,6 +21,7 @@ public static class MigrationService
         public string Password { get; set; } = "";
         public bool AutoStart { get; set; }
         public List<SavedMaterialView>? SavedViews { get; set; } = new();
+        public ImageProcessingPresetDocument? ImagePresets { get; set; }
     }
     public sealed class Payload
     {
@@ -85,6 +86,10 @@ public static class MigrationService
                 foreach (var item in manifest.Items)
                 {
                     ct.ThrowIfCancellationRequested();
+                    // Only a baseline bound to this source is portable; never replace its digest
+                    // with the packaging hash, since legitimate edits must remain detectable.
+                    var baseline = IntegrityService.NormalizeBaseline(item.IntegrityBaseline);
+                    if (baseline != null && (baseline.SourceType != item.Type || !string.Equals(baseline.SourcePath, item.FilePath, StringComparison.OrdinalIgnoreCase))) baseline = null;
                     if (item.HasFileSource)
                     {
                         if (!File.Exists(item.FilePath)) throw new FileNotFoundException("素材原文件无法访问，请在来源管理中重新定位，或移除失效索引后重试：" + item.DisplayName);
@@ -92,6 +97,7 @@ public static class MigrationService
                         item.Size = manifest.Files.Single(f => f.Path == item.FilePath).Size;
                     }
                     else item.FilePath = "";
+                    item.IntegrityBaseline = baseline == null ? null : baseline with { SourcePath = item.FilePath };
                     item.ThumbnailPath = File.Exists(item.ThumbnailPath) ? await Pack(item.ThumbnailPath) : "";
                 }
                 var metadata = zip.CreateEntry("manifest.json");
@@ -100,7 +106,9 @@ public static class MigrationService
             }
             ct.ThrowIfCancellationRequested();
             // 输出关闭且索引可解析后，才替换用户选择的目标文件。
+            progress?.Report("正在校验迁移包索引…");
             _ = ReadManifest(temp);
+            ct.ThrowIfCancellationRequested();
             File.Move(temp, destination, true);
         }
         finally { if (File.Exists(temp)) File.Delete(temp); }
@@ -125,6 +133,8 @@ public static class MigrationService
         var cfg = manifest.Settings;
         try { cfg.SavedViews = SavedViewStore.NormalizeAll(cfg.SavedViews); }
         catch (ArgumentException ex) { throw new InvalidDataException("常用筛选无效。", ex); }
+        try { if (cfg.ImagePresets != null) cfg.ImagePresets = ImageProcessingPresetStore.NormalizeDocument(cfg.ImagePresets); }
+        catch (ArgumentException ex) { throw new InvalidDataException("图片处理预设无效。", ex); }
         try { cfg.ExcludedClipboardApps = ClipboardPrivacyPolicy.NormalizeApps(cfg.ExcludedClipboardApps); }
         catch (ArgumentException ex) { throw new InvalidDataException("剪贴板应用排除配置无效。", ex); }
         if (!Enum.IsDefined(typeof(HeicConversionMode), cfg.HeicConversion) || cfg.Port is < 1 or > 65533 || cfg.Password == null || cfg.Password.Length > 128)
@@ -157,6 +167,13 @@ public static class MigrationService
             {
                 throw new InvalidDataException("素材分组、标签或备注无效。", ex);
             }
+            try
+            {
+                item.IntegrityBaseline = IntegrityService.NormalizeBaseline(item.IntegrityBaseline);
+                if (item.IntegrityBaseline is { } baseline && (!item.HasFileSource || baseline.SourceType != item.Type || baseline.SourcePath != item.FilePath))
+                    throw new ArgumentException("基线绑定的来源不匹配。");
+            }
+            catch (ArgumentException ex) { throw new InvalidDataException("素材完整性基线无效。", ex); }
             if ((item.HasFileSource && !paths.Contains(item.FilePath)) || (item.ThumbnailPath != "" && !paths.Contains(item.ThumbnailPath)))
                 throw new InvalidDataException("素材引用了包外文件。");
         }
@@ -196,10 +213,13 @@ public static class MigrationService
             foreach (var item in manifest.Items)
             {
                 if (item.HasFileSource) item.FilePath = ContainedPath(root, item.FilePath);
+                if (item.IntegrityBaseline is { } baseline) item.IntegrityBaseline = baseline with { SourcePath = item.FilePath };
                 if (item.ThumbnailPath != "") item.ThumbnailPath = ContainedPath(root, item.ThumbnailPath);
             }
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "data.json"), JsonSerializer.Serialize(manifest.Items, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "savedviews.json"), JsonSerializer.Serialize(manifest.Settings.SavedViews, Json), ct);
+            if (manifest.Settings.ImagePresets != null)
+                await File.WriteAllTextAsync(System.IO.Path.Combine(root, ImageProcessingPresetStore.FileName), JsonSerializer.Serialize(manifest.Settings.ImagePresets, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "appsettings.json"), JsonSerializer.Serialize(new { manifest.Settings.ClipboardMonitorEnabled, manifest.Settings.ExcludedClipboardApps, HeicConversion = manifest.Settings.HeicConversion.ToString() }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "lan.json"), JsonSerializer.Serialize(new { Enabled = manifest.Settings.LanEnabled, manifest.Settings.Port, manifest.Settings.Password }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "migration-settings.json"), JsonSerializer.Serialize(manifest.Settings, Json), ct);

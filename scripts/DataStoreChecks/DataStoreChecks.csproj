@@ -15,5 +15,7 @@
     <Compile Include="../../Liuzhuan/Models/MaterialOrganization.cs" Link="Production/MaterialOrganization.cs" />
     <Compile Include="../../Liuzhuan/Utils/FileClassifier.cs" Link="Production/FileClassifier.cs" />
     <Compile Include="../../Liuzhuan/Utils/Logger.cs" Link="Production/Logger.cs" />
+  <Compile Include="../../Liuzhuan/Models/MaterialIntegrity.cs" Link="Production/MaterialIntegrity.cs" />
+  <Compile Include="../../Liuzhuan/Services/IntegrityService.cs" Link="Production/IntegrityService.cs" />
   </ItemGroup>
 </Project>

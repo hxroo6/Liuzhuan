@@ -237,7 +237,17 @@ internal static class Program
             dictionary.SetAttributeValue(declaration.Name, value);
         }
         app.Resources = (ResourceDictionary)XamlReader.Parse(dictionary.ToString());
-        var window = new ImageProcessingWindow(sources);
+        var presetDirectory = Path.Combine(artifacts, "isolated-image-presets-" + Guid.NewGuid().ToString("N"));
+        var presetStore = new ImageProcessingPresetStore(presetDirectory);
+        presetStore.Add(ImageProcessingPresetStore.Create("交付照片", new(ImageOutputFormat.Jpeg, 960, 73)));
+        presetStore.Add(ImageProcessingPresetStore.Create("透明原图", new(ImageOutputFormat.Png, null, 90)));
+        var window = new ImageProcessingWindow(sources, presetStore);
+        T Control<T>(string name) where T : FrameworkElement => (T)window.FindName(name);
+        object? Invoke(string name, params object[] arguments) => typeof(ImageProcessingWindow).GetMethod(name, BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, arguments);
+        void Click(Button button) => button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        ContextMenu Menu(string method) => (ContextMenu)Invoke(method)!;
+        void Choose(MenuItem item) => item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent));
+        var originalFolders = Directory.GetDirectories(Path.GetDirectoryName(sources[0].FilePath)!).OrderBy(path => path).ToArray();
         ((TextBox)window.FindName("Destination")).Text = "F:\\图片输出";
         void Render(string name, double scale = 1)
         {
@@ -248,9 +258,55 @@ internal static class Program
             shot.Render(background); shot.Render(content); SavePng(Path.Combine(artifacts, name), shot);
         }
         Render("image-processing-jpeg.png");
-        ((RadioButton)window.FindName("PngFormat")).IsChecked = true;
+        var presetMenu = Menu("BuildPresetMenu");
+        Choose((MenuItem)presetMenu.Items[1]);
+        Check(Control<RadioButton>("PngFormat").IsChecked == true && Control<CheckBox>("ResizeEnabled").IsChecked == false
+            && Control<Slider>("Quality").Value == 90 && Control<TextBlock>("PresetLabel").Text == "透明原图",
+            "selecting a named preset fills format, original-size setting and saved quality in one action");
         Check(!((Slider)window.FindName("Quality")).IsEnabled, "PNG choice disables the irrelevant JPEG quality control");
         Render("image-processing-png-150-percent.png", 1.5);
+        var chosenMenu = Menu("BuildPresetMenu");
+        chosenMenu.Measure(new Size(380, 250)); chosenMenu.Arrange(new Rect(0, 0, 380, chosenMenu.DesiredSize.Height)); chosenMenu.UpdateLayout();
+        var menuShot = new RenderTargetBitmap(380, Math.Max(1, (int)Math.Ceiling(chosenMenu.ActualHeight)), 96, 96, PixelFormats.Pbgra32);
+        menuShot.Render(chosenMenu); SavePng(Path.Combine(artifacts, "image-preset-menu.png"), menuShot);
+        Check(((MenuItem)chosenMenu.Items[1]).IsChecked && chosenMenu.Background is SolidColorBrush menuBrush && menuBrush.Color != Colors.White,
+            "preset dropdown uses the real dark menu template and indicates the current selection");
+        Control<Slider>("Quality").Value = 88;
+        Check(Control<TextBlock>("PresetHint").Text.Contains("已修改") && presetStore.Presets[1].JpegQuality == 90,
+            "manual parameter edits are marked without silently changing the saved preset");
+        Choose((MenuItem)Menu("BuildManagePresetMenu").Items[0]);
+        Check(presetStore.Presets[1].JpegQuality == 88 && new ImageProcessingPresetStore(presetDirectory).Presets[1].JpegQuality == 88,
+            "explicit update action saves the current parameters to the chosen preset");
+        Choose((MenuItem)Menu("BuildManagePresetMenu").Items[1]);
+        Control<TextBox>("PresetNameInput").Text = "透明无损";
+        Check(!Control<Button>("ProcessButton").IsEnabled && Control<Border>("PresetNamePanel").Visibility == Visibility.Visible,
+            "inline naming blocks processing while its edit is pending");
+        Invoke("SavePresetName_Click", window, new RoutedEventArgs());
+        Check(presetStore.Presets[1].Name == "透明无损" && presetStore.Presets[1].MaxEdge == null && presetStore.Presets[1].JpegQuality == 88,
+            "rename action preserves all processing parameters");
+        Choose((MenuItem)Menu("BuildManagePresetMenu").Items[1]); Control<TextBox>("PresetNameInput").Text = "不应保存";
+        Invoke("CancelPresetEdit_Click", window, new RoutedEventArgs());
+        Check(presetStore.Presets[1].Name == "透明无损" && window.LastResult == null && Control<Button>("ProcessButton").IsEnabled,
+            "cancelling a preset edit restores controls without saving or processing images");
+        Click(Control<Button>("SavePresetButton")); Control<TextBox>("PresetNameInput").Text = "当前透明参数";
+        Invoke("SavePresetName_Click", window, new RoutedEventArgs());
+        Check(presetStore.Presets.Count == 3 && presetStore.Presets[2].Format == ImageOutputFormat.Png && presetStore.Presets[2].MaxEdge == null
+            && Control<TextBlock>("PresetLabel").Text == "当前透明参数", "save-as action creates a named preset from current parameters");
+        var savedPresetBytes = File.ReadAllBytes(Path.Combine(presetDirectory, ImageProcessingPresetStore.FileName));
+        Click(Control<Button>("SavePresetButton")); Control<TextBox>("PresetNameInput").Text = "临时取消";
+        Invoke("CancelPresetEdit_Click", window, new RoutedEventArgs());
+        Check(presetStore.Presets.Count == 3 && File.ReadAllBytes(Path.Combine(presetDirectory, ImageProcessingPresetStore.FileName)).SequenceEqual(savedPresetBytes),
+            "cancelling a new preset leaves both stored collection and file unchanged");
+        Choose((MenuItem)Menu("BuildManagePresetMenu").Items[3]); Invoke("CancelPresetEdit_Click", window, new RoutedEventArgs());
+        Check(presetStore.Presets.Count == 3, "cancelling preset deletion retains the original preset");
+        Choose((MenuItem)Menu("BuildManagePresetMenu").Items[3]); Click(Control<Button>("PresetConfirmButton"));
+        Check(presetStore.Presets.Count == 2 && Control<RadioButton>("PngFormat").IsChecked == true && Control<Slider>("Quality").Value == 88,
+            "confirmed preset deletion changes saved entries while retaining current processing parameters");
+        Check(window.LastResult == null && typeof(ImageProcessingWindow).GetField("_cancellation", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window) == null
+            && Directory.GetDirectories(Path.GetDirectoryName(sources[0].FilePath)!).OrderBy(path => path).SequenceEqual(originalFolders),
+            "preset selection and management never start image processing or produce image output folders");
+        Click(Control<Button>("SavePresetButton")); Control<TextBox>("PresetNameInput").Text = "网页透明素材";
+        Render("image-preset-name-editor.png"); Invoke("CancelPresetEdit_Click", window, new RoutedEventArgs());
         ((CheckBox)window.FindName("ResizeEnabled")).IsChecked = false;
         Check(!((TextBox)window.FindName("MaxEdge")).IsEnabled, "disabling resize clearly disables the edge input");
         Check(((TextBlock)window.FindName("SelectionCount")).Text == "2 张图片" && ((Button)window.FindName("ProcessButton")).IsEnabled, "dialog accepts immutable image snapshots without starting the real App or reading its data store");
@@ -262,6 +318,23 @@ internal static class Program
         ((Button)window.FindName("OpenButton")).Visibility = Visibility.Visible;
         ((ScrollViewer)window.FindName("OptionsScroll")).ScrollToBottom();
         Render("image-processing-results.png");
-        window.Close(); app.Shutdown();
+        window.Close();
+        var brokenDirectory = Path.Combine(presetDirectory, "broken"); Directory.CreateDirectory(brokenDirectory);
+        var brokenPath = Path.Combine(brokenDirectory, ImageProcessingPresetStore.FileName); File.WriteAllText(brokenPath, "{ fixture corruption");
+        var brokenStore = new ImageProcessingPresetStore(brokenDirectory); var brokenWindow = new ImageProcessingWindow(sources, brokenStore);
+        T Broken<T>(string name) where T : FrameworkElement => (T)brokenWindow.FindName(name);
+        Check(Broken<Button>("ProcessButton").IsEnabled && !Broken<Button>("SavePresetButton").IsEnabled
+            && Broken<Button>("RepairPresetButton").Visibility == Visibility.Visible && Broken<TextBlock>("PresetHint").Text.Contains("读取失败"),
+            "a damaged preset file is visible and read-protected while manual image processing remains available");
+        Click(Broken<Button>("RepairPresetButton"));
+        typeof(ImageProcessingWindow).GetMethod("CancelPresetEdit_Click", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(brokenWindow, new object[] { brokenWindow, new RoutedEventArgs() });
+        Check(brokenStore.LoadError != null && File.ReadAllText(brokenPath) == "{ fixture corruption" && brokenWindow.LastResult == null,
+            "cancelling preset repair retains the corrupt file without starting processing");
+        Click(Broken<Button>("RepairPresetButton")); Click(Broken<Button>("PresetConfirmButton"));
+        Check(brokenStore.LoadError == null && Broken<Button>("SavePresetButton").IsEnabled && Directory.GetFiles(brokenDirectory, "*.bak").Length == 1,
+            "explicit repair action preserves a backup and restores safe preset saving");
+        brokenWindow.Close(); app.Shutdown();
+        if (Path.GetFullPath(presetDirectory).StartsWith(Path.GetFullPath(artifacts), StringComparison.OrdinalIgnoreCase)
+            && Path.GetFileName(presetDirectory).StartsWith("isolated-image-presets-", StringComparison.Ordinal)) Directory.Delete(presetDirectory, true);
     }
 }

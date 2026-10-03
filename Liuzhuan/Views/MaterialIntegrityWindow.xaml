@@ -1,0 +1,58 @@
+<Window x:Class="Liuzhuan.Views.MaterialIntegrityWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="素材完整性检查" Width="900" Height="650" MinWidth="740" MinHeight="560" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}"><Setter Property="FontSize" Value="13"/></Style>
+        <Style TargetType="ListBoxItem">
+            <Setter Property="Foreground" Value="{StaticResource TextBrush}"/><Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="RowBorder" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="8" Margin="0,2"><ContentPresenter HorizontalAlignment="Stretch"/></Border>
+                <ControlTemplate.Triggers>
+                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="RowBorder" Property="Background" Value="#233B3D"/></Trigger>
+                    <Trigger Property="IsSelected" Value="True"><Setter TargetName="RowBorder" Property="Background" Value="#294640"/><Setter TargetName="RowBorder" Property="BorderBrush" Value="{StaticResource AccentBrush}"/></Trigger>
+                </ControlTemplate.Triggers>
+            </ControlTemplate></Setter.Value></Setter>
+        </Style>
+    </Window.Resources>
+    <Grid Margin="24" Background="{StaticResource PanelBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel>
+            <TextBlock Text="确认素材的内容是否变化" FontSize="22" FontWeight="SemiBold"/>
+            <TextBlock Text="按需读取文件并计算 SHA-256，与你明确记录的基线比较。打开窗口不会扫描；同名、等长不代表内容一致。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,16"/>
+        </StackPanel>
+        <WrapPanel Grid.Row="1" Margin="0,0,0,12">
+            <Button x:Name="CheckButton" Content="开始检查此列表" Click="Check_Click" Padding="12,7" Margin="0,0,8,0"/>
+            <Button x:Name="SelectButton" Content="选中可记录结果" Click="Select_Click" Padding="12,7" Margin="0,0,8,0"/>
+            <Button x:Name="RecordButton" Content="记录 / 更新选中基线…" Click="Record_Click" IsEnabled="False" Padding="12,7" Margin="0,0,8,0"/>
+            <Button x:Name="ClearButton" Content="移除选中基线…" Click="Clear_Click" IsEnabled="False" Padding="12,7"/>
+        </WrapPanel>
+        <Border Grid.Row="2" Background="{StaticResource PanelLightBrush}" CornerRadius="10" Padding="10">
+            <ListBox x:Name="IntegrityList" SelectionMode="Extended" SelectionChanged="Selection_Changed" Background="Transparent" Foreground="{StaticResource TextBrush}" BorderThickness="0" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                <ListBox.ItemTemplate><DataTemplate><Grid Margin="8,8,8,12">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="180"/></Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                    <TextBlock Text="{Binding Item.DisplayName}" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis"/>
+                    <TextBlock Grid.Column="1" Text="{Binding Item.IntegrityStatusLabel}" HorizontalAlignment="Right" FontSize="12">
+                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Item.IntegrityStatus}" Value="Normal"><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/></DataTrigger>
+                                <DataTrigger Binding="{Binding Item.IntegrityStatus}" Value="Changed"><Setter Property="Foreground" Value="{StaticResource WarmBrush}"/></DataTrigger>
+                                <DataTrigger Binding="{Binding Item.IntegrityStatus}" Value="Missing"><Setter Property="Foreground" Value="{StaticResource WarmBrush}"/></DataTrigger>
+                                <DataTrigger Binding="{Binding Item.IntegrityStatus}" Value="ReadFailed"><Setter Property="Foreground" Value="{StaticResource WarmBrush}"/></DataTrigger>
+                            </Style.Triggers>
+                        </Style></TextBlock.Style>
+                    </TextBlock>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{Binding Item.FilePath}" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0"/>
+                    <TextBlock Grid.Row="2" Grid.ColumnSpan="2" Text="{Binding HashLabel}" Foreground="{StaticResource TextDimBrush}" FontFamily="Consolas" TextWrapping="Wrap" FontSize="11" Margin="0,6,0,0"/>
+                    <TextBlock Grid.Row="3" Grid.ColumnSpan="2" Text="{Binding Item.IntegrityDetail}" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,6,0,0"/>
+                </Grid></DataTemplate></ListBox.ItemTemplate>
+            </ListBox>
+        </Border>
+        <StackPanel Grid.Row="3" Margin="0,12,0,14">
+            <ProgressBar x:Name="Progress" Minimum="0" Maximum="100" Height="5" Visibility="Collapsed" Margin="0,0,0,8"/>
+            <TextBlock x:Name="StatusText" Text="尚未读取文件。Ctrl/Shift 可多选结果；基线仅保存摘要，不修改原文件。" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap"/>
+            <TextBlock Text="结果只代表检查时读取的字节，不是持续监控。正常编辑可重建基线，变更不会自动接受；检查后再次修改请重新检查。" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0"/>
+        </StackPanel>
+        <Button x:Name="CloseButton" Grid.Row="4" Content="关闭" Click="Close_Click" HorizontalAlignment="Right" Padding="18,7"/>
+    </Grid>
+</Window>

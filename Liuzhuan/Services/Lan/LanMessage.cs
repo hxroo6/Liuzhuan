@@ -8,6 +8,8 @@ namespace Liuzhuan.Services.Lan;
 /// </summary>
 public class LanMessage
 {
+    // Feature 表示 clipboard_push 的同请求登记回执与进程内幂等支持，协议版本仍为 1。
+    public const string ClipboardReceiptsFeature = "clipboard_receipts_v1";
     [JsonPropertyName("v")] public int V { get; set; } = 1;
     [JsonPropertyName("type")] public string Type { get; set; } = "";
     [JsonPropertyName("id")] public string Id { get; set; } = Guid.NewGuid().ToString("N");

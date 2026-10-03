@@ -35,7 +35,9 @@ public partial class MigrationWindow : Window
         {
             var summary = await Task.Run(() => MigrationService.ReadManifest(dialog.FileName), ct);
             ct.ThrowIfCancellationRequested();
-            var message = $"迁移包包含 {summary.Items.Count} 项素材，文件约 {summary.Files.Sum(f => f.Size) / 1048576.0:F1} MB。\n\n将恢复配对口令、局域网端口、HEIC 转换、剪贴板监控和开机自启设置。\n\n重启后切换到导入的素材库，原库保留，不合并。是否继续？";
+            var message = $"迁移包包含 {summary.Items.Count} 项素材，文件约 {summary.Files.Sum(f => f.Size) / 1048576.0:F1} MB。\n"
+                + $"常用筛选 {summary.Settings.SavedViews?.Count ?? 0} 个 · 图片预设 {summary.Settings.ImagePresets?.Presets.Count ?? 0} 个 · 文件校验基线 {summary.Items.Count(x => x.IntegrityBaseline != null)} 条。\n\n"
+                + "将恢复配对口令、局域网端口、HEIC 转换、剪贴板监控、应用排除和开机自启设置。\n\n重启后切换到导入的素材库，原库保留，不合并。是否继续？";
             if (MessageBox.Show(this, message, "确认导入内容", MessageBoxButton.YesNo, MessageBoxImage.Question) != MessageBoxResult.Yes) { Status.Text = "已取消导入。"; return; }
             var destination = await Task.Run(() => MigrationService.PrepareImportAsync(dialog.FileName, App.DataDir, progress, ct, summary), ct);
             _pending = true;

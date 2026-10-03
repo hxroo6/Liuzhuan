@@ -46,7 +46,9 @@ data class ClipboardEvent(
     val fingerprint: String,
     val type: ClipboardContentType = ClipboardContentType.TEXT,
     val diagnosticId: String = "", // 端到端链路 ID（COPY-xxxxxx），贯穿 capture→dispatch→action→ws
-    val privacyRevision: Long? = null // 自动事件捕获时的隐私规则版本；不进入网络协议
+    val privacyRevision: Long? = null, // 自动事件捕获时的隐私规则版本；不进入网络协议
+    /** 同一事件在断线/回执超时重试时保持不变，不以内容指纹替代请求身份。 */
+    val requestId: String = java.util.UUID.randomUUID().toString()
 )
 
 /**

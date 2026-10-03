@@ -54,15 +54,18 @@ object Proto {
             .put("source", source))
         .toString()
 
-    fun buildClipboardPush(content: String, app: String): String = JSONObject()
+    const val CLIPBOARD_RECEIPTS = "clipboard_receipts_v1"
+
+    fun buildClipboardPush(content: String, app: String, requestId: String = UUID.randomUUID().toString(), automatic: Boolean = false): String = JSONObject()
         .put("v", 1)
         .put("type", "clipboard_push")
-        .put("id", UUID.randomUUID().toString().replace("-", ""))
+        .put("id", requestId)
         .put("ts", System.currentTimeMillis() / 1000)
         .put("device", deviceLabel)
         .put("data", JSONObject()
             .put("content", content)
-            .put("app", app))
+            .put("app", app)
+            .put("automatic", automatic))
         .toString()
 
     /** 请求电脑端最近素材列表 */

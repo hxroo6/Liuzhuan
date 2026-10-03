@@ -29,6 +29,12 @@ object ClipboardMonitorCoordinator {
     val deduplicator = ClipboardDeduplicator()
     val queue = ClipboardEventQueue()
     val pipeline = ClipboardActionPipeline()
+    val delivery by lazy {
+        AutomaticClipboardDelivery(queue,
+            transport = { LanHub.client?.automaticClipboardTransport() },
+            guarded = ClipboardPrivacy::runIfAllowed,
+            diagnostic = { event, message -> setDiagnostic("[${event.diagnosticId}] $message") })
+    }
 
     /** App 前台/后台状态（进程级追踪，供链路诊断标注 appState） */
     @Volatile
@@ -130,21 +136,11 @@ object ClipboardMonitorCoordinator {
         }
     }
 
-    /** WS 连接成功 → 补发断线期间积压的事件（FIFO） */
+    /** WS 连接成功 → 唤醒进程 outbox；自动事件由登记确认后出队，保持 FIFO。 */
     fun onWsConnected() {
         val client = LanHub.client ?: return
         if (client.state !is LanClient.State.Connected) return
-        val pending = queue.drain()
-        if (pending.isEmpty()) return
-        Log.d(TAG, "[OUT_QUEUE] flush start size=${pending.size} appState=${appStateTag()}")
-        pending.forEach { ev ->
-            val text = ev.text ?: return@forEach
-            Log.d(TAG, "[OUT_QUEUE] flush send id=${ev.diagnosticId}")
-            ClipboardPrivacy.runIfAllowed(ev) {
-                client.pushClipboard(text, ev.sourcePackage ?: "android")
-            }
-        }
-        Log.d(TAG, "[OUT_QUEUE] flush complete")
+        delivery.wake()
     }
 
     private const val TAG = "ClipCoord"

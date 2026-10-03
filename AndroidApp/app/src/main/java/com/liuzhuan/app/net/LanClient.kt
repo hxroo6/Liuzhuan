@@ -47,6 +47,9 @@ class LanClient(
     private var reconnectJob: Job? = null
     private var manuallyClosed = false
     private var lastSettings: SettingsStore.Settings? = null
+    @Volatile private var clipboardReceipts = false
+    private fun connectionIdentity(s: SettingsStore.Settings): String =
+        "${s.serverIp.trim().lowercase()}:${s.serverPort.toIntOrNull() ?: 8899}:${Proto.sha256Hex(s.password)}:${Proto.sha256Hex(s.deviceName)}:${Proto.sha256Hex(Proto.deviceLabel)}"
     private val client = OkHttpClient.Builder()
         .pingInterval(30, TimeUnit.SECONDS)
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -57,7 +60,6 @@ class LanClient(
         private set
 
     fun connect(settings: SettingsStore.Settings) {
-        lastSettings = settings
         if (settings.serverIp.isBlank() || settings.password.isBlank()) {
             log("请先填写电脑 IP 和口令")
             return
@@ -65,8 +67,12 @@ class LanClient(
         manuallyClosed = false
         reconnectJob?.cancel()
         // 关闭旧连接（防止多次 connect 叠加 WebSocket → 重复日志/握手）
-        ws?.close(1000, "reconnect")
+        val previous = ws
         ws = null
+        previous?.close(1000, "reconnect")
+        clipboardReceipts = false
+        lastSettings = settings
+        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.changeTarget(connectionIdentity(settings))
         doConnect(settings)
     }
 
@@ -111,12 +117,29 @@ class LanClient(
         return accepted
     }
 
-    /** 推送剪贴板内容，返回是否已发送（供 Toast 提示） */
+    /** 显式选中文本兼容入口：只返回网络是否接受发送，不能表示电脑已登记。 */
     fun pushClipboard(content: String, app: String): Boolean {
         if (state != State.Connected) return false
-        ws?.send(Proto.buildClipboardPush(content, app))
-        log("剪贴板已推送（${content.length} 字）")
-        return true
+        val accepted = ws?.send(Proto.buildClipboardPush(content, app)) == true
+        log(if (accepted) "剪贴板文字已提交，等待电脑确认（${content.length} 字）" else "剪贴板文字未提交")
+        return accepted
+    }
+
+    internal fun automaticClipboardTransport(): com.liuzhuan.app.clipboard.AutomaticClipboardDelivery.Transport? {
+        if (state != State.Connected) return null
+        val socket = ws ?: return null
+        val settings = lastSettings ?: return null
+        val identity = connectionIdentity(settings)
+        val supports = clipboardReceipts
+        return object : com.liuzhuan.app.clipboard.AutomaticClipboardDelivery.Transport {
+            override val identity = identity
+            override val supportsReceipts = supports
+            override fun send(event: com.liuzhuan.app.clipboard.ClipboardEvent): Boolean {
+                if (state != State.Connected || ws !== socket || lastSettings?.let(::connectionIdentity) != identity) return false
+                return socket.send(Proto.buildClipboardPush(event.text ?: return false, event.sourcePackage ?: "android",
+                    event.requestId, automatic = true))
+            }
+        }
     }
 
     /** 上传文件/图片到电脑（HTTP POST 到 /upload 端点，复用 PC 端 FileHttpServer） */
@@ -184,6 +207,7 @@ class LanClient(
     }
 
     private fun doConnect(s: SettingsStore.Settings) {
+        clipboardReceipts = false
         // 关闭残留 WebSocket（防重连时叠加）
         ws?.close(1000, "reconnect")
         ws = null
@@ -202,12 +226,19 @@ class LanClient(
                 val (type, data) = Proto.parse(text)
                 when (type) {
                     "ack" -> {
-                        if(data.optString("status")=="stored") {
-                            val requestId=data.optString("requestId")
-                            com.liuzhuan.app.TransferTasks.finish(requestId,true,"电脑已接收")
+                        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.acknowledge(
+                            connectionIdentity(s), data.optString("requestId"), data.optString("status"))
+                        val requestId = data.optString("requestId")
+                        when (data.optString("status")) {
+                            "stored" -> com.liuzhuan.app.TransferTasks.finish(requestId, true, "电脑已接收")
+                            "rejected" -> com.liuzhuan.app.TransferTasks.finish(requestId, false, "电脑拒绝登记，请检查电脑后重新发送")
                         }
                     }
                     "welcome" -> {
+                        val features = data.optJSONArray("features")
+                        clipboardReceipts = features != null && (0 until features.length()).any {
+                            features.optString(it) == Proto.CLIPBOARD_RECEIPTS
+                        }
                         setState(State.Connected)
                         log("✅ 已连接电脑端流转")
                         log("[SYNC] request snapshot")
@@ -295,6 +326,7 @@ class LanClient(
     private fun setState(new: State) {
         state = new
         onState(new)
+        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.wake()
     }
 
     /** 统一日志：带时间戳 */

@@ -47,6 +47,34 @@
         <ScrollViewer x:Name="OptionsScroll" Grid.Row="1" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel Margin="0,0,6,0">
                 <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="16" Margin="0,0,0,12">
+                    <StackPanel>
+                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="常用预设" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0"/>
+                        <Grid x:Name="PresetTools" Grid.Column="1"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Button x:Name="PresetChooseButton" Click="ChoosePreset_Click" Style="{StaticResource CompactButton}" HorizontalContentAlignment="Left" AutomationProperties.Name="选择图片处理预设">
+                                <DockPanel><TextBlock DockPanel.Dock="Right" Text="⌄" Margin="12,0,0,0" Foreground="{StaticResource AccentBrush}"/><TextBlock x:Name="PresetLabel" Text="选择常用预设" TextTrimming="CharacterEllipsis"/></DockPanel>
+                            </Button>
+                            <Button x:Name="SavePresetButton" Grid.Column="1" Content="保存为预设" Click="SavePreset_Click" Style="{StaticResource CompactButton}" Margin="8,0,0,0"/>
+                            <Button x:Name="ManagePresetButton" Grid.Column="2" Content="管理…" Click="ManagePreset_Click" Style="{StaticResource CompactButton}" Margin="8,0,0,0"/>
+                            <Button x:Name="RepairPresetButton" Grid.Column="3" Content="修复预设…" Click="RepairPreset_Click" Style="{StaticResource CompactButton}" Margin="8,0,0,0" Visibility="Collapsed"/>
+                        </Grid>
+                        </Grid>
+                        <TextBlock x:Name="PresetHint" Text="下次一键填充格式、尺寸和质量，选择不会立即处理。" TextWrapping="Wrap" FontSize="12" Foreground="{StaticResource TextDimBrush}" Margin="0,9,0,0"/>
+                        <Border x:Name="PresetNamePanel" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0" Visibility="Collapsed">
+                            <StackPanel><TextBlock x:Name="PresetEditorTitle" Text="给这组参数命名" FontWeight="SemiBold"/>
+                                <TextBox x:Name="PresetNameInput" Style="{StaticResource InputStyle}" Margin="0,8,0,0" KeyDown="PresetName_KeyDown" AutomationProperties.Name="图片处理预设名称"/>
+                                <TextBlock x:Name="PresetEditorHint" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,7,0,10"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="取消" Click="CancelPresetEdit_Click" Style="{StaticResource CompactButton}" Margin="0,0,8,0"/><Button Content="保存预设" Click="SavePresetName_Click" Style="{StaticResource CompactButton}"/></StackPanel>
+                            </StackPanel>
+                        </Border>
+                        <Border x:Name="PresetConfirmPanel" BorderBrush="{StaticResource WarmBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,12,0,0" Visibility="Collapsed">
+                            <StackPanel><TextBlock x:Name="PresetConfirmTitle" FontWeight="SemiBold"/><TextBlock x:Name="PresetConfirmHint" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,7,0,10"/>
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button Content="取消" Click="CancelPresetEdit_Click" Style="{StaticResource CompactButton}" Margin="0,0,8,0"/><Button x:Name="PresetConfirmButton" Content="确认" Click="ConfirmPreset_Click" Style="{StaticResource CompactButton}"/></StackPanel>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </Border>
+                <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="16" Margin="0,0,0,12">
                     <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <StackPanel><TextBlock Text="输出格式" FontSize="15" FontWeight="SemiBold"/><TextBlock x:Name="FormatHint" Text="JPEG 适合照片，质量可调；透明区域铺白底。" Foreground="{StaticResource TextDimBrush}" Margin="0,6,12,0" TextWrapping="Wrap"/></StackPanel>
                         <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Center"><RadioButton x:Name="JpegFormat" Content="JPEG" IsChecked="True" GroupName="Format" Style="{StaticResource FormatStyle}" Checked="Format_Changed" Margin="0,0,6,0"/><RadioButton x:Name="PngFormat" Content="PNG" GroupName="Format" Style="{StaticResource FormatStyle}" Checked="Format_Changed"/></StackPanel>
@@ -56,7 +84,7 @@
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="12"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
                     <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="16">
                         <StackPanel><CheckBox x:Name="ResizeEnabled" Content="限制最长边" IsChecked="True" Style="{StaticResource ResizeCheckStyle}" Checked="Resize_Changed" Unchecked="Resize_Changed"/>
-                            <DockPanel Margin="0,12,0,10"><TextBlock DockPanel.Dock="Right" Text="px" Foreground="{StaticResource TextDimBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/><TextBox x:Name="MaxEdge" Text="1920" Style="{StaticResource InputStyle}" AutomationProperties.Name="图片最长边像素数"/></DockPanel>
+                            <DockPanel Margin="0,12,0,10"><TextBlock DockPanel.Dock="Right" Text="px" Foreground="{StaticResource TextDimBrush}" VerticalAlignment="Center" Margin="10,0,0,0"/><TextBox x:Name="MaxEdge" Text="1920" TextChanged="Parameters_Changed" Style="{StaticResource InputStyle}" AutomationProperties.Name="图片最长边像素数"/></DockPanel>
                             <StackPanel Orientation="Horizontal"><Button Content="1280" Tag="1280" Click="Preset_Click" Style="{StaticResource CompactButton}" Margin="0,0,6,0"/><Button Content="1920" Tag="1920" Click="Preset_Click" Style="{StaticResource CompactButton}" Margin="0,0,6,0"/><Button Content="2560" Tag="2560" Click="Preset_Click" Style="{StaticResource CompactButton}"/></StackPanel>
                             <TextBlock Text="仅缩小，保持原始比例。" Foreground="{StaticResource TextDimBrush}" Margin="0,12,0,0"/>
                         </StackPanel>

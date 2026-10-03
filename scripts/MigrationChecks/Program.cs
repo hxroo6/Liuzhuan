@@ -27,13 +27,16 @@ internal static class Program
             new MaterialItem { Id="d", Type=MaterialType.Other, DisplayName="重复引用", FilePath=source }
         };
         var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, ExcludedClipboardApps=new[]{"KeePassXC.exe"}, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true,
-            SavedViews=new(){new SavedMaterialView{Name="收藏参考",Tab="Favorites",GroupName="视觉参考",Tag="封面",Keyword="备注"},new SavedMaterialView{Name="未分组",GroupName=""}} };
+            SavedViews=new(){new SavedMaterialView{Name="收藏参考",Tab="Favorites",GroupName="视觉参考",Tag="封面",Keyword="备注"},new SavedMaterialView{Name="未分组",GroupName=""}},
+            ImagePresets=new(){Presets=new(){new ImageProcessingPreset{Name="交付 JPEG",Format=ImageOutputFormat.Jpeg,MaxEdge=1920,JpegQuality=82},new ImageProcessingPreset{Name="透明 PNG",Format=ImageOutputFormat.Png,MaxEdge=null,JpegQuality=90}}} };
         void Check(bool ok,string name){if(!ok)throw new Exception(name);Console.WriteLine("PASS "+name);}
         var snapshot=MigrationService.Snapshot(items, settings);
         settings.ExcludedClipboardApps[0]="changed.exe";
         Check(snapshot.Settings.ExcludedClipboardApps!.SequenceEqual(new[]{"KeePassXC.exe"}), "snapshot isolates automatic-capture exclusions");
         settings.SavedViews.Clear();
         Check(snapshot.Settings.SavedViews!.Count==2, "snapshot isolates saved filter rules from later configuration changes");
+        settings.ImagePresets.Presets.Clear();
+        Check(snapshot.Settings.ImagePresets!.Presets.Count==2, "snapshot isolates image presets from later settings changes");
         items[0].Tags[0]="原库随后修改";
         items[0].GroupName="原库的新分组";
         items[0].Note="原库的新备注";
@@ -42,6 +45,7 @@ internal static class Program
         await MigrationService.ExportAsync(package,snapshot,null,default);
         var manifest=MigrationService.ReadManifest(package);
         Check(manifest.Settings.SavedViews!.Count==2 && manifest.Settings.SavedViews[0].Tag=="封面" && manifest.Settings.SavedViews[1].GroupName=="", "export preserves named rules and ungrouped criteria");
+        Check(manifest.Settings.ImagePresets!.Presets.Count==2 && manifest.Settings.ImagePresets.Presets[0].JpegQuality==82 && manifest.Settings.ImagePresets.Presets[1].MaxEdge==null, "export preserves named image options including original size");
         Check(manifest.Version==1 && manifest.Items[0].GroupName=="视觉参考" && manifest.Items[0].Tags.SequenceEqual(new[]{"封面", "待用"}) && manifest.Items[0].Note=="换机后保留的备注\n第二行", "version-1 export retains groups, tags and multiline notes");
         Check(manifest.Files.Count==3,"deduplicates repeated paths while retaining same-name distinct files");
         Check(manifest.Items[0].FilePath.StartsWith("files/") && snapshot.Items[0].FilePath==source,"portable paths; original UI snapshot unchanged");
@@ -62,6 +66,8 @@ internal static class Program
         var applied=MigrationService.ApplyPending(target)!;
         var importedRules=new SavedViewStore(imported);
         Check(importedRules.LoadError==null && importedRules.Views.Count==2 && importedRules.Views[0].Keyword=="备注", "new PC reloads portable saved rules from its imported library");
+        var importedPresets=new ImageProcessingPresetStore(imported);
+        Check(importedPresets.LoadError==null && importedPresets.Presets.Count==2 && importedPresets.Presets[0].Format==ImageOutputFormat.Jpeg && importedPresets.Presets[1].MaxEdge==null, "new PC reloads image presets from its imported library");
         Check(applied.AutoStart && applied.LanEnabled && applied.Port==8999 && applied.Password=="test-only" && applied.HeicConversion==HeicConversionMode.Jpeg,"portable settings restored");
         var privacyConfig=JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(imported,"appsettings.json")));
         Check(applied.ExcludedClipboardApps!.SequenceEqual(new[]{"KeePassXC.exe"}) && privacyConfig.GetProperty("ExcludedClipboardApps")[0].GetString()=="KeePassXC.exe" && !privacyConfig.TryGetProperty("ClipboardPausedUntil",out _),"migration carries app exclusions but does not carry a temporary pause");
@@ -78,13 +84,16 @@ internal static class Program
         void EditManifestJson(ZipArchive z,Action<JsonObject> edit){var e=z.GetEntry("manifest.json")!;JsonObject m;using(var s=e.Open())m=JsonNode.Parse(s)!.AsObject();edit(m);e.Delete();using var output=z.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(output,m,MigrationService.Json);}
         var legacyPackage=Variant("legacy-organization",z=>EditManifestJson(z,m=>{
             m["Settings"]!.AsObject().Remove("SavedViews");
+            m["Settings"]!.AsObject().Remove("ImagePresets");
             foreach(var item in m["Items"]!.AsArray()) {var obj=item!.AsObject();obj.Remove("GroupName");obj.Remove("Tags");obj.Remove("Note");}
         }));
         var legacyManifest=MigrationService.ReadManifest(legacyPackage);
         Check(legacyManifest.Settings.SavedViews!.Count==0, "old migration packages without saved rules remain supported");
+        Check(legacyManifest.Settings.ImagePresets==null, "old migration packages without image presets remain supported");
         Check(legacyManifest.Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "legacy packages without organization fields normalize to empty");
         var legacyTarget=Path.Combine(root,"legacy-pc");
         await MigrationService.PrepareImportAsync(legacyPackage,legacyTarget,null,default,legacyManifest);
+        Check(!Directory.EnumerateFiles(legacyTarget,ImageProcessingPresetStore.FileName,SearchOption.AllDirectories).Any(), "old packages do not invent an image preset configuration");
         MigrationService.ApplyPending(legacyTarget);
         typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,legacyTarget);
         using(var legacyStore=new DataStore()) Check(legacyStore.Items.Count==4 && legacyStore.Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "legacy package imports and production DataStore reloads without organization");
@@ -96,6 +105,11 @@ internal static class Program
         await Reject(Variant("group-too-long",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]=new string('组',49))),"rejects overlong group before activation");
         await Reject(Variant("invalid-saved-rule",z=>EditManifestJson(z,m=>m["Settings"]!["SavedViews"]![0]!["Tab"]="Unknown")),"rejects invalid saved rules before activation");
         await Reject(Variant("duplicate-saved-rule",z=>EditManifestJson(z,m=>m["Settings"]!["SavedViews"]![1]!["Name"]="收藏参考")),"rejects duplicate rule names before activation");
+        await Reject(Variant("preset-version",z=>EditManifestJson(z,m=>m["Settings"]!["ImagePresets"]!["Version"]=99)),"rejects unsupported preset format before activation");
+        await Reject(Variant("preset-quality",z=>EditManifestJson(z,m=>m["Settings"]!["ImagePresets"]!["Presets"]![0]!["JpegQuality"]=0)),"rejects invalid image quality before activation");
+        await Reject(Variant("preset-edge",z=>EditManifestJson(z,m=>m["Settings"]!["ImagePresets"]!["Presets"]![0]!["MaxEdge"]=0)),"rejects invalid image dimensions before activation");
+        await Reject(Variant("preset-duplicate",z=>EditManifestJson(z,m=>m["Settings"]!["ImagePresets"]!["Presets"]![1]!["Name"]="交付 JPEG")),"rejects duplicate image preset names before activation");
+        await Reject(Variant("preset-missing-field",z=>EditManifestJson(z,m=>m["Settings"]!["ImagePresets"]!["Presets"]![0]!.AsObject().Remove("Format"))),"rejects incomplete image presets before activation");
         await Reject(Variant("group-control",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]="第一行\n第二行")),"rejects multiline group before activation");
         await Reject(Variant("tag-separator",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(JsonValue.Create("设计,稿")))),"rejects a single tag containing an editor separator before activation");
         await Reject(Variant("too-many-tags",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(Enumerable.Range(0,21).Select(i=>JsonValue.Create("标签"+i)).ToArray()))),"rejects too many tags before activation");
@@ -123,6 +137,12 @@ internal static class Program
         var textItem=JsonSerializer.Deserialize<List<MaterialItem>>(File.ReadAllText(Path.Combine(textImported,"data.json")),MigrationService.Json)!.Single();
         Check(textItem.HasFileSource && File.ReadAllText(textItem.FilePath)==originalText && textItem.TextContent=="仅作预览" && textItem.Note=="保留原文文件","import retains the complete text source and its existing preview and note");
         var existingPackage=Path.Combine(root,"keep.zip"); File.WriteAllText(existingPackage,"preserve existing output");
+        using(var cancel=new CancellationTokenSource()){
+            var valid=MigrationService.Snapshot(new[]{new MaterialItem{Type=MaterialType.Other,FilePath=Path.Combine(moved,"同名素材.bin")}},settings);
+            bool stopped=false;
+            try{await MigrationService.ExportAsync(existingPackage,valid,new DirectProgress(message=>{if(message=="正在校验迁移包索引…")cancel.Cancel();}),cancel.Token);}catch(OperationCanceledException){stopped=true;}
+            Check(stopped && File.ReadAllText(existingPackage)=="preserve existing output" && Directory.GetFiles(root,"*.partial").Length==0,"cancellation during final manifest validation cannot replace an existing archive");
+        }
         using(var cancel=new CancellationTokenSource()){
             var valid=MigrationService.Snapshot(new[]{new MaterialItem{Type=MaterialType.Other,FilePath=Path.Combine(moved,"同名素材.bin")}},settings);
             bool stopped=false;try{await MigrationService.ExportAsync(existingPackage,valid,new DirectProgress(_=>cancel.Cancel()),cancel.Token);}catch(OperationCanceledException){stopped=true;}

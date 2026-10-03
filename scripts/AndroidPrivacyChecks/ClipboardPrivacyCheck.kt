@@ -213,11 +213,13 @@ fun main(args: Array<String>) = runBlocking {
     ClipboardMonitorCoordinator.queue.enqueue(live("queued private data", "com.secret.app"))
     client.state = LanClient.State.Connected
     ClipboardMonitorCoordinator.onWsConnected()
+    awaitValue { ClipboardMonitorCoordinator.queue.size() == 0 }
     verify(client.texts.isEmpty() && ClipboardMonitorCoordinator.queue.size() == 0,
         "failed production save cannot leak queued automatic events during reconnection")
     livePrefs.failSaves = false
     ClipboardPrivacy.resume()
     ClipboardMonitorCoordinator.onWsConnected()
+    awaitValue { ClipboardMonitorCoordinator.queue.size() == 0 }
     verify(client.texts.isEmpty(), "reconnection after resume does not flush pre-pause automatic data")
     delay(15)
     ClipboardEventDispatcher.dispatch(live("permitted hook"))
@@ -286,10 +288,12 @@ fun main(args: Array<String>) = runBlocking {
     ClipboardPrivacy.saveExcludedPackages("com.secret.app"); delay(15)
     ClipboardMonitorCoordinator.queue.enqueue(live("stale secret coordinator", "com.secret.app"))
     ClipboardMonitorCoordinator.onWsConnected()
+    awaitValue { ClipboardMonitorCoordinator.queue.size() == 0 }
     verify(client.texts.size == beforeLateAction && ClipboardMonitorCoordinator.queue.size() == 0,
         "coordinator revalidates and discards excluded queued events")
     ClipboardMonitorCoordinator.queue.enqueue(live("stale secret action", "com.secret.app"))
     PushToPcAction(ClipboardMonitorCoordinator.queue).execute(ClipboardPrivacy.stampIfAllowed(live("new allowed action"))!!)
+    awaitValue { client.texts.lastOrNull()?.first == "new allowed action" }
     verify(client.texts.last().first == "new allowed action" && client.texts.none { it.second == "com.secret.app" },
         "action FIFO flush also revalidates queued source rules")
     val allowedFile = hook(ClipReceiver.KIND_FILE)

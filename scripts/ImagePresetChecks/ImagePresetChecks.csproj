@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Liuzhuan/Models/ImageProcessingOptions.cs" Link="ImageProcessingOptions.cs" />
+    <Compile Include="../../Liuzhuan/Models/ImageProcessingPreset.cs" Link="ImageProcessingPreset.cs" />
+    <Compile Include="../../Liuzhuan/Services/ImageProcessingPresetStore.cs" Link="ImageProcessingPresetStore.cs" />
+  </ItemGroup>
+</Project>

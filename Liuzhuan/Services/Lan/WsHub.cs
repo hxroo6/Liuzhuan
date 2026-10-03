@@ -15,6 +15,11 @@ public class WsHub
     private WebSocketServer? _server;
     private readonly ConcurrentDictionary<string, IWebSocketConnection> _sessions = new();
     private readonly ConcurrentDictionary<string, string> _sessionDevices = new();
+    private readonly object _receiptGate = new();
+    private readonly Dictionary<string, TextReceipt> _textReceipts = new();
+    private sealed record TextReceipt(string Fingerprint, DateTime CreatedAt, Lazy<bool> Registered);
+    private const int MaxTextReceipts = 2048;
+    private static readonly TimeSpan TextReceiptLifetime = TimeSpan.FromMinutes(10);
 
     /// <summary>收到手机文字素材（文本内容, 来源设备）</summary>
     public event Action<string, string>? TextReceived;
@@ -162,7 +167,7 @@ public class WsHub
             Data = new Dictionary<string, object?>
             {
                 ["serverVersion"] = "1.0",
-                ["features"] = new[] { "text", "file" },
+                ["features"] = new[] { "text", "file", LanMessage.ClipboardReceiptsFeature },
                 ["sessionId"] = sessionId
             }
         });
@@ -173,17 +178,52 @@ public class WsHub
     private void HandleText(IWebSocketConnection socket, LanMessage msg)
     {
         var content = msg.Data?.GetValueOrDefault("content")?.ToString() ?? "";
-        var device = msg.Device;
-        if (string.IsNullOrWhiteSpace(content)) return;
-        // 素材登记完成后再确认；requestId 用于 Android 任务关联，旧客户端可忽略。
-        TextReceived?.Invoke(content, device);
+        var session = _sessions.FirstOrDefault(kv => ReferenceEquals(kv.Value, socket)).Key;
+        if (session == null || !_sessionDevices.TryGetValue(session, out var device)) return;
+        if (string.IsNullOrWhiteSpace(content) || string.IsNullOrEmpty(msg.Id) || msg.Id.Length > 128) {
+            SendTextReceipt(socket, msg.Id, "rejected", "invalid_request"); return;
+        }
+        var app = msg.Data?.GetValueOrDefault("app")?.ToString() ?? "";
+        var fingerprint = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(
+            System.Text.Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new { msg.Type, content, app }))));
+        var key = JsonSerializer.Serialize(new[] { device, msg.Id });
+        TextReceipt receipt;
+        lock (_receiptGate)
+        {
+            var at = DateTime.UtcNow;
+            foreach (var stale in _textReceipts.Where(kv => kv.Value.Registered.IsValueCreated &&
+                at - kv.Value.CreatedAt >= TextReceiptLifetime).Select(kv => kv.Key).ToList()) _textReceipts.Remove(stale);
+            if (_textReceipts.TryGetValue(key, out var existing)) {
+                if (existing.Fingerprint != fingerprint) { SendTextReceipt(socket, msg.Id, "rejected", "request_conflict"); return; }
+                receipt = existing;
+            } else {
+                if (_textReceipts.Count >= MaxTextReceipts) {
+                    // 不提前淘汰十分钟内的成功请求；容量满时拒绝新登记，避免失去重试去重依据。
+                    SendTextReceipt(socket, msg.Id, "rejected", "receipt_capacity"); return;
+                }
+                receipt = new TextReceipt(fingerprint, at, new Lazy<bool>(() => {
+                    var handler = TextReceived;
+                    if (handler == null) return false;
+                    try { handler(content, device); return true; }
+                    catch (Exception ex) { Logger.Error("Lan: text registration failed: {0}", ex.GetType().Name); return false; }
+                }, LazyThreadSafetyMode.ExecutionAndPublication));
+                _textReceipts.Add(key, receipt);
+            }
+        }
+        // Lazy 在缓存锁外登记，重复请求等待同一结果；UI Dispatcher 不与缓存锁互相等待。
+        if (!receipt.Registered.Value) { SendTextReceipt(socket, msg.Id, "rejected", "registration_failed"); return; }
         var textBytes = System.Text.Encoding.UTF8.GetByteCount(content);
         TransferJournal.Report(new(msg.Id,content.Length>40?content[..40]:content,"手机 → 电脑",textBytes,textBytes,"已接收","",0));
+        SendTextReceipt(socket, msg.Id, "stored");
+    }
+
+    private static void SendTextReceipt(IWebSocketConnection socket, string requestId, string status, string? reason = null)
+    {
         Send(socket, new LanMessage
         {
             Type = "ack",
-            Id = msg.Id,
-            Data = new Dictionary<string, object?> { ["status"] = "stored", ["requestId"] = msg.Id }
+            Id = requestId,
+            Data = new Dictionary<string, object?> { ["status"] = status, ["requestId"] = requestId, ["reason"] = reason }
         });
     }
 

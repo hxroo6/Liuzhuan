@@ -341,6 +341,49 @@ public class DataStore : IDisposable
         return missing;
     }
 
+    public int ApplyIntegrityResults(IReadOnlyList<IntegrityResult> results)
+    {
+        var live = _items.ToLookup(x => x.Id, StringComparer.Ordinal);
+        var applied = 0;
+        foreach (var result in results)
+        {
+            var item = live[result.Source.Id].FirstOrDefault();
+            if (item == null || !IntegrityService.MatchesSource(item, result.Source)) continue;
+            item.ApplyIntegrityStatus(result.Status, result.Message + $"\n检查时间：{result.CheckedUtc.LocalDateTime:yyyy-MM-dd HH:mm:ss}");
+            applied++;
+        }
+        return applied;
+    }
+
+    /// <summary>仅用于用户确认后的结果；先完整验证来源版本、基线版本及当前文件元信息。</summary>
+    public int SetIntegrityBaselines(IEnumerable<IntegrityResult> results)
+    {
+        var updates = new List<(MaterialItem Item, MaterialIntegrityBaseline Baseline)>();
+        var ids = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var result in results)
+        {
+            if (result == null || !result.CanRecord || !ids.Add(result.Source.Id)) throw new ArgumentException("请选择可记录且不重复的检查结果。");
+            var item = _items.FirstOrDefault(x => x.Id == result.Source.Id);
+            if (item == null || !IntegrityService.MatchesSource(item, result.Source)) throw new InvalidOperationException("素材来源或基线已变化，请重新检查。");
+            var info = new FileInfo(item.FilePath);
+            if (!info.Exists || info.Length != result.Size || info.LastWriteTimeUtc != result.LastWriteUtc)
+                throw new InvalidOperationException("文件在检查后已变化或不可访问，请重新检查再记录。");
+            var baseline = IntegrityService.NormalizeBaseline(new(result.Sha256!, result.Size, result.CheckedUtc, item.FilePath, item.Type))!;
+            updates.Add((item, baseline));
+        }
+        foreach (var (item, baseline) in updates) item.IntegrityBaseline = baseline;
+        if (updates.Count > 0) ScheduleSave();
+        return updates.Count;
+    }
+    public int ClearIntegrityBaselines(IEnumerable<string> ids)
+    {
+        var selected = ids.ToHashSet(StringComparer.Ordinal);
+        var changed = 0;
+        foreach (var item in _items.Where(x => selected.Contains(x.Id) && x.IntegrityBaseline != null)) { item.IntegrityBaseline = null; changed++; }
+        if (changed > 0) ScheduleSave();
+        return changed;
+    }
+
     /// <summary>用户确认后的来源修复；不移动素材、改 ID 或复制/删除来源。</summary>
     public MaterialItem RelinkSource(SourceRelinkPlan plan)
     {
