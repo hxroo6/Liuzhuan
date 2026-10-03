@@ -25,6 +25,10 @@
         PreviewKeyDown="Window_PreviewKeyDown">
 
     <Window.Resources>
+        <Style x:Key="MaterialMetadataStyle" TargetType="TextBlock">
+            <Setter Property="FontSize" Value="10"/><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="Margin" Value="0,4,0,0"/>
+            <Style.Triggers><DataTrigger Binding="{Binding HasMetadata}" Value="False"><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers>
+        </Style>
         <!-- 素材卡片模板（网格用：图片/视频/其他文件）— 自适应比例，紧凑排列 -->
         <DataTemplate x:Key="GridCardTemplate" DataType="{x:Type models:MaterialItem}">
             <Border x:Name="CardBorder" Margin="2" Background="{StaticResource PanelLightBrush}"
@@ -102,6 +106,7 @@
                                         <StackPanel Grid.Row="1" Margin="8,5,8,8">
                         <TextBlock Text="{Binding DisplayName}" Foreground="{StaticResource TextBrush}" FontSize="12" TextTrimming="CharacterEllipsis"/>
                         <TextBlock Text="{Binding DetailLabel}" Foreground="{StaticResource TextDimBrush}" FontSize="10" Margin="0,4,0,0"/>
+                        <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
                     </StackPanel>
                 </Grid>
 
@@ -139,8 +144,10 @@
                     MaxHeight="164"
                     HorizontalAlignment="Stretch">
                 <Grid>                    <TextBlock Text="灵感摘录" Foreground="{StaticResource WarmBrush}" FontSize="10" Margin="10,10,0,0" VerticalAlignment="Top"/>
-                    <TextBlock Text="{Binding DetailLabel}" Foreground="{StaticResource TextDimBrush}" FontSize="10" Margin="10,0,30,10" VerticalAlignment="Bottom"/>
-                    <TextBlock Text="{Binding TextContent}"
+                    <StackPanel Margin="10,0,30,10" VerticalAlignment="Bottom"><TextBlock Text="{Binding DetailLabel}" Foreground="{StaticResource TextDimBrush}" FontSize="10"/>
+                        <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
+                    </StackPanel>
+                    <TextBlock x:Name="TextBody" Text="{Binding TextContent}"
                                Foreground="{StaticResource TextBrush}"
                                FontSize="12"
                                Margin="10,30,10,38"
@@ -177,6 +184,7 @@
                 </Grid>
             </Border>
             <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding HasMetadata}" Value="True"><Setter TargetName="TextBody" Property="Margin" Value="10,30,10,58"/></DataTrigger>
                 <DataTrigger Binding="{Binding IsFavorite}" Value="True">
                     <Setter TargetName="TextFavStar" Property="Opacity" Value="1"/>
                 </DataTrigger>
@@ -216,6 +224,7 @@
                                    Foreground="{StaticResource TextDimBrush}"
                                    FontSize="12" TextTrimming="CharacterEllipsis"
                                    Margin="0,1,0,0"/>
+                        <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
                     </StackPanel>
 
                     <TextBlock Grid.Column="2" VerticalAlignment="Center"
@@ -257,7 +266,7 @@
 
                 <!-- 标题只负责窗口操作；搜索、分类与主要动作独立分层。 -->
                 <Grid Grid.Row="0" Margin="16,12,12,0">
-                    <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="46"/><RowDefinition Height="44"/></Grid.RowDefinitions>
+                    <Grid.RowDefinitions><RowDefinition Height="58"/><RowDefinition Height="46"/><RowDefinition Height="44"/><RowDefinition Height="36"/></Grid.RowDefinitions>
                     <DockPanel Grid.Row="0" x:Name="HeaderDragArea" Background="Transparent">
                         <Button DockPanel.Dock="Right" x:Name="CollapseBtn" Content="›" FontSize="24" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="CollapseBtn_Click" ToolTip="收起面板" AutomationProperties.Name="收起面板"/>
                         <Button DockPanel.Dock="Right" x:Name="SettingsBtn" Width="32" Height="32" Style="{StaticResource IconButtonStyle}" Click="SettingsBtn_Click" ToolTip="设置与设备" AutomationProperties.Name="设置与设备">
@@ -285,6 +294,12 @@
                         <Button DockPanel.Dock="Right" Content="粘贴" Margin="0,0,6,0" Padding="10,4" Style="{StaticResource ActionButtonStyle}" Click="PasteBtn_Click" ToolTip="从剪贴板添加素材 · Ctrl+V"/>
                         <TextBlock x:Name="ConnectionText" Text="局域网 · 等待连接" VerticalAlignment="Center" FontSize="11" Foreground="{StaticResource TextDimBrush}" TextTrimming="CharacterEllipsis"/>
                     </DockPanel>
+                    <Grid Grid.Row="3" Margin="0,3,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <Button x:Name="GroupFilterButton" Click="GroupFilter_Click" Style="{StaticResource ActionButtonStyle}" Background="{StaticResource PanelLightBrush}" Padding="9,5"><DockPanel><TextBlock DockPanel.Dock="Right" Text="▾" Margin="5,0,0,0"/><TextBlock x:Name="GroupFilterText" Text="分组：全部" FontSize="11" TextTrimming="CharacterEllipsis"/></DockPanel></Button>
+                        <Button x:Name="TagFilterButton" Grid.Column="2" Click="TagFilter_Click" Style="{StaticResource ActionButtonStyle}" Background="{StaticResource PanelLightBrush}" Padding="9,5"><DockPanel><TextBlock DockPanel.Dock="Right" Text="▾" Margin="5,0,0,0"/><TextBlock x:Name="TagFilterText" Text="标签：全部" FontSize="11" TextTrimming="CharacterEllipsis"/></DockPanel></Button>
+                        <Button x:Name="OrganizationClearButton" Grid.Column="3" Content="×" Click="ClearOrganizationFilters_Click" Style="{StaticResource IconButtonStyle}" Width="26" Margin="4,0,0,0" Visibility="Collapsed" ToolTip="清除分组和标签筛选" AutomationProperties.Name="清除分组和标签筛选"/>
+                    </Grid>
                 </Grid>
                 <Border Grid.Row="1" Margin="12,10,12,6" Padding="2" Background="{StaticResource PanelLightBrush}" CornerRadius="8">
                     <Grid x:Name="TabStrip" SizeChanged="TabStrip_SizeChanged">
@@ -392,9 +407,10 @@
                                     <Button DockPanel.Dock="Right" Content="全选" Click="SelectAll_Click" Style="{StaticResource IconButtonStyle}" Width="34" Height="20" FontSize="11" Margin="0,0,4,0" ToolTip="全选当前列表 · Ctrl+A"/>
                                     <TextBlock x:Name="SelectionCountText" Foreground="{StaticResource AccentBrush}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"/>
                                 </DockPanel>
-                                <UniformGrid Rows="1" Columns="4">
+                                <UniformGrid Rows="1" Columns="5">
                                     <Button x:Name="SelectionCopyButton" Content="复制" Click="CopySelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0" ToolTip="批量复制 · Ctrl+C"/>
                                     <Button x:Name="SelectionFavoriteButton" Content="收藏" Click="FavoriteSelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0"/>
+                                    <Button x:Name="SelectionOrganizeButton" Content="整理…" Click="OrganizeSelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0" ToolTip="编辑分组、标签和备注 · F2"/>
                                     <Button x:Name="SelectionExportButton" Content="另存…" Click="ExportSelection_Click" Style="{StaticResource ActionButtonStyle}" Padding="6,6" Margin="0,0,5,0" ToolTip="将选中素材复制到独立文件夹 · Ctrl+Shift+S"/>
                                     <Button Content="移除" Click="RemoveSelection_Click" Style="{StaticResource ActionButtonStyle}" Foreground="{StaticResource ErrorBrush}" Background="#4B3537" Padding="6,6" ToolTip="移除选中索引，可撤回；保留原文件 · Del"/>
                                 </UniformGrid>

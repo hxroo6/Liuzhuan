@@ -149,6 +149,70 @@ public class MaterialItem : INotifyPropertyChanged
         }
     }
 
+    private string _groupName = string.Empty;
+    /// <summary>电脑端自定义分组，空字符串表示未分组。</summary>
+    public string GroupName
+    {
+        get => _groupName;
+        set
+        {
+            var next = value?.Trim() ?? string.Empty;
+            if (_groupName == next) return;
+            _groupName = next;
+            OnOrganizationChanged();
+        }
+    }
+
+    private string[] _tags = Array.Empty<string>();
+    /// <summary>电脑端标签；返回副本，避免直接修改数组绕过通知及保存。</summary>
+    public string[] Tags
+    {
+        get => (string[])_tags.Clone();
+        set
+        {
+            var next = MaterialOrganization.NormalizeTags(value);
+            if (_tags.SequenceEqual(next, StringComparer.Ordinal)) return;
+            _tags = next;
+            OnOrganizationChanged();
+        }
+    }
+
+    private string _note = string.Empty;
+    /// <summary>电脑端备注，不更改素材正文或源文件。</summary>
+    public string Note
+    {
+        get => _note;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_note == next) return;
+            _note = next;
+            OnOrganizationChanged();
+        }
+    }
+
+    [JsonIgnore]
+    public bool HasMetadata => _groupName.Length > 0 || _tags.Length > 0 || _note.Length > 0;
+
+    [JsonIgnore]
+    public string MetadataLabel => string.Join(" · ",
+        new[] { _groupName, string.Join(" ", _tags.Select(x => "#" + x)), _note.Length > 0 ? "有备注" : string.Empty }
+            .Where(x => x.Length > 0));
+
+    [JsonIgnore]
+    public string MetadataSummary => string.Join(Environment.NewLine,
+        new[] { _groupName.Length > 0 ? "分组：" + _groupName : string.Empty,
+            _tags.Length > 0 ? "标签：" + string.Join("、", _tags) : string.Empty, _note }
+            .Where(x => x.Length > 0));
+
+    private void OnOrganizationChanged([CallerMemberName] string? propertyName = null)
+    {
+        OnPropertyChanged(propertyName);
+        OnPropertyChanged(nameof(HasMetadata));
+        OnPropertyChanged(nameof(MetadataLabel));
+        OnPropertyChanged(nameof(MetadataSummary));
+    }
+
     /// <summary>是否为文件类素材</summary>
     public bool IsFile => Type != MaterialType.Text;
 

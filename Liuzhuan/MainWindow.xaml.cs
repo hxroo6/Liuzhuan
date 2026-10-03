@@ -429,7 +429,7 @@ public partial class MainWindow : Window
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CollapseDelayMs) };
         _collapseTimer.Tick += (s, e) =>
         {
-            if (_isWindowDragging || IsMouseOver || _menuOpen || _isDragging || IsKeyboardFocusWithin && IsActive) return;
+            if (_isWindowDragging || IsMouseOver || _menuOpen || _toolDialogOpen || _isDragging || IsKeyboardFocusWithin && IsActive) return;
             _collapseTimer.Stop();
             if (!_isLeftAnchored && !_isPinned) CollapsePanel();
         };
@@ -597,7 +597,7 @@ public partial class MainWindow : Window
     private void CollapsePanel()
     {
         if (_isWindowDragging || !_isExpanded) return;
-        if (_isPinned || _menuOpen) return;
+        if (_isPinned || _menuOpen || _toolDialogOpen) return;
         if (_isLeftAnchored) return; // 左锚定：保持展开，不收起不跳右
         _isExpanded = false;
         CloseHoverPreview();
@@ -678,7 +678,7 @@ public partial class MainWindow : Window
         select.Click += SelectAll_Click;
         menu.Items.Add(select);
         menu.Items.Add(new Separator());
-        var current = new MenuItem { Header = "清空当前分类…" };
+        var current = new MenuItem { Header = _currentTab == "Favorites" ? "取消当前结果的收藏…" : "移除当前结果（保留收藏）…" };
         current.Click += ClearCurrentBtn_Click;
         var all = new MenuItem { Header = "清空全部素材…" };
         all.Click += ClearAllBtn_Click;
@@ -766,9 +766,9 @@ public partial class MainWindow : Window
 
         IEnumerable<MaterialItem> items;
         if (!string.IsNullOrEmpty(_searchKeyword))
-            items = _dataStore.Search(_searchKeyword, _currentTab);
+            items = _dataStore.Search(_searchKeyword, _currentTab, _groupFilter, _tagFilter);
         else
-            items = _dataStore.GetFiltered(_currentTab);
+            items = _dataStore.GetFiltered(_currentTab, _groupFilter, _tagFilter);
 
         // 原位更新，缩略图完成或新素材到达时不清空列表、打断选中与滚动位置。
         var desired = items.ToList();
@@ -792,8 +792,9 @@ public partial class MainWindow : Window
         ListView.Visibility = useAudio ? Visibility.Visible : Visibility.Collapsed;
 
         EmptyState.Visibility = _currentView.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        EmptyTitle.Text = _searchKeyword.Length > 0 ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
-        EmptyDescription.Text = _searchKeyword.Length > 0 ? "试试更短的关键词，或清除搜索" : _currentTab == "Favorites" ? "点击素材上的星标，常用内容随时取用" : "拖入文件，或点击上方「添加文件」";
+        EmptyTitle.Text = _searchKeyword.Length > 0 || HasOrganizationFilter ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
+        EmptyDescription.Text = HasOrganizationFilter ? "试试其他分组或标签，或清除筛选" : _searchKeyword.Length > 0 ? "试试更短的关键词，或清除搜索" : _currentTab == "Favorites" ? "点击素材上的星标，常用内容随时取用" : "拖入文件，或点击上方「添加文件」";
+        UpdateOrganizationFilters();
         UpdateStatusText();
         UpdateSelectionBar();
     }
@@ -815,7 +816,7 @@ public partial class MainWindow : Window
         var searchHint = !string.IsNullOrEmpty(_searchKeyword) ? $" 搜索「{_searchKeyword}」" : "";
         var selected = GetSelectedItems().Count;
         StatusText.Text = selected > 0 ? $"已选 {selected} 项 / 共 {count} 项" : $"{typeName} · {count} 项";
-        StatusText.ToolTip = $"{typeName} {count} 项{searchHint}";
+        StatusText.ToolTip = $"{typeName} {count} 项{searchHint}" + (_groupFilter != null ? $" · 分组：{(_groupFilter.Length > 0 ? _groupFilter : "未分组")}" : "") + (_tagFilter != null ? $" · 标签：{_tagFilter}" : "");
         if (ConnectionText != null)
             ConnectionText.Text = _lanServer.ClientCount > 0 ? $"已连接 {_lanServer.ClientCount} 台设备" : LanConfig.Enabled ? "局域网 · 等待连接" : "局域网同步已关闭";
     }
@@ -1112,6 +1113,9 @@ public partial class MainWindow : Window
         var exportItem = new MenuItem { Header = $"另存到文件夹…（{targetItems.Count} 项）" };
         exportItem.Click += (_, _) => ExportSelection(targetItems);
         menu.Items.Add(exportItem);
+        var organizeItem = new MenuItem { Header = $"整理分组、标签和备注…（{targetItems.Count} 项）", InputGestureText = "F2" };
+        organizeItem.Click += (_, _) => OrganizeItems(targetItems);
+        menu.Items.Add(organizeItem);
         menu.Items.Add(new Separator());
 
         // 删除
@@ -1230,6 +1234,7 @@ public partial class MainWindow : Window
         {
             if (SearchBox.Text.Length > 0) SearchBox.Clear();
             else if (GetSelectedItems().Count > 0) GetActiveListView()?.UnselectAll();
+            else if (HasOrganizationFilter) ClearOrganizationFilters();
             else CollapseBtn_Click(sender, e);
             e.Handled = true;
             return;
@@ -1243,6 +1248,8 @@ public partial class MainWindow : Window
         }
         if (!SearchBox.IsKeyboardFocusWithin && e.Key == Key.S && Keyboard.Modifiers == (ModifierKeys.Control | ModifierKeys.Shift))
         { ExportSelection(GetSelectedItems()); e.Handled = true; return; }
+        if (!SearchBox.IsKeyboardFocusWithin && e.Key == Key.F2)
+        { OrganizeItems(GetSelectedItems()); e.Handled = true; return; }
         // Del 键删除选中项（焦点不在搜索框时）
         if (e.Key == Key.Delete && !SearchBox.IsKeyboardFocusWithin)
         {
@@ -1383,34 +1390,22 @@ public partial class MainWindow : Window
 
     private void ClearCurrentBtn_Click(object sender, RoutedEventArgs e)
     {
-        if (_currentView.Count == 0) return;
-        var typeName = _currentTab switch
-        {
-            "Recent" => "全部素材", "Favorites" => "收藏", "Video" => "视频", "Text" => "文字",
-            "Image" => "图片", "Audio" => "音频", "Other" => "其他",
-            _ => "当前分类"
-        };
-        var result = MessageBox.Show($"确定清空「{typeName}」吗？\n（仅删除软件内索引，不删除本地源文件。收藏项不会被清空）",
-            "确认清空", MessageBoxButton.OKCancel, MessageBoxImage.Question);
+        var targets = CaptureCurrentClearTargets();
+        if (targets.Count == 0) { ShowFeedback("当前结果没有可移除的素材，收藏已保留"); return; }
+        var favorites = _currentTab == "Favorites";
+        var message = favorites ? $"确定取消当前结果中 {targets.Count} 项素材的收藏吗？\n素材和原文件保留。"
+            : $"确定移除当前结果中 {targets.Count} 项素材吗？\n仅处理当前分类、搜索和筛选结果，保留收藏和原文件，可撤回。";
+        var result = MessageBox.Show(this, message, favorites ? "确认取消收藏" : "确认移除当前结果", MessageBoxButton.OKCancel, MessageBoxImage.Question);
         if (result == MessageBoxResult.OK)
         {
-            if (_currentTab == "Recent") _dataStore.ClearAll();
-            else if (_currentTab == "Favorites")
-            {
-                // 清空收藏 = 批量取消所有收藏项的收藏标记
-                var favIds = _dataStore.Items.Where(x => x.IsFavorite).Select(x => x.Id).ToList();
-                if (favIds.Count > 0) _dataStore.SetFavoriteMultiple(favIds, false);
-            }
-            else if (Enum.TryParse<MaterialType>(_currentTab, out var type)) _dataStore.ClearByType(type);
-            RefreshView();
-            UpdateUndoButton();
+            ApplyCurrentClearTargets(targets, favorites);
         }
     }
 
     private void ClearAllBtn_Click(object sender, RoutedEventArgs e)
     {
         if (_dataStore.Items.Count == 0) return;
-        var result = MessageBox.Show("确定清空所有素材吗？\n（仅删除软件内索引，不删除本地源文件）",
+        var result = MessageBox.Show("确定清空所有非收藏素材吗？\n仅删除软件内索引，保留收藏和原文件，可撤回。",
             "确认全部清空", MessageBoxButton.OKCancel, MessageBoxImage.Warning);
         if (result == MessageBoxResult.OK)
         {
@@ -1520,7 +1515,7 @@ public partial class MainWindow : Window
                 LanEnabled = LanConfig.Enabled, Port = LanConfig.Port, Password = LanConfig.Password,
                 AutoStart = StartupService.IsEnabled()
             }), QuickExit) { Owner = this };
-            window.ShowDialog();
+            ShowToolDialog(window);
         };
         menu.Items.Add(migrationItem);
         menu.Items.Add(new Separator());
@@ -1666,7 +1661,7 @@ public partial class MainWindow : Window
         var appVersion = typeof(MainWindow).Assembly.GetName().Version?.ToString(3) ?? "1.2.0";
         var aboutItem = new MenuItem { Header = $"关于流转 v{appVersion}", Foreground = (Brush)FindResource("TextBrush") };
         aboutItem.Click += (s, e) => MessageBox.Show(
-            $"流转 v{appVersion}\n跨应用素材暂存中转站\n\n核心：拖拽暂存 · 即用即拖 · 不改动源文件\n\n快捷键：\nCtrl+A — 全选当前列表\nCtrl+C — 复制选中素材\nCtrl+Shift+S — 另存选中素材\nDel — 移除选中\nCtrl+Z — 撤回删除\nCtrl+V — 粘贴剪贴板\nCtrl+F — 搜索\nCtrl/Shift + 单击 — 多选",
+            $"流转 v{appVersion}\n跨应用素材暂存中转站\n\n核心：拖拽暂存 · 即用即拖 · 不改动源文件\n\n快捷键：\nCtrl+A — 全选当前列表\nCtrl+C — 复制选中素材\nCtrl+Shift+S — 另存选中素材\nF2 — 整理分组、标签和备注\nDel — 移除选中\nCtrl+Z — 撤回删除\nCtrl+V — 粘贴剪贴板\nCtrl+F — 搜索\nCtrl/Shift + 单击 — 多选",
             "关于", MessageBoxButton.OK, MessageBoxImage.Information);
         menu.Items.Add(aboutItem);
 

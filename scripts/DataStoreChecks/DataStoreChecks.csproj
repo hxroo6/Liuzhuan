@@ -11,6 +11,7 @@
     <Compile Include="../../Liuzhuan/Services/ConfigService.cs" Link="Production/ConfigService.cs" />
     <Compile Include="../../Liuzhuan/Services/Lan/LanItemSummary.cs" Link="Production/LanItemSummary.cs" />
     <Compile Include="../../Liuzhuan/Models/MaterialItem.cs" Link="Production/MaterialItem.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialOrganization.cs" Link="Production/MaterialOrganization.cs" />
     <Compile Include="../../Liuzhuan/Utils/FileClassifier.cs" Link="Production/FileClassifier.cs" />
     <Compile Include="../../Liuzhuan/Utils/Logger.cs" Link="Production/Logger.cs" />
   </ItemGroup>

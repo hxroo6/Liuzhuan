@@ -273,10 +273,46 @@ public class DataStore : IDisposable
         Logger.Run("DataStore: set favorite={0} for {1} items", favorite, ids.Count);
     }
 
-    /// <summary>获取过滤后的列表</summary>
-    public IEnumerable<MaterialItem> GetFiltered(string tabKey)
+    /// <summary>修改电脑端组织信息；先验证整个批次，成功后保存，不产生 LAN 增量或调整顺序。</summary>
+    public int UpdateOrganization(IEnumerable<string> ids, MaterialOrganizationPatch patch)
     {
-        return tabKey switch
+        ArgumentNullException.ThrowIfNull(ids);
+        var normalized = MaterialOrganization.Normalize(patch);
+        var selectedIds = ids.ToHashSet(StringComparer.Ordinal);
+        var updates = new List<(MaterialItem Item, MaterialOrganizationPatch Value)>();
+        foreach (var item in _items.Where(x => selectedIds.Contains(x.Id)))
+        {
+            var tags = normalized.Tags == null ? item.Tags : normalized.TagsMode switch
+            {
+                TagsMode.Add => item.Tags.Concat(normalized.Tags).ToArray(),
+                TagsMode.Remove => item.Tags.Except(normalized.Tags, StringComparer.OrdinalIgnoreCase).ToArray(),
+                _ => normalized.Tags
+            };
+            // Adding tags may exceed the limit on just one item; validate every result before touching any.
+            var value = MaterialOrganization.Normalize(normalized.GroupName ?? item.GroupName, tags, normalized.Note ?? item.Note);
+            if (item.GroupName != value.GroupName || item.Note != value.Note ||
+                !item.Tags.SequenceEqual(value.Tags!, StringComparer.Ordinal))
+                updates.Add((item, value));
+        }
+
+        foreach (var (item, value) in updates)
+        {
+            item.GroupName = value.GroupName!;
+            item.Tags = value.Tags!;
+            item.Note = value.Note!;
+        }
+        if (updates.Count > 0)
+        {
+            ScheduleSave();
+            Logger.Run("DataStore: updated organization for {0} items", updates.Count);
+        }
+        return updates.Count;
+    }
+
+    /// <summary>获取过滤列表：groupName null 不限、空字符串未分组；tag null/空不限。</summary>
+    public IEnumerable<MaterialItem> GetFiltered(string tabKey, string? groupName = null, string? tag = null)
+    {
+        IEnumerable<MaterialItem> filtered = tabKey switch
         {
             "Recent" => _items.OrderByDescending(x => x.AddedTime),
             "Favorites" => _items.Where(x => x.IsFavorite).OrderByDescending(x => x.AddedTime),
@@ -287,19 +323,27 @@ public class DataStore : IDisposable
             "Other" => _items.Where(x => x.Type == MaterialType.Other).OrderByDescending(x => x.AddedTime),
             _ => _items.OrderByDescending(x => x.AddedTime)
         };
+        if (groupName != null)
+            filtered = filtered.Where(x => string.Equals(x.GroupName, groupName.Trim(), StringComparison.OrdinalIgnoreCase));
+        if (!string.IsNullOrWhiteSpace(tag))
+            filtered = filtered.Where(x => x.Tags.Contains(tag.Trim(), StringComparer.OrdinalIgnoreCase));
+        return filtered;
     }
 
-    /// <summary>搜索素材（按文件名、文件路径或文字内容匹配）</summary>
-    public IEnumerable<MaterialItem> Search(string keyword, string tabKey)
+    /// <summary>搜索素材（文件名、文件路径、文字内容及电脑端分组、标签、备注）。</summary>
+    public IEnumerable<MaterialItem> Search(string keyword, string tabKey, string? groupName = null, string? tag = null)
     {
         if (string.IsNullOrWhiteSpace(keyword))
-            return GetFiltered(tabKey);
+            return GetFiltered(tabKey, groupName, tag);
 
-        var filtered = GetFiltered(tabKey);
+        var filtered = GetFiltered(tabKey, groupName, tag);
         return filtered.Where(x =>
             x.DisplayName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
             (x.IsFile && x.FilePath.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
-            (!x.IsFile && x.TextContent.Contains(keyword, StringComparison.OrdinalIgnoreCase)));
+            (!x.IsFile && x.TextContent.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
+            x.GroupName.Contains(keyword, StringComparison.OrdinalIgnoreCase) ||
+            x.Tags.Any(tagValue => tagValue.Contains(keyword, StringComparison.OrdinalIgnoreCase)) ||
+            x.Note.Contains(keyword, StringComparison.OrdinalIgnoreCase));
     }
 
     private void Load()

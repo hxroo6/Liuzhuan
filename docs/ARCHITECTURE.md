@@ -212,3 +212,12 @@
 - MaterialExportWindow 捕获不可变快照后调用 MaterialExportService。后台生成独立子目录，顺序流式复制；有 FilePath 的文字素材复制全文原文件，纯文本按 UTF-8 编码。每项状态和节流字节进度反馈至 UI，取消按缓冲检查；仅清理记录在案的输出，不递归删除目标目录。
 - DataStore 撤回记录原始顺序及位置；恢复逐条递增 sequence 并发 ItemAdded。批量删除逐条序号；保留其他项的清空使用 ItemRemoved，真正删空才使用 ItemCleared。现有 Android 协议兼容，删除后的 gap 可触发既有快照重同步。
 - 自动检查入口：DesktopUiChecks（界面/选择/拖拽数据/动画）、MaterialExportChecks（临时文件字节与路径/取消）、DataStoreChecks（增量镜像及撤回顺序）。均使用隔离内容，不启动实际素材库。
+
+### 分组、标签和备注（电脑端 v1.5.0 本地版本）
+- MaterialItem 持久化 GroupName、Tags、Note；旧索引缺字段/null 对应空值。Tags getter 返回副本，派生摘要不写入 JSON。编辑不改原文件、添加时间或素材顺序。
+- MaterialOrganization 统一校验编辑与迁移：分组 48 字符、标签 20×32 字符、备注 4000 字符；组名为单行，单个标签不含编辑器分隔符或控制字符，备注保留换行。不截断超限内容。
+- DataStore.UpdateOrganization 以 null 保留字段、空值清除字段；支持标签追加/替换/移除，先校验整个批次再应用并延迟保存。本地整理不触发 LAN 增量或消耗 sequence，Android 协议不变。
+- MainWindow.Organization 与 MaterialOrganizationWindow 提供单项/批量编辑、分组/标签筛选；分组由现有素材归纳，不单独保存空分组。GetFiltered/Search 将元数据条件与分类、收藏、内容搜索组合。
+- 清空当前结果先捕获可见 ID；一般视图仅移除非收藏，收藏视图只取消收藏。工具窗口打开期间暂停自动收起，独立标志避免右键菜单关闭时解除保护。
+- 迁移包仍为格式 v1，新增可选组织字段，快照与导入包含它们；旧包兼容。旧程序重新保存索引会丢弃未知字段，因此要保留信息需使用 v1.5.0 或更新程序。普通内容另存不携带内部元数据。
+- 自动检查：OrganizationChecks 验证批量事务、持久化、搜索与兼容；DesktopUiChecks 增加编辑/筛选/移除/撤回与模态窗口保护；MigrationChecks 验证组织字段往返及无效输入拒绝。

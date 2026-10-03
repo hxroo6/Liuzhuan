@@ -10,6 +10,16 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## v1.5.0: groups, tags, and notes (local build)
+
+- Select materials and click **整理…**, press **F2**, or use the context menu. Each material can have one group, multiple tags, and a note. Enter a new name to create a group; leave it blank for ungrouped materials.
+- Batch edits apply only checked fields and retain all other information. Tags can be added, replaced, or removed. Ctrl+Enter saves; cancelling leaves materials unchanged.
+- Group and tag filters combine with categories and search. Search also matches notes. Cards show an organization summary, with details available on hover.
+- Removing current results affects only visible non-favorites and can be undone. The corresponding action in Favorites only removes the visible results from favorites.
+- Organization information is stored with the library and included in Migration and Backup. Older libraries and archives remain supported. Use v1.5.0 or newer on both PCs to retain this information when migrating.
+
+Groups allow up to 48 characters. Each material allows up to 20 tags of 32 characters each and a note of 4000 characters. Groups and tags match without case sensitivity; separate tags with commas or semicolons. Group lists come from current materials, so empty groups are not retained separately. Organization is available on desktop; phones continue syncing the original material content. Ordinary Save produces usable files; export a migration archive to reuse organization information on another PC.
+
 ## v1.4.0: batch organization and saving a selection (local build)
 
 - Ctrl/Shift-select materials to reveal copy, favorite, save, and remove actions. Select all, invert, and clear operate within the current category and search results.

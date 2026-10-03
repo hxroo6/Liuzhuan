@@ -151,6 +151,7 @@ internal static class Program
         SelectionAction("InvertSelection_Click");
         Check(grid.SelectedItems.Count == 0, "invert cannot select hidden search results");
         filterBox.Clear();
+        OrganizationUiChecks.Run(window, store, output);
         Render("desktop-default.png"); // 搜索会回收容器，先完成布局再检查图像元素。
         Image? FindThumbnail(DependencyObject parent)
         {

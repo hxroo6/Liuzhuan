@@ -68,13 +68,7 @@ public partial class MainWindow
     {
         if (items.Count == 0) { ShowFeedback("先选择要另存的素材"); return; }
         CloseHoverPreview();
-        _collapseTimer?.Stop();
-        _menuOpen = true;
-        try
-        {
-            var window = new Views.MaterialExportWindow(MaterialExportService.Snapshot(items)) { Owner = this };
-            window.ShowDialog();
-        }
-        finally { _menuOpen = false; _collapseTimer?.Start(); }
+        var window = new Views.MaterialExportWindow(MaterialExportService.Snapshot(items)) { Owner = this };
+        ShowToolDialog(window);
     }
 }

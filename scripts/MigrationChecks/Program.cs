@@ -1,6 +1,7 @@
 using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using Liuzhuan;
 using Liuzhuan.Models;
 using Liuzhuan.Services;
@@ -20,17 +21,22 @@ internal static class Program
         var second = Path.Combine(old, "second"); Directory.CreateDirectory(second);
         var secondSource = Path.Combine(second, "同名素材.bin"); await File.WriteAllTextAsync(secondSource, "another file");
         var items = new[] {
-            new MaterialItem { Id="a", Type=MaterialType.Other, DisplayName="主素材", FilePath=source, ThumbnailPath=thumb, IsFavorite=true, AddedTime=new DateTime(2026,9,1), Size=10 },
-            new MaterialItem { Id="b", Type=MaterialType.Text, DisplayName="笔记", TextContent="换台电脑也保留的文字\n第二行", IsFavorite=true },
+            new MaterialItem { Id="a", Type=MaterialType.Other, DisplayName="主素材", FilePath=source, ThumbnailPath=thumb, IsFavorite=true, AddedTime=new DateTime(2026,9,1), Size=10, GroupName="视觉参考", Tags=new[]{"封面", "待用"}, Note="换机后保留的备注\n第二行" },
+            new MaterialItem { Id="b", Type=MaterialType.Text, DisplayName="笔记", TextContent="换台电脑也保留的文字\n第二行", IsFavorite=true, GroupName="灵感", Tags=new[]{"文案"}, Note="文字素材的备注" },
             new MaterialItem { Id="c", Type=MaterialType.Other, DisplayName="同名素材", FilePath=secondSource },
             new MaterialItem { Id="d", Type=MaterialType.Other, DisplayName="重复引用", FilePath=source }
         };
         var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true };
+        void Check(bool ok,string name){if(!ok)throw new Exception(name);Console.WriteLine("PASS "+name);}
         var snapshot=MigrationService.Snapshot(items, settings);
+        items[0].Tags[0]="原库随后修改";
+        items[0].GroupName="原库的新分组";
+        items[0].Note="原库的新备注";
+        Check(snapshot.Items[0].Tags.SequenceEqual(new[]{"封面", "待用"}) && snapshot.Items[0].GroupName=="视觉参考" && snapshot.Items[0].Note=="换机后保留的备注\n第二行", "snapshot isolates organization fields and mutable tag arrays");
         var package=Path.Combine(root,"roundtrip.zip");
         await MigrationService.ExportAsync(package,snapshot,null,default);
-        void Check(bool ok,string name){if(!ok)throw new Exception(name);Console.WriteLine("PASS "+name);}
         var manifest=MigrationService.ReadManifest(package);
+        Check(manifest.Version==1 && manifest.Items[0].GroupName=="视觉参考" && manifest.Items[0].Tags.SequenceEqual(new[]{"封面", "待用"}) && manifest.Items[0].Note=="换机后保留的备注\n第二行", "version-1 export retains groups, tags and multiline notes");
         Check(manifest.Files.Count==3,"deduplicates repeated paths while retaining same-name distinct files");
         Check(manifest.Items[0].FilePath.StartsWith("files/") && snapshot.Items[0].FilePath==source,"portable paths; original UI snapshot unchanged");
         var target=Path.Combine(root,"new-pc"); Directory.CreateDirectory(target);
@@ -44,6 +50,7 @@ internal static class Program
         Check(File.ReadAllText(Path.Combine(target,"config.json"))==oldConfig,"prepare does not switch active config or overwrite old library");
         var restored=JsonSerializer.Deserialize<List<MaterialItem>>(File.ReadAllText(Path.Combine(imported,"data.json")),MigrationService.Json)!;
         Check(restored.Count==4 && restored[0].IsFavorite && restored[1].TextContent==items[1].TextContent && restored[0].AddedTime==items[0].AddedTime,"text, IDs, favorites and timestamps survive");
+        Check(restored[0].GroupName=="视觉参考" && restored[0].Tags.SequenceEqual(new[]{"封面", "待用"}) && restored[0].Note=="换机后保留的备注\n第二行" && restored[1].GroupName=="灵感" && restored[1].Tags.SequenceEqual(new[]{"文案"}), "imported index retains organization for file and text materials");
         Check(File.ReadAllBytes(restored[0].FilePath).SequenceEqual(File.ReadAllBytes(Path.Combine(moved,"同名素材.bin"))) && File.ReadAllText(restored[2].FilePath)=="another file","original file bytes survive relocation and filename collisions");
         Check(restored[0].Size==new FileInfo(restored[0].FilePath).Length && File.Exists(restored[0].ThumbnailPath),"file size refreshed and thumbnail path remapped");
         var applied=MigrationService.ApplyPending(target)!;
@@ -51,10 +58,35 @@ internal static class Program
         Check(Directory.GetFiles(target,"config.before-import-*.json").Any(p=>File.ReadAllText(p)==oldConfig) && File.ReadAllText(Path.Combine(existing,"keep.txt"))=="old library","original config backup and original library retained");
         Check(MigrationService.ApplyPending(target)==null,"activation is one-shot");
         typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,target);
-        using(var store=new DataStore()) Check(store.Items.Count==4,"production DataStore loads imported files with old PC unavailable");
+        using(var store=new DataStore()) {
+            Check(store.Items.Count==4,"production DataStore loads imported files with old PC unavailable");
+            var organized=store.Items.Single(i=>i.Id=="a");
+            Check(organized.GroupName=="视觉参考" && organized.Tags.SequenceEqual(new[]{"封面", "待用"}) && organized.Note=="换机后保留的备注\n第二行", "production DataStore reload preserves imported organization");
+        }
         string Variant(string name,Action<ZipArchive> rewrite){var path=Path.Combine(root,name+".zip");File.Copy(package,path);using(var z=ZipFile.Open(path,ZipArchiveMode.Update))rewrite(z);return path;}
         void EditManifest(ZipArchive z,Action<MigrationService.Manifest> edit){var e=z.GetEntry("manifest.json")!;MigrationService.Manifest m;using(var s=e.Open())m=JsonSerializer.Deserialize<MigrationService.Manifest>(s,MigrationService.Json)!;edit(m);e.Delete();using var output=z.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(output,m,MigrationService.Json);}
+        void EditManifestJson(ZipArchive z,Action<JsonObject> edit){var e=z.GetEntry("manifest.json")!;JsonObject m;using(var s=e.Open())m=JsonNode.Parse(s)!.AsObject();edit(m);e.Delete();using var output=z.CreateEntry("manifest.json").Open();JsonSerializer.Serialize(output,m,MigrationService.Json);}
+        var legacyPackage=Variant("legacy-organization",z=>EditManifestJson(z,m=>{
+            foreach(var item in m["Items"]!.AsArray()) {var obj=item!.AsObject();obj.Remove("GroupName");obj.Remove("Tags");obj.Remove("Note");}
+        }));
+        var legacyManifest=MigrationService.ReadManifest(legacyPackage);
+        Check(legacyManifest.Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "legacy packages without organization fields normalize to empty");
+        var legacyTarget=Path.Combine(root,"legacy-pc");
+        await MigrationService.PrepareImportAsync(legacyPackage,legacyTarget,null,default,legacyManifest);
+        MigrationService.ApplyPending(legacyTarget);
+        typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,legacyTarget);
+        using(var legacyStore=new DataStore()) Check(legacyStore.Items.Count==4 && legacyStore.Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "legacy package imports and production DataStore reloads without organization");
+        var nullPackage=Variant("null-organization",z=>EditManifestJson(z,m=>{
+            foreach(var item in m["Items"]!.AsArray()) {var obj=item!.AsObject();obj["GroupName"]=null;obj["Tags"]=null;obj["Note"]=null;}
+        }));
+        Check(MigrationService.ReadManifest(nullPackage).Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "explicit null organization values normalize to empty");
         async Task Reject(string path,string label){var dest=Path.Combine(root,Guid.NewGuid().ToString("N"));bool failed=false;try{await MigrationService.PrepareImportAsync(path,dest,null,default);}catch(Exception e)when(e is InvalidDataException or JsonException){failed=true;}Check(failed && !File.Exists(Path.Combine(dest,"migration-pending.json")) && !File.Exists(Path.Combine(dest,"config.json")),label);}
+        await Reject(Variant("group-too-long",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]=new string('组',49))),"rejects overlong group before activation");
+        await Reject(Variant("group-control",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]="第一行\n第二行")),"rejects multiline group before activation");
+        await Reject(Variant("tag-separator",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(JsonValue.Create("设计,稿")))),"rejects a single tag containing an editor separator before activation");
+        await Reject(Variant("too-many-tags",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(Enumerable.Range(0,21).Select(i=>JsonValue.Create("标签"+i)).ToArray()))),"rejects too many tags before activation");
+        await Reject(Variant("tag-too-long",z=>EditManifestJson(z,m=>m["Items"]![0]!["Tags"]=new JsonArray(JsonValue.Create(new string('签',33))))),"rejects overlong tag before activation");
+        await Reject(Variant("note-too-long",z=>EditManifestJson(z,m=>m["Items"]![0]!["Note"]=new string('注',4001))),"rejects overlong note before activation");
         await Reject(Variant("traversal",z=>{using var s=new StreamWriter(z.CreateEntry("../escape.txt").Open());s.Write("bad");}),"rejects zip path traversal");
         await Reject(Variant("duplicate",z=>{using var s=new StreamWriter(z.CreateEntry("manifest.json").Open());s.Write("{}");}),"rejects duplicate ZIP entries");
         await Reject(Variant("version",z=>EditManifest(z,m=>m.Version=900)),"rejects unsupported version");

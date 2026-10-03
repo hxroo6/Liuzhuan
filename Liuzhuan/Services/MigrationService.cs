@@ -138,6 +138,19 @@ public static class MigrationService
         {
             if (item == null || string.IsNullOrEmpty(item.Id) || !ids.Add(item.Id) || item.DisplayName == null || item.TextContent == null || item.ThumbnailPath == null || item.FilePath == null || !Enum.IsDefined(typeof(MaterialType), item.Type) || item.Size < 0 || !double.IsFinite(item.Duration) || item.Duration < 0)
                 throw new InvalidDataException("素材索引无效。");
+            // Optional organization fields keep version-1 packages compatible, including
+            // old packages with missing/null values. Reject invalid limits before staging.
+            try
+            {
+                var organization = MaterialOrganization.Normalize(item.GroupName, item.Tags, item.Note);
+                item.GroupName = organization.GroupName!;
+                item.Tags = organization.Tags!;
+                item.Note = organization.Note!;
+            }
+            catch (ArgumentException ex)
+            {
+                throw new InvalidDataException("素材分组、标签或备注无效。", ex);
+            }
             if ((item.IsFile && !paths.Contains(item.FilePath)) || (!item.IsFile && item.FilePath != "") || (item.ThumbnailPath != "" && !paths.Contains(item.ThumbnailPath)))
                 throw new InvalidDataException("素材引用了包外文件。");
         }
