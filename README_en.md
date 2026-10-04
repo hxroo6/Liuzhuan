@@ -10,6 +10,14 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
+## Android v1.8.1: startup compatibility fix (local build)
+
+- On the tested Android 16 phone with LSPosed Irena 1.9.2, injecting a debuggable app crashed before the Activity started, leaving an apparently frozen splash screen. A production signing certificate does not disable the debuggable flag.
+- The new `distribution` variant shares the Debug source and existing signing configuration, disables debugging, and keeps code minification off. Local delivery uses `Liuzhuan-M33-signed.apk`. Debug remains available for development; CI checks and uploads Distribution to prevent accidental delivery of debuggable APKs.
+- Cold startup, PC discovery, switching among all three pages, the PC material snapshot, and manual text registration receipts were verified on the original phone and framework. Two copies from WeChat while Liuzhuan was in the background completed Hook→broadcast→PC registration receipt in about 42 ms and 63 ms, with duplicate broadcasts suppressed. These are results from this device, not guarantees for every ROM or network. Android v1.8.1 remains compatible with PC v1.8.0; no data migration is required. Background copying still requires the enabled LSPosed module and appropriate scopes.
+
+Install the same-certificate APK over the existing app, then toggle the Liuzhuan accessibility service off and on. CI builds without the private keystore use a test certificate and cannot replace locally signed delivery APKs.
+
 ## v1.8.0: delivery receipts, file verification, and image presets (local build)
 
 - Automatic clipboard text waits for a receipt confirming PC material registration. Stable request IDs and bounded retries distinguish pending, registered, and unconfirmed deliveries on compatible builds. Privacy rules, event age, and the target PC constrain retries; legacy PCs receive only one submission and report unconfirmed delivery instead of blind retransmission.

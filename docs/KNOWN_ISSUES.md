@@ -31,6 +31,10 @@ Android 11–15 无法安装。降级为独立专项（见 DECISIONS D02）。
 ### COMP-2 覆盖安装 APK 后无障碍服务可能被系统禁用
 每次交付需提醒用户到无障碍设置「关闭→重新开启」。App 内已有三态检测（`MainActivity.accessibilityState`：开关字符串/进程内 isRunning/框架绑定列表）区分「真没开」与「残留误报」，勿退回只读 Settings 字符串的方式。
 
+### COMP-9 旧 LSPosed 对可调试进程的 instrumentation 注入兼容
+- 2026-10-05 原手机 Android 16 / LSPosed Irena 1.9.2 (7249) 的 M32 可调试包在应用 onCreate 前原生崩溃，日志为 `Failed to init instrumentation` / `Failed to init lsplant`，SIGSEGV 帧在框架模块中。不可把停留的系统启动画面直接判成 Compose、连接或队列死锁。
+- 日常安装使用 M33 起的不可调试 Distribution 包；保留正式签名和后台复制 Hook。Debug 只用于开发，旧框架中仍可能触发同一路径。此前正常到当前失败的具体 ART/框架变化【待确认】；关闭调试标记的现场对照只证明本机修复，不保证所有 ROM 的框架兼容。
+
 ### COMP-3 一加 Ace 3 Pro adb 连接困难
 Windows 设备管理器完全看不到设备 = 线材（仅充电线）或端口问题，非软件问题；排查前先换数据线+直连+改 MTP。【待确认】ColorOS 对后台 Toast/通知吞没、开发者选项「禁止权限监控」等具体行为。
 

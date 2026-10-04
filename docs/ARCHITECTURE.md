@@ -87,6 +87,8 @@
 
 ### 2.5 保活与配置
 
+- **日常交付构建**：`assembleDistribution` 继承 Debug 的应用源码与签名，关闭 `isDebuggable`，不启用代码混淆；Debug 保留供开发，依然使用原正式签名（D01/D33）。`scripts/check_android_distribution.py` 检查实际 APK 的包名、调试标记、ClipReceiver action 和 Xposed 入口；CI 编译 Debug + Distribution，上传后者。无私人 keystore 的 CI 包使用测试证书。
+
 - `ForegroundService`：常驻通知 + START_STICKY + PARTIAL_WAKE_LOCK(无超时 acquire) + WIFI_MODE_FULL_LOW_LATENCY WifiLock；manifest 声明 `foregroundServiceType="dataSync"`。职责只有保活，不碰剪贴板不碰连接逻辑。
 - `SettingsStore`（DataStore "settings"）：serverIp/serverPort(默认"8899")/password/deviceName/autoSendClipboard。autoSend 开关运行时经 `LanHub.autoSendClipboard`(@Volatile) 直达 Dispatcher 过滤，DataStore 持久化由 UI 双写。
 

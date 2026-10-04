@@ -8,7 +8,7 @@
 
 ## D01 debug 构建使用 release 签名
 
-- **决策**：debug 与 release 共用同一 keystore 签名。
+- **决策**：debug、distribution 与 release 共用同一 keystore 签名；日常交付使用不可调试的 distribution（见 D33）。
 - **原因**：签名不同会导致覆盖安装需先卸载 → 无障碍授权被系统清除。同签名可直接覆盖升级。
 - **锚点**：`AndroidApp/app/build.gradle.kts` 的 `buildTypes.debug.signingConfig`；keystore 在 `AndroidApp/keystore/`（gitignore）。
 - **约束**：不能改回默认 debug 签名；keystore 文件丢失时新环境需重建或恢复。
@@ -194,3 +194,11 @@
 - **决策**：图片预设独立保存在素材库 imagepresets.json，最多 20 个；选用只填参数，用户仍需明确开始处理。
 - **原因**：固定交付规格可复用，参数迁移不应携带旧电脑输出目录或触发原件处理。
 - **约束**：名称/格式/尺寸/质量共用校验；磁盘写入成功后才更新内存。损坏配置不空覆盖，明确恢复前保留并验证副本；迁移可选字段兼容旧包。
+
+## D33 日常安卓交付关闭调试标记，保持签名和业务源码
+
+- **决策**：新增 distribution 构建，继承 Debug 的配置和签名，明确关闭 isDebuggable，不启用 R8；Debug 继续供开发使用。CI 同时编译两者，只上传 Distribution，并检查实际 APK 调试标记、模块入口和广播 action。
+- **原因**：2026-10-05 一加 Ace 3 Pro / Android 16 / Irena 1.9.2 (7249) 现场日志显示 `Failed to init instrumentation` → `Failed to init lsplant` → SIGSEGV，崩溃帧在 `zygisk_lsposed/zygisk/arm64-v8a.so`，发生在应用 onCreate 之前。原安装包与 M32 哈希一致，原环境下关闭调试标记的同源码包能启动并收发；不是通过停用模块换取启动。
+- **依据**：Irena 1.9.2 所引用的 [LSPlant instrumentation 初始化](https://github.com/re-zero001/LSPlant/blob/bfb619aa049892d5f78b58fa69602bb3716efca5/lsplant/src/main/jni/art/runtime/instrumentation.cxx) 仅在 Java 可调试进程中安装相关 hook。旧包此前可用的具体环境变化尚未核实，不能据此断言所有 Android 16 或所有 LSPosed 都会失败。
+- **实机验收**：同环境 Distribution 冷启动和搜索正常，素材快照、手动文字登记通过；微信后台两次复制分别约 42 ms / 63 ms 得到电脑登记回执，重复广播被去重。覆盖安装及强制停止后的无障碍状态必须现场复查；本次已重新开启并确认服务已连接。日志与配置备份只保留在本地忽略目录，不公开复制内容、设备地址或口令。
+- **约束**：不修改 debug 的正式签名配置、Hook、评分、进程级 scope、循环防护或前台服务启停条件。不删除手机数据、不更换 Root 框架。Debug 编译通过和签名通过均不能代替真实设备冷启动；发包前必须检查 application-debuggable 并验签。

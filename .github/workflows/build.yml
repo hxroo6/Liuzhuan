@@ -25,7 +25,7 @@ jobs:
           name: Liuzhuan-Windows-x64
           path: dist/
 
-  # ===== 安卓端 Debug APK =====
+  # ===== 安卓端交付 APK（同 Debug 代码，关闭可调试标记）=====
   android:
     runs-on: ubuntu-latest
     steps:
@@ -44,13 +44,17 @@ jobs:
         run: |
           sdkmanager "platforms;android-36" "build-tools;36.0.0"
 
-      - name: Build Debug APK
+      - name: Build Debug and Distribution APKs
         working-directory: AndroidApp
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug --no-daemon
+          ./gradlew assembleDebug assembleDistribution --no-daemon
+
+      - name: Verify distribution is not debuggable
+        working-directory: AndroidApp
+        run: python3 ../scripts/check_android_distribution.py app/build/outputs/apk/distribution/app-distribution.apk --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Liuzhuan-Android-Debug
-          path: AndroidApp/app/build/outputs/apk/debug/*.apk
+          name: Liuzhuan-Android-Distribution
+          path: AndroidApp/app/build/outputs/apk/distribution/*.apk

@@ -20,8 +20,8 @@ android {
         applicationId = "com.liuzhuan.app"
         minSdk = 36          // Android 16+（决策 #2）
         targetSdk = 36
-        versionCode = 5
-        versionName = "1.8.0"
+        versionCode = 6
+        versionName = "1.8.1"
     }
 
     signingConfigs {
@@ -42,6 +42,13 @@ android {
             if (keystoreProps.isNotEmpty()) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+        // 实机交付保持 Debug 的代码与签名，关闭可调试标记；不引入 R8 行为变化。
+        // 旧 LSPosed/LSPlant 在 Android 16 的可调试进程 instrumentation 初始化中会原生崩溃。
+        create("distribution") {
+            initWith(getByName("debug"))
+            isDebuggable = false
+            matchingFallbacks += listOf("debug")
         }
         release {
             isMinifyEnabled = true
