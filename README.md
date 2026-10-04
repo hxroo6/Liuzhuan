@@ -10,7 +10,13 @@
 
 **全程不经过任何云端服务器**，数据只在你自己的局域网里流动。
 
-## 安卓 v1.8.1：启动兼容修复（本地版本）
+## 最新下载：v1.8.1
+
+[发布说明](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.1) · [安卓 v1.8.1 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-android.apk) · [电脑 v1.8.0 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.0-windows-x64.zip) · [SHA-256 校验文件](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-SHA256SUMS.txt)
+
+本次 Release 包含安卓启动修复，以及此前本地完成的批量整理、分组标签、常用筛选、来源修复、隐私控制、图片处理和发送回执。电脑端版本保持 v1.8.0，两端兼容。升级电脑端时先退出流转，替换 `app` 目录，保留同级 `data` 目录；程序 ZIP 不含个人配置和素材。
+
+## 安卓 v1.8.1：启动兼容修复
 
 - 实机排查发现，部分 Android 16 + LSPosed Irena 1.9.2 环境会在注入可调试进程时发生原生崩溃，系统留下的启动画面表现为“卡住”。正式签名并不等于关闭调试标记。
 - 新增 `distribution` 交付构建：与 Debug 共用应用源码和现有签名，关闭 `debuggable`，不启用代码混淆；本地交付使用 `Liuzhuan-M33-signed.apk`。保留 Debug 供开发，CI 检查并上传 Distribution 包，避免再次把可调试包作为日常安装包。
@@ -242,6 +248,6 @@ Liuzhuan/
 
 ## 📄 版权与许可
 
-Copyright (c) 2026 黄信荣
+Copyright (c) 2026 hxroo6
 
 本项目基于 **MIT License** 开源，详见 [LICENSE](LICENSE)。

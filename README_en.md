@@ -10,7 +10,13 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
-## Android v1.8.1: startup compatibility fix (local build)
+## Latest download: v1.8.1
+
+[Release notes](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.1) · [Android v1.8.1 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-android.apk) · [PC v1.8.0 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.0-windows-x64.zip) · [SHA-256 checksums](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-SHA256SUMS.txt)
+
+This release includes the Android startup fix and previously local improvements: batch organization/export, groups and tags, saved filters, source repair, clipboard privacy, image processing, and delivery receipts. The PC remains at v1.8.0 and is compatible with Android v1.8.1. To upgrade the PC, exit Liuzhuan, replace the `app` folder, and keep the adjacent `data` folder. The program ZIP contains no personal settings or materials.
+
+## Android v1.8.1: startup compatibility fix
 
 - On the tested Android 16 phone with LSPosed Irena 1.9.2, injecting a debuggable app crashed before the Activity started, leaving an apparently frozen splash screen. A production signing certificate does not disable the debuggable flag.
 - The new `distribution` variant shares the Debug source and existing signing configuration, disables debugging, and keeps code minification off. Local delivery uses `Liuzhuan-M33-signed.apk`. Debug remains available for development; CI checks and uploads Distribution to prevent accidental delivery of debuggable APKs.
@@ -242,6 +248,6 @@ Liuzhuan/
 
 ## 📄 License
 
-Copyright (c) 2026 Huang Xinrong (黄信荣)
+Copyright (c) 2026 hxroo6
 
 Released under the **MIT License**. See [LICENSE](LICENSE).
