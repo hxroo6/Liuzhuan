@@ -14,23 +14,36 @@ object TransferTasks {
     private val mutable = MutableStateFlow<List<TransferTask>>(emptyList())
     val tasks = mutable.asStateFlow()
     private val retries = mutableMapOf<String,()->Unit>()
-    @Synchronized fun start(name:String, direction:String, id:String=UUID.randomUUID().toString(), retry:(()->Unit)?=null):String {
+    private val cancellations = mutableMapOf<String,()->Unit>()
+    private val discards = mutableMapOf<String,()->Unit>()
+    private val progressAt = mutableMapOf<String,Long>()
+    @Synchronized fun start(name:String, direction:String, id:String=UUID.randomUUID().toString(), discard:(()->Unit)?=null, cancel:(()->Unit)?=null, retry:(()->Unit)?=null):String {
         val entries=mutable.value.filterNot { it.id==id }.toMutableList()
         entries.add(0,TransferTask(id,name,direction))
-        while(entries.size>40) { val old=entries.lastOrNull { !it.running } ?: break; entries.remove(old);retries.remove(old.id) }
+        while(entries.size>40) { val old=entries.lastOrNull { !it.running } ?: break; entries.remove(old);retries.remove(old.id);cancellations.remove(old.id);progressAt.remove(old.id);discards.remove(old.id)?.invoke() }
         mutable.value=entries
         if(retry!=null) retries[id]=retry else retries.remove(id)
+        if(cancel!=null) cancellations[id]=cancel else cancellations.remove(id)
+        if(discard!=null) discards[id]=discard else discards.remove(id)
+        progressAt.remove(id)
         return id
     }
     @Synchronized fun progress(id:String, done:Long, total:Long, name:String?=null) {
         val now=System.currentTimeMillis()
-        mutable.value=mutable.value.map { if(it.id==id && (now-it.updated>=200 || done==total || name!=null))
+        if(now-(progressAt[id] ?: 0L)<200 && done!=total && name==null) return
+        val task = mutable.value.firstOrNull { it.id==id && it.running } ?: return
+        progressAt[id] = now
+        mutable.value=mutable.value.map { if(it.id==id)
             it.copy(done=done,total=total,name=name ?: it.name,updated=now,state=if(total>0 && done>=total) "等待确认" else "传输中") else it }
     }
     @Synchronized fun finish(id:String, ok:Boolean, message:String) {
         mutable.value=mutable.value.map { if(it.id==id) it.copy(running=false,failed=!ok,state=if(ok) message else "失败",error=if(ok) "" else message,updated=System.currentTimeMillis()) else it }
-        if(ok) retries.remove(id)
+        if(ok) { retries.remove(id); discards.remove(id)?.invoke() }
+        cancellations.remove(id)
+        progressAt.remove(id)
     }
+    fun cancel(id:String) { val action=synchronized(this) { cancellations[id] } ?: return; action() }
+    @Synchronized fun canCancel(id:String)=cancellations.containsKey(id)
     @Synchronized fun running(id:String)=mutable.value.any { it.id==id && it.running }
     fun retry(id:String) {
         val action = synchronized(this) {

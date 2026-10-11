@@ -4,6 +4,7 @@ open class Context {
     open val applicationContext: Context get() = this
     val packageName = "com.liuzhuan.app"
     val applicationInfo = ApplicationInfo()
+    val cacheDir = java.io.File(applicationInfo.dataDir, "cache").apply { mkdirs() }
     val preferenceFiles = mutableMapOf<String, MemoryPreferences>()
     var clipboard = ClipboardManager()
     var systemServiceReads = 0
@@ -49,7 +50,14 @@ class MemoryPreferences {
     }
 }
 
-abstract class BroadcastReceiver { abstract fun onReceive(context: Context, intent: Intent) }
+abstract class BroadcastReceiver {
+    abstract fun onReceive(context: Context, intent: Intent)
+    fun goAsync() = PendingResult().also { PendingResult.active.incrementAndGet() }
+    class PendingResult {
+        fun finish() { active.decrementAndGet() }
+        companion object { val active=java.util.concurrent.atomic.AtomicInteger() }
+    }
+}
 class Intent(var action: String? = null) {
     private val extras = mutableMapOf<String, Any>()
     val reads = mutableMapOf<String, Int>()
@@ -57,6 +65,7 @@ class Intent(var action: String? = null) {
     fun getStringExtra(key: String): String? { reads[key] = (reads[key] ?: 0) + 1; return extras[key] as String? }
     fun getLongExtra(key: String, default: Long) = extras[key] as Long? ?: default
     fun getIntExtra(key: String, default: Int) = extras[key] as Int? ?: default
+    fun getByteArrayExtra(key: String): ByteArray? { reads[key]=(reads[key] ?: 0)+1; return extras[key] as ByteArray? }
 }
 
 class ClipDescription(var timestamp: Long)

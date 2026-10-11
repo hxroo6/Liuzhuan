@@ -57,7 +57,7 @@ class ClipboardCaptureManagerImpl(
     private val detector = CopyEventDetector
 
     private val idCounter = java.util.concurrent.atomic.AtomicLong(0)
-    private fun nextId() = "COPY-${String.format("%06d", idCounter.incrementAndGet())}"
+    private fun nextId() = "COPY-${idCounter.incrementAndGet().toString().padStart(6, '0')}"
 
     /**
      * 上次已知的剪贴板文本 + 记录时刻（内容级防误发）。
@@ -75,6 +75,25 @@ class ClipboardCaptureManagerImpl(
 
     /** 待执行的兜底任务（debounce：连续 MEDIUM 事件只保留最后一轮） */
     private var fallbackJob: Job? = null
+    private var latestFallbackId = ""
+    private data class SelectionCandidate(val metadata: ClipboardEvent, val node: AccessibilityNodeInfo, val id: String)
+    private val selections = kotlinx.coroutines.channels.Channel<SelectionCandidate>(
+        kotlinx.coroutines.channels.Channel.CONFLATED, onUndeliveredElement = { it.node.recycle() })
+
+    init {
+        scope.launch {
+            for (candidate in selections) {
+                val event = tryCaptureSelection(candidate.metadata, candidate.node, candidate.id)
+                if (event != null) {
+                    synchronized(this@ClipboardCaptureManagerImpl) {
+                        if (candidate.id == latestFallbackId) { fallbackJob?.cancel(); fallbackJob = null }
+                    }
+                    ClipboardMonitorCoordinator.setDiagnostic("[${candidate.id}] 捕获成功 len=${event.text?.length} source=${event.source}")
+                    ClipboardEventDispatcher.dispatch(event)
+                }
+            }
+        }
+    }
 
     override fun updateLastKnownText(text: String) {
         lastKnownClipText = text
@@ -87,8 +106,8 @@ class ClipboardCaptureManagerImpl(
         val category = AccessibilitySourcePolicy.classify(context, event)
 
         // 第一优先级：来源过滤（自身 App / 来源未知 → 直接忽略）
-        if (!AccessibilitySourcePolicy.shouldInspect(context, event)) {
-            Log.d(TAG, "[DETECT] ignored reason=self_package/unknown pkg=${event.packageName}")
+        if (category == AccessibilitySourcePolicy.AppCategory.SELF || category == AccessibilitySourcePolicy.AppCategory.UNKNOWN) {
+            if (CaptureDiagnostics.verbose) Log.d(TAG, "[DETECT] ignored reason=self_package/unknown pkg=${event.packageName}")
             return
         }
 
@@ -116,22 +135,13 @@ class ClipboardCaptureManagerImpl(
                 //    省掉一次协程启动与节点遍历；② 候选不再写 UI 诊断（StateFlow+历史列表重建
                 //    在高频事件下是常驻开销），只留 logcat；UI 仅显示兜底/命中/发送等关键节点。
                 val id = nextId()
-                Log.d(TAG, "[DETECT][$id] candidate level=MEDIUM reason=${candidate.reason} pkg=${event.packageName}")
-                if (event.source == null) {
-                    scheduleMediumFallback(id, privacyRevision)
-                } else {
-                    scope.launch {
-                        val ev = tryCaptureSelection(event, id, privacyRevision)
-                        if (ev != null) {
-                            Log.d(TAG, "[CAPTURE][$id] success source=${ev.source} len=${ev.text?.length}")
-                            ClipboardMonitorCoordinator.setDiagnostic("[$id] 捕获成功 len=${ev.text?.length} source=${ev.source}")
-                            ClipboardEventDispatcher.dispatch(ev)
-                        } else {
-                            Log.d(TAG, "[CAPTURE][$id] MEDIUM selection 未读到（该 App 未暴露 selection），安排剪贴板兜底")
-                            // selection 读不到时尝试剪贴板（前台有效；后台被焦点限制拒绝，见方法注释）
-                            scheduleMediumFallback(id, privacyRevision)
-                        }
-                    }
+                if (CaptureDiagnostics.verbose) Log.d(TAG, "[DETECT][$id] candidate level=MEDIUM reason=${candidate.reason} pkg=${event.packageName}")
+                // 单消费者合并最新节点；每个事件仍推进尾沿兜底，不会漏掉复制完成。
+                scheduleMediumFallback(id, privacyRevision)
+                val node = event.source
+                if (node != null) {
+                    val candidate = SelectionCandidate(accessibilityMetadata(event, privacyRevision), node, id)
+                    if (!selections.trySend(candidate).isSuccess) node.recycle()
                 }
             }
 
@@ -145,13 +155,16 @@ class ClipboardCaptureManagerImpl(
                 )
                 Log.d(TAG, "[DETECT][$id] candidate level=HIGH reason=${candidate.reason} pkg=$pkg")
                 ClipboardMonitorCoordinator.setDiagnostic("[$id] 复制候选(${candidate.reason}) pkg=$pkg")
+                val snapshot = AccessibilityEvent.obtain(event)
                 scope.launch {
-                    val ev = tryCaptureAfterCopy(event, id, privacyRevision)
+                    try {
+                    val ev = tryCaptureAfterCopy(snapshot, id, privacyRevision)
                     if (ev != null) {
                         ClipboardEventDispatcher.dispatch(ev)
                     } else {
                         Log.d(TAG, "[CAPTURE][$id] failed（selection/剪贴板均未读到）")
                     }
+                    } finally { snapshot.recycle() }
                 }
             }
         }
@@ -185,6 +198,7 @@ class ClipboardCaptureManagerImpl(
      */
     @Synchronized
     private fun scheduleMediumFallback(diagnosticId: String, privacyRevision: Long) {
+        latestFallbackId = diagnosticId
         fallbackJob?.cancel()
         fallbackJob = scope.launch {
             delay(FALLBACK_DEBOUNCE_MS)
@@ -298,17 +312,22 @@ class ClipboardCaptureManagerImpl(
         val metadata = accessibilityMetadata(event, privacyRevision)
         if (ClipboardPrivacy.blockReason(metadata) != null) return null
         val node = event.source ?: return null
+        return tryCaptureSelection(metadata, node, diagnosticId)
+    }
+
+    private fun tryCaptureSelection(metadata: ClipboardEvent, node: AccessibilityNodeInfo, diagnosticId: String): ClipboardEvent? {
         try {
+            if (ClipboardPrivacy.blockReason(metadata) != null) return null
             val text = extractSelectedText(node, depth = 0) ?: return null
             if (text.length < 2) return null
-            val pkg = event.packageName?.toString()
+            val pkg = metadata.sourcePackage
             return buildEvent(
                 text,
                 ClipboardCaptureSource.ACCESSIBILITY_SELECTION,
                 pkg,
                 listOf("text/plain"),
                 diagnosticId,
-                privacyRevision,
+                metadata.privacyRevision ?: return null,
                 metadata.timestamp
             )
         } catch (e: Exception) {
@@ -318,7 +337,7 @@ class ClipboardCaptureManagerImpl(
         }
     }
 
-    /** 有限递归查找选中文本（最多 2 层 / 64 节点，避免遍历整棵节点树） */
+    /** 有限递归查找选中文本（最多 2 层 / 273 节点，避免遍历整棵节点树） */
     private fun extractSelectedText(node: AccessibilityNodeInfo, depth: Int): String? {
         node.selectedText()?.let { return it }
         if (depth >= 2) return null
@@ -389,7 +408,7 @@ class ClipboardCaptureManagerImpl(
         val at = System.currentTimeMillis()
         val eventAt = if (event.eventTime > 0) at - (SystemClock.uptimeMillis() - event.eventTime).coerceAtLeast(0) else at
         return ClipboardEvent(null, eventAt, event.packageName?.toString(), ClipboardCaptureSource.ACCESSIBILITY_COPY_ACTION,
-            emptyList(), "", privacyRevision = privacyRevision)
+            emptyList(), "", privacyRevision = privacyRevision, requestId = "")
     }
 
     private companion object {

@@ -6,7 +6,9 @@ class AccessibilityEvent(val eventType: Int, val packageName: CharSequence?, pri
                          val eventTime: Long = SystemClock.uptimeMillis(), val className: String = "test") {
     var sourceReads = 0
     val source: AccessibilityNodeInfo? get() { sourceReads++; return node }
+    fun recycle() {}
     companion object {
+        fun obtain(event: AccessibilityEvent) = AccessibilityEvent(event.eventType, event.packageName, event.node, event.eventTime, event.className)
         const val TYPE_VIEW_TEXT_SELECTION_CHANGED = 8192
         const val TYPE_VIEW_CLICKED = 1
         const val TYPE_WINDOW_CONTENT_CHANGED = 2048

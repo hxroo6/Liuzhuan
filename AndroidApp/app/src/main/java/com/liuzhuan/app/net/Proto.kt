@@ -2,6 +2,7 @@ package com.liuzhuan.app.net
 
 import org.json.JSONObject
 import java.security.MessageDigest
+import com.liuzhuan.app.core.hexString
 import java.util.UUID
 
 /**
@@ -20,7 +21,7 @@ object Proto {
 
     fun sha256Hex(input: String): String {
         val digest = MessageDigest.getInstance("SHA-256").digest(input.toByteArray())
-        return digest.joinToString("") { "%02x".format(it) }
+        return digest.hexString()
     }
 
     fun buildHello(authHash: String): String = JSONObject()

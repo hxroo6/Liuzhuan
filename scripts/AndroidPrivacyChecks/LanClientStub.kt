@@ -27,4 +27,8 @@ class LanClient {
         if (automaticEvent == null) files.add(name)
         else ClipboardPrivacy.runIfAllowed(automaticEvent) { files.add(name) }
     }
+    fun pushFileCached(file: java.io.File, name: String, mime: String, automaticEvent: ClipboardEvent) {
+        ClipboardPrivacy.runIfAllowed(automaticEvent) { files.add(name) }
+        file.delete()
+    }
 }

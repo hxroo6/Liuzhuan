@@ -37,7 +37,7 @@
 3. **评分模型基线不可调弱**（`CopyEventDetector.kt`）：第三方 App 的 `WINDOW_CONTENT_CHANGED` 必须 MEDIUM；SystemUI/Launcher 的弱信号必须 NONE。两个方向都改坏过/出过回归。
 4. **循环回写防护不可删**：`copyToClipboard` 和 `ProcessTextActivity` 写剪贴板后必须调 `ClipboardMonitorCoordinator.markLocalText(text)`，少一处即 PC↔手机无限回环。
 5. **`ClipboardMonitorCoordinator.init()` 幂等结构不可简化**：无障碍服务会被系统多次重建，去掉幂等会重复装配 pipeline 导致事件双发。
-6. **前台服务停启条件**（`MainActivity.onState` 回调）：只有 AuthFailed / Paused 才能 stopService；`Disconnected`（意外断开自动重连中）停了就会释放 Wi-Fi/CPU 保活锁。
+6. **前台服务停启条件**（`LanController.onState` 回调，Activity 只订阅状态）：只有 AuthFailed / Paused 才能 stopService；`Disconnected`（意外断开自动重连中）停了就会释放 Wi-Fi/CPU 保活锁。
 7. **协议两端成对修改**：`Proto.kt` ↔ `WsHub.cs`/`LanMessage.cs` 的 type 与 data 字段必须同步，JSON 解析失败是静默的（optString 全给默认值）。
 8. **签名配置不动**：debug 使用 release 签名是刻意的（覆盖安装保住无障碍授权）。
 9. **无障碍配置 XML 的事件类型集合**（`accessibility_service_config.xml`）：增删事件类型需同时核对 `CopyEventDetector` 与 `ClipboardEventDispatcher` 行为，该文件是裸配置，编译期无从校验。

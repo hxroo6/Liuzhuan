@@ -7,18 +7,18 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineStart
 import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.RequestBody.Companion.asRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import java.io.IOException
 import java.net.URLEncoder
-import java.util.concurrent.TimeUnit
 
 /**
  * 局域网客户端 — 连接电脑端流转（M1：握手/心跳/发文字 + 接收页列表同步）
@@ -43,44 +43,59 @@ class LanClient(
         data object Paused : State()
     }
 
-    private var ws: WebSocket? = null
+    @Volatile private var ws: WebSocket? = null
     private var reconnectJob: Job? = null
-    private var manuallyClosed = false
-    private var lastSettings: SettingsStore.Settings? = null
+    @Volatile private var manuallyClosed = true
+    @Volatile private var lastSettings: SettingsStore.Settings? = null
+    private var networkAvailable = true
+    private val backoff = RetryBackoff()
+    private var reconnectAttempt = 0
+    private var handshakeJob: Job? = null
+    private val receiptJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     @Volatile private var clipboardReceipts = false
-    private fun connectionIdentity(s: SettingsStore.Settings): String =
+    @Volatile private var cachedIdentity = ""
+    @Volatile private var cachedAuth = ""
+    private fun buildIdentity(s: SettingsStore.Settings): String =
         "${s.serverIp.trim().lowercase()}:${s.serverPort.toIntOrNull() ?: 8899}:${Proto.sha256Hex(s.password)}:${Proto.sha256Hex(s.deviceName)}:${Proto.sha256Hex(Proto.deviceLabel)}"
-    private val client = OkHttpClient.Builder()
-        .pingInterval(30, TimeUnit.SECONDS)
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .build()
+    private fun connectionIdentity(s: SettingsStore.Settings): String = if (s === lastSettings) cachedIdentity else buildIdentity(s)
+    private val client = HttpClients.socket
 
     @Volatile
     var state: State = State.Idle
         private set
 
-    fun connect(settings: SettingsStore.Settings) {
+    @Synchronized fun connect(settings: SettingsStore.Settings) {
         if (settings.serverIp.isBlank() || settings.password.isBlank()) {
             log("请先填写电脑 IP 和口令")
             return
         }
         manuallyClosed = false
         reconnectJob?.cancel()
+        reconnectJob = null
+        handshakeJob?.cancel()
+        backoff.reset()
+        reconnectAttempt = 0
         // 关闭旧连接（防止多次 connect 叠加 WebSocket → 重复日志/握手）
         val previous = ws
         ws = null
         previous?.close(1000, "reconnect")
         clipboardReceipts = false
+        cachedIdentity = buildIdentity(settings)
+        cachedAuth = Proto.sha256Hex(settings.password)
         lastSettings = settings
         com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.changeTarget(connectionIdentity(settings))
-        doConnect(settings)
+        if (networkAvailable) doConnect(settings)
+        else { setState(State.Disconnected); log("等待局域网恢复后连接") }
     }
 
-    fun disconnect() {
+    @Synchronized fun disconnect() {
         manuallyClosed = true
         reconnectJob?.cancel()
-        ws?.close(1000, "bye")
+        reconnectJob = null
+        handshakeJob?.cancel()
+        val previous = ws
         ws = null
+        previous?.cancel()
         // 用户主动断开 → Paused（不重连），与「意外断开 Disconnected（自动重连中）」区分。
         // 否则 UI 层会把主动断开也当成 Disconnected，进而误停前台服务/保活锁。
         setState(State.Paused)
@@ -88,16 +103,20 @@ class LanClient(
     }
 
     /** 暂停自动重连（阻止死循环；下次 connect() 可恢复） */
-    fun pause() {
+    @Synchronized fun pause() {
         manuallyClosed = true
         reconnectJob?.cancel()
-        ws?.close(1000, "paused")
+        reconnectJob = null
+        handshakeJob?.cancel()
+        val previous = ws
         ws = null
+        previous?.cancel()
         setState(State.Paused)
         log("⏸️ 已暂停重连（点「连接」可恢复）")
     }
 
     fun sendText(content: String, taskId:String=java.util.UUID.randomUUID().toString()): Boolean {
+        com.liuzhuan.app.PowerSignals.touch()
         com.liuzhuan.app.TransferTasks.start(content.take(40),"手机 → 电脑",taskId) {
             com.liuzhuan.app.LanHub.client?.sendText(content,taskId)
                 ?: com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
@@ -109,9 +128,16 @@ class LanClient(
         }
         val accepted = ws?.send(Proto.buildSyncText(content,requestId=taskId)) == true
         if(!accepted) com.liuzhuan.app.TransferTasks.finish(taskId,false,"发送未成功，请检查连接")
-        else scope.launch {
+        else {
+            receiptJobs.remove(taskId)?.cancel()
+            val job = scope.launch(start = CoroutineStart.LAZY) {
             delay(20_000)
             if(com.liuzhuan.app.TransferTasks.running(taskId)) com.liuzhuan.app.TransferTasks.finish(taskId,false,"未收到电脑确认；请先检查电脑再重试，避免重复。旧版电脑需升级。")
+            receiptJobs.remove(taskId)
+            }
+            receiptJobs[taskId] = job
+            job.start()
+            if (!com.liuzhuan.app.TransferTasks.running(taskId)) receiptJobs.remove(taskId)?.cancel()
         }
         log(if (accepted) "已提交文字（${content.length} 字）" else "发送未成功，请检查连接")
         return accepted
@@ -120,6 +146,7 @@ class LanClient(
     /** 显式选中文本兼容入口：只返回网络是否接受发送，不能表示电脑已登记。 */
     fun pushClipboard(content: String, app: String): Boolean {
         if (state != State.Connected) return false
+        com.liuzhuan.app.PowerSignals.touch()
         val accepted = ws?.send(Proto.buildClipboardPush(content, app)) == true
         log(if (accepted) "剪贴板文字已提交，等待电脑确认（${content.length} 字）" else "剪贴板文字未提交")
         return accepted
@@ -136,6 +163,7 @@ class LanClient(
             override val supportsReceipts = supports
             override fun send(event: com.liuzhuan.app.clipboard.ClipboardEvent): Boolean {
                 if (state != State.Connected || ws !== socket || lastSettings?.let(::connectionIdentity) != identity) return false
+                com.liuzhuan.app.PowerSignals.touch()
                 return socket.send(Proto.buildClipboardPush(event.text ?: return false, event.sourcePackage ?: "android",
                     event.requestId, automatic = true))
             }
@@ -153,9 +181,38 @@ class LanClient(
         }
     }
 
+    /** Hook 文件以本应用缓存为重试来源，不在失败记录里长期保留 ByteArray。 */
+    fun pushFileCached(file: java.io.File, name: String, mime: String,
+        taskId: String = java.util.UUID.randomUUID().toString(),
+        automaticEvent: com.liuzhuan.app.clipboard.ClipboardEvent) {
+        if (com.liuzhuan.app.TransferTasks.running(taskId)) return
+        com.liuzhuan.app.TransferTasks.start(name, "手机 → 电脑", taskId,
+            discard = { file.delete() }, cancel = { com.liuzhuan.app.TransferWork.cancel(taskId) }, retry = {
+                com.liuzhuan.app.LanHub.client?.pushFileCached(file, name, mime, taskId, automaticEvent)
+                    ?: com.liuzhuan.app.TransferTasks.finish(taskId, false, "请先连接电脑")
+            })
+        com.liuzhuan.app.TransferWork.launch(taskId) {
+            try {
+                if (!file.isFile) throw IOException("原复制文件已过期，请重新复制")
+                val s = lastSettings ?: throw IOException("请先连接电脑")
+                val url = "http://${s.serverIp}:${(s.serverPort.toIntOrNull() ?: 8899)+1}/upload?name=${URLEncoder.encode(name,"UTF-8")}&auth=${Proto.sha256Hex(s.password)}"
+                val request = Request.Builder().url(url).post(file.asRequestBody(mime.toMediaTypeOrNull())).build()
+                com.liuzhuan.app.TransferWork.withCall(taskId, HttpClients.transfer.newCall(request)) { call ->
+                    executeAllowed(call, automaticEvent).use { response ->
+                        com.liuzhuan.app.TransferTasks.finish(taskId, response.isSuccessful,
+                            if (response.isSuccessful) "电脑已接收" else "HTTP ${response.code}")
+                    }
+                }
+            } catch (ex: Exception) {
+                if (ex is kotlinx.coroutines.CancellationException) throw ex
+                com.liuzhuan.app.TransferTasks.finish(taskId, false, "${ex.message}；重试前请检查电脑是否已收到")
+            }
+        }
+    }
+
     private fun pushFileAccepted(bytes: ByteArray, name: String, mime: String, taskId: String,
                                  automaticEvent: com.liuzhuan.app.clipboard.ClipboardEvent?) {
-        com.liuzhuan.app.TransferTasks.start(name,"手机 → 电脑",taskId,retry={
+        com.liuzhuan.app.TransferTasks.start(name,"手机 → 电脑",taskId,cancel={com.liuzhuan.app.TransferWork.cancel(taskId)},retry={
             com.liuzhuan.app.LanHub.client?.pushFile(bytes,name,mime,taskId,automaticEvent)
                 ?: com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
         })
@@ -171,26 +228,46 @@ class LanClient(
         val body = bytes.toRequestBody(mime.toMediaTypeOrNull())
         val req = Request.Builder().url(url).post(body).build()
         com.liuzhuan.app.TransferTasks.progress(taskId,0,bytes.size.toLong())
-        client.newCall(req).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) {
-                log("文件上传失败: ${e.message}")
-                com.liuzhuan.app.TransferTasks.finish(taskId,false,"${e.message}；重试前请检查电脑是否已收到")
-            }
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
+        com.liuzhuan.app.TransferWork.launch(taskId) {
+            try {
+                if (automaticEvent != null && com.liuzhuan.app.clipboard.ClipboardPrivacy.blockReason(automaticEvent) != null)
+                    throw IOException("隐私规则已更新，请重新复制")
+                com.liuzhuan.app.TransferWork.withCall(taskId, HttpClients.transfer.newCall(req)) { call ->
+                executeAllowed(call, automaticEvent).use { response ->
                     com.liuzhuan.app.TransferTasks.progress(taskId,bytes.size.toLong(),bytes.size.toLong())
                     com.liuzhuan.app.TransferTasks.finish(taskId,response.isSuccessful,if(response.isSuccessful) "电脑已接收" else "HTTP ${response.code}")
                     log(if (response.isSuccessful) "文件上传成功（${bytes.size} 字节）" else "文件上传失败 HTTP ${response.code}")
                 }
+                }
+            } catch (ex: Exception) {
+                if (ex is kotlinx.coroutines.CancellationException) throw ex
+                com.liuzhuan.app.TransferTasks.finish(taskId,false,"${ex.message}；重试前请检查电脑是否已收到")
             }
-        })
+        }
+    }
+
+    /** 隐私判断与真正网络入队原子化；排队等待传输槽期间的旧事件也重查。 */
+    private fun executeAllowed(call: Call, event: com.liuzhuan.app.clipboard.ClipboardEvent?): Response {
+        if (event == null) return call.execute()
+        val result = java.util.concurrent.CompletableFuture<Response>()
+        val accepted = com.liuzhuan.app.clipboard.ClipboardPrivacy.runIfAllowed(event) {
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { result.completeExceptionally(e) }
+                override fun onResponse(call: Call, response: Response) {
+                    if (call.isCanceled()) { response.close(); result.completeExceptionally(IOException("已取消")) }
+                    else result.complete(response)
+                }
+            })
+        }
+        if (!accepted) throw IOException("隐私规则已更新，请重新复制")
+        return try { result.get() } catch (ex: java.util.concurrent.ExecutionException) { throw IOException(ex.cause?.message ?: "上传失败", ex.cause) }
     }
 
     fun thumbnailUrl(id:String):String? {
         val s=lastSettings ?: return null
         if(state!=State.Connected) return null
         val port=(s.serverPort.toIntOrNull() ?: 8899)+1
-        return "http://${s.serverIp}:$port/thumbnail/${URLEncoder.encode(id,"UTF-8")}?auth=${Proto.sha256Hex(s.password)}"
+        return "http://${s.serverIp}:$port/thumbnail/${URLEncoder.encode(id,"UTF-8")}?auth=$cachedAuth"
     }
 
     /** 请求素材详情（文字全文 / 文件下载地址） */
@@ -206,10 +283,12 @@ class LanClient(
         ws?.send(Proto.buildListSync())
     }
 
-    private fun doConnect(s: SettingsStore.Settings) {
+    @Synchronized private fun doConnect(s: SettingsStore.Settings) {
+        if (manuallyClosed || !networkAvailable) return
+        handshakeJob?.cancel()
         clipboardReceipts = false
         // 关闭残留 WebSocket（防重连时叠加）
-        ws?.close(1000, "reconnect")
+        ws?.cancel()
         ws = null
         setState(State.Connecting)
         val url = "ws://${s.serverIp}:${s.serverPort}/ws"
@@ -217,11 +296,15 @@ class LanClient(
         log("正在连接 $url ...")
         ws = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                synchronized(this@LanClient) {
+                if (webSocket !== ws || manuallyClosed) { webSocket.cancel(); return }
                 log("TCP 已连通，发送握手...")
                 webSocket.send(Proto.buildHello(Proto.sha256Hex(s.password)))
+                }
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                synchronized(this@LanClient) {
                 if(webSocket !== ws) return
                 val (type, data) = Proto.parse(text)
                 when (type) {
@@ -229,12 +312,18 @@ class LanClient(
                         com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.acknowledge(
                             connectionIdentity(s), data.optString("requestId"), data.optString("status"))
                         val requestId = data.optString("requestId")
+                        receiptJobs.remove(requestId)?.cancel()
                         when (data.optString("status")) {
                             "stored" -> com.liuzhuan.app.TransferTasks.finish(requestId, true, "电脑已接收")
                             "rejected" -> com.liuzhuan.app.TransferTasks.finish(requestId, false, "电脑拒绝登记，请检查电脑后重新发送")
                         }
                     }
                     "welcome" -> {
+                        handshakeJob?.cancel()
+                        backoff.reset()
+                        reconnectAttempt = 0
+                        reconnectJob?.cancel()
+                        reconnectJob = null
                         val features = data.optJSONArray("features")
                         clipboardReceipts = features != null && (0 until features.length()).any {
                             features.optString(it) == Proto.CLIPBOARD_RECEIPTS
@@ -246,6 +335,10 @@ class LanClient(
                         webSocket.send(Proto.buildListSync())
                     }
                     "auth_fail" -> {
+                        manuallyClosed = true
+                        handshakeJob?.cancel()
+                        reconnectJob?.cancel()
+                        reconnectJob = null
                         setState(State.AuthFailed(data.optString("reason", "口令错误")))
                         log("❌ 认证失败: ${data.optString("reason")}")
                         webSocket.close(1000, "auth_fail")
@@ -275,52 +368,71 @@ class LanClient(
                     }
                     "item_data" -> onItemData(Proto.parseItemData(data))
                 }
+                }
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
                 // 只处理「当前」WS 的回调（被替换的旧 WS 关闭不触发重连，防死循环）
-                if (webSocket !== ws) return
-                ws = null
-                if (!manuallyClosed) {
-                    setState(State.Disconnected)
-                    log("连接断开（code=$code reason=$reason），准备重连...")
-                    scheduleReconnect()
-                }
+                connectionFailed(webSocket, "连接断开，准备重连")
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 // 只处理「当前」WS 的回调（被替换的旧 WS 失败不触发重连，防死循环）
-                if (webSocket !== ws) return
-                ws = null
-                if (!manuallyClosed) {
-                    setState(State.Disconnected)
-                    val http = response?.let { " HTTP${it.code}" } ?: ""
-                    log("连接失败${http}: ${t.javaClass.simpleName}: ${t.message ?: "未知错误"}")
-                    scheduleReconnect()
-                }
+                connectionFailed(webSocket, "连接失败：${t.javaClass.simpleName}，将自动重试")
             }
         })
+        val socket = ws
+        handshakeJob = scope.launch {
+            delay(12_000)
+            synchronized(this@LanClient) {
+                if (socket != null && ws === socket && state == State.Connecting) {
+                    socket.cancel()
+                    connectionFailed(socket, "握手超时，将自动重试")
+                }
+            }
+        }
     }
 
     /** 指数退避重连：1s→2s→4s→8s→…→上限 30s */
-    private fun scheduleReconnect() {
-        reconnectJob?.cancel()
-        reconnectJob = scope.launch {
-            var attempt = 0
-            while (!manuallyClosed && state != State.Connected) {
-                val waitMs = minOf(1000L shl attempt, 30_000L)
+    @Synchronized private fun scheduleReconnect(immediate: Boolean = false) {
+        if (reconnectJob?.isActive == true || manuallyClosed || !networkAvailable || state == State.Connected) return
+        val job = scope.launch(start = CoroutineStart.LAZY) {
+                val waitMs = if (immediate) 0L else backoff.nextDelayMs().let { base ->
+                    (base + kotlin.random.Random.nextLong(0, minOf(base / 5 + 1, 1_001))).coerceAtMost(30_000)
+                }
                 log("等待 ${waitMs / 1000}s 后重连...")
                 delay(waitMs)
-                attempt++
-                if (manuallyClosed) break
-                if (state == State.Connected) break // 已连上就不重连
-                log("第 $attempt 次重连...")
-                val s = lastSettings ?: break
-                doConnect(s)
-                // 等连接结果再进入下轮（防 doConnect 后立即循环 → 重复创建 WS）
-                delay(8000)
-            }
+                synchronized(this@LanClient) {
+                    reconnectJob = null
+                    if (manuallyClosed || !networkAvailable || state == State.Connected) return@synchronized
+                    val s = lastSettings ?: return@synchronized
+                    reconnectAttempt = (reconnectAttempt + 1).coerceAtMost(Int.MAX_VALUE - 1)
+                    log("第 $reconnectAttempt 次重连...")
+                    doConnect(s)
+                }
         }
+        reconnectJob = job
+        job.start()
+    }
+
+    @Synchronized private fun connectionFailed(socket: WebSocket, message: String) {
+        if (socket !== ws) return
+        ws = null
+        handshakeJob?.cancel()
+        if (!manuallyClosed) { setState(State.Disconnected); log(message); scheduleReconnect() }
+    }
+
+    @Synchronized fun setNetworkAvailable(available: Boolean) {
+        if (networkAvailable == available) return
+        networkAvailable = available
+        if (manuallyClosed || lastSettings == null) return
+        if (!available) {
+            reconnectJob?.cancel(); reconnectJob = null
+            handshakeJob?.cancel()
+            val previous = ws; ws = null; previous?.cancel()
+            setState(State.Disconnected)
+            log("暂无可用局域网，等待网络恢复")
+        } else if (state != State.Connected) scheduleReconnect(immediate = true)
     }
 
     private fun setState(new: State) {

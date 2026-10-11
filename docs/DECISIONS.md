@@ -23,7 +23,7 @@
 
 - **决策**：无障碍服务（ClipMonitorService）只负责感知复制事件；前台服务（ForegroundService）只负责保活（Wi-Fi/CPU 锁）。
 - **原因**：职责分离避免前台服务读剪贴板/轮询的合规问题，也让保活生命周期独立于监控状态。
-- **锚点**：`ForegroundService.kt` 全文无剪贴板逻辑；`MainActivity.onState` 控制其启停。
+- **锚点**：`ForegroundService.kt` 全文无剪贴板逻辑；`LanController.onState` 控制其启停，Activity 只订阅进程级状态。
 - **约束**：两条边界都不能越——前台服务里加采集逻辑、无障碍服务里管连接都属于越界。
 
 ## D04 评分模型基线（M10→M13 的教训固化为规格）
@@ -202,3 +202,12 @@
 - **依据**：Irena 1.9.2 所引用的 [LSPlant instrumentation 初始化](https://github.com/re-zero001/LSPlant/blob/bfb619aa049892d5f78b58fa69602bb3716efca5/lsplant/src/main/jni/art/runtime/instrumentation.cxx) 仅在 Java 可调试进程中安装相关 hook。旧包此前可用的具体环境变化尚未核实，不能据此断言所有 Android 16 或所有 LSPosed 都会失败。
 - **实机验收**：同环境 Distribution 冷启动和搜索正常，素材快照、手动文字登记通过；微信后台两次复制分别约 42 ms / 63 ms 得到电脑登记回执，重复广播被去重。覆盖安装及强制停止后的无障碍状态必须现场复查；本次已重新开启并确认服务已连接。日志与配置备份只保留在本地忽略目录，不公开复制内容、设备地址或口令。
 - **约束**：不修改 debug 的正式签名配置、Hook、评分、进程级 scope、循环防护或前台服务启停条件。不删除手机数据、不更换 Root 框架。Debug 编译通过和签名通过均不能代替真实设备冷启动；发包前必须检查 application-debuggable 并验签。
+
+## D34 功耗优化保留即时基线与事件驱动
+
+- 默认即时同步保留 CPU 保活行为；均衡模式是可选设置，只改变锁持有策略，不在意外 Disconnected 时停止服务。工作窗口 30 秒、长传输按进度续期，CPU 锁有 10 分钟保险期限；实际锁屏到达与省电幅度必须实机 A-B 验证。
+- 持续局域网外部电脑交互使用 connectedDevice，声明对应前台服务权限及 CHANGE_NETWORK_STATE 前置权限。服务只保活，不捕获、不管理连接；网络路由监听与连接均由进程级 LanController 持有。参考 Android 官方前台服务类型说明。
+- 重连失败计数不能绑在一次 Job 内；成功或显式目标切换才重置。无网络时停止尝试，恢复时立即尝试；纯局域网不依赖 INTERNET/VALIDATED 能力。
+- MEDIUM 单消费者保留最新选中文本候选，尾沿兜底继续；HIGH 保持独立短延迟捕获。评分基线、隐私修订、回写防环和自动发送单消费者不变。
+- Hook 文件异步读取最多 512 KiB+1，保持原复制时间；广播改字节并兼容旧 Base64。缓存重试来源不进入公开仓库，成功 / 记录淘汰 / 下次启动才清理本应用临时文件。
+- HTTP 客户端共享资源，传输进程级且最多 2 个活跃、16 个在途；取消必须取消 Call，清理结束后才释放槽位。不能按页面销毁取消后台发送。

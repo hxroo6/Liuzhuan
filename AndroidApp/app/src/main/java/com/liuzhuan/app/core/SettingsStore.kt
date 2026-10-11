@@ -9,9 +9,10 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 /** 配置存储（DataStore Preferences） */
-class SettingsStore(private val context: Context) {
+private val Context.settingsDataStore by preferencesDataStore(name = "settings")
 
-    private val Context.dataStore by preferencesDataStore(name = "settings")
+class SettingsStore(context: Context) {
+    private val context = context.applicationContext
 
     companion object {
         private val KEY_IP = stringPreferencesKey("server_ip")
@@ -19,6 +20,7 @@ class SettingsStore(private val context: Context) {
         private val KEY_PASSWORD = stringPreferencesKey("password")
         private val KEY_DEVICE_NAME = stringPreferencesKey("device_name")
         private val KEY_AUTO_SEND = booleanPreferencesKey("auto_send_clipboard")
+        private val KEY_BALANCED_POWER = booleanPreferencesKey("balanced_power")
     }
 
     data class Settings(
@@ -26,26 +28,29 @@ class SettingsStore(private val context: Context) {
         val serverPort: String = "8899",
         val password: String = "",
         val deviceName: String = android.os.Build.MODEL,
-        val autoSendClipboard: Boolean = true
+        val autoSendClipboard: Boolean = true,
+        val balancedPower: Boolean = false
     )
 
-    val settings: Flow<Settings> = context.dataStore.data.map { prefs ->
+    val settings: Flow<Settings> = context.settingsDataStore.data.map { prefs ->
         Settings(
             serverIp = prefs[KEY_IP] ?: "",
             serverPort = prefs[KEY_PORT] ?: "8899",
             password = prefs[KEY_PASSWORD] ?: "",
             deviceName = prefs[KEY_DEVICE_NAME] ?: android.os.Build.MODEL,
-            autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true
+            autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true,
+            balancedPower = prefs[KEY_BALANCED_POWER] ?: false
         )
     }
 
     suspend fun save(s: Settings) {
-        context.dataStore.edit { prefs ->
+        context.settingsDataStore.edit { prefs ->
             prefs[KEY_IP] = s.serverIp
             prefs[KEY_PORT] = s.serverPort
             prefs[KEY_PASSWORD] = s.password
             prefs[KEY_DEVICE_NAME] = s.deviceName
             prefs[KEY_AUTO_SEND] = s.autoSendClipboard
+            prefs[KEY_BALANCED_POWER] = s.balancedPower
         }
     }
 }

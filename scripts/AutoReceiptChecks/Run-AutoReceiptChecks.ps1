@@ -27,7 +27,7 @@ $receiptRuntimeClasspath = @($receiptStdlib, $receiptCoroutines, $receiptAnnotat
     (Find-ReceiptJar 'com.squareup.okio/okio-jvm/3.6.0'),
     'F:/gradle-8.11.1/lib/groovy-3.0.22.jar', 'F:/gradle-8.11.1/lib/groovy-json-3.0.22.jar') -join ';'
 $receiptJavaRoot = Join-Path $receiptRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app'
-$receiptSources = @('LanHub.kt', 'TransferTasks.kt', 'ClipReceiver.kt', 'net/LanClient.kt', 'net/Proto.kt') | ForEach-Object { Join-Path $receiptJavaRoot $_ }
+$receiptSources = @('LanHub.kt', 'TransferTasks.kt', 'TransferWork.kt', 'PowerSignals.kt', 'ClipReceiver.kt', 'net/LanClient.kt', 'net/Proto.kt', 'net/HttpClients.kt', 'net/RetryBackoff.kt', 'core/RecentFileEvents.kt', 'core/Hex.kt') | ForEach-Object { Join-Path $receiptJavaRoot $_ }
 $receiptSources += @((Get-ChildItem -LiteralPath (Join-Path $receiptJavaRoot 'clipboard') -Filter '*.kt' | Where-Object Name -ne 'ClipMonitorService.kt').FullName)
 $receiptSources += @((Get-ChildItem -LiteralPath (Join-Path $receiptJavaRoot 'clipboard/action') -Filter '*.kt').FullName)
 $receiptSources += @((Get-ChildItem -LiteralPath (Join-Path $receiptRepoRoot 'scripts/AndroidPrivacyChecks') -Filter 'Android*Stub.kt').FullName)

@@ -155,7 +155,62 @@ fun main(args: Array<String>): Unit = runBlocking {
     val countBeforeRenameQuery = receivedDetails.size
     liveClient.requestItem("registered-count"); eventually { receivedDetails.size > countBeforeRenameQuery }
     verify(receivedDetails.last().content == "2", "renamed production client does not create another server registration from the cancelled old request")
+    val filePosts=java.util.concurrent.atomic.AtomicInteger()
+    val failFileOnce=java.util.concurrent.atomic.AtomicBoolean(false)
+    val uploadedBytes=CopyOnWriteArrayList<ByteArray>()
+    val fileHost=com.sun.net.httpserver.HttpServer.create(java.net.InetSocketAddress("127.0.0.1",port.toInt()+1),0)
+    fileHost.createContext("/upload") { exchange ->
+        filePosts.incrementAndGet()
+        uploadedBytes.add(exchange.requestBody.use { it.readBytes() })
+        exchange.sendResponseHeaders(if(failFileOnce.getAndSet(false)) 500 else 200,-1)
+        exchange.close()
+    }
+    fileHost.start()
+    try {
+        val gates=CompletableDeferred<Unit>()
+        repeat(2) { index -> com.liuzhuan.app.TransferWork.launch("privacy-file-slot-$index") { gates.await() } }
+        eventually { com.liuzhuan.app.TransferWork.active.value==2 }
+        val blockedFile=java.io.File.createTempFile("queued-privacy", ".upload",context.cacheDir).apply { writeBytes(byteArrayOf(1,2,3)) }
+        val blockedId="queued-file-privacy"
+        val fileEvent=ClipboardPrivacy.stampIfAllowed(copyEvent(System.currentTimeMillis()+10))!!
+        liveClient.pushFileCached(blockedFile,"sample.bin","application/octet-stream",blockedId,fileEvent)
+        ClipboardPrivacy.pause()
+        gates.complete(Unit)
+        eventually { !TransferTasks.running(blockedId) }
+        verify(filePosts.get()==0 && TransferTasks.tasks.value.first { it.id==blockedId }.failed,
+            "production queued file rechecks privacy at actual network admission and cannot POST after pause")
+        blockedFile.delete()
+        ClipboardPrivacy.resume()
+        val freshEvent=ClipboardPrivacy.stampIfAllowed(copyEvent(System.currentTimeMillis()+10))!!
+        val file=java.io.File.createTempFile("cached-retry", ".upload",context.cacheDir).apply { writeBytes(byteArrayOf(4,5,6)) }
+        val fileId="cached-file-retry"
+        failFileOnce.set(true)
+        liveClient.pushFileCached(file,"sample.bin","application/octet-stream",fileId,freshEvent)
+        eventually { !TransferTasks.running(fileId) }
+        verify(file.exists() && TransferTasks.canRetry(fileId), "failed real HTTP upload retains its cache path for explicit retry")
+        TransferTasks.retry(fileId)
+        eventually { !TransferTasks.running(fileId) }
+        verify(!file.exists() && !TransferTasks.tasks.value.first { it.id==fileId }.failed,
+            "successful explicit HTTP retry releases its cached payload")
+        verify(uploadedBytes.size==2 && uploadedBytes.all { it.contentEquals(byteArrayOf(4,5,6)) },
+            "cached upload and retry preserve raw file bytes on the actual HTTP wire")
+    } finally { fileHost.stop(0) }
     liveClient.disconnect()
+    val offlineLogs = CopyOnWriteArrayList<String>()
+    val unusedPort = java.net.ServerSocket(0).use { it.localPort.toString() }
+    val retryClient = LanClient(onLog = { offlineLogs.add(it) })
+    retryClient.connect(SettingsStore.Settings(serverIp="127.0.0.1", serverPort=unusedPort, password="isolated-only"))
+    eventually { offlineLogs.any { it.contains("第 2 次重连") } }
+    verify(offlineLogs.any { it.contains("等待 2s") }, "actual failed sockets retain the second backoff step instead of restarting at one second")
+    retryClient.setNetworkAvailable(false)
+    val attemptsBeforeNetworkLoss=offlineLogs.count { it.contains("正在连接") }
+    delay(4_500)
+    verify(offlineLogs.count { it.contains("正在连接") }==attemptsBeforeNetworkLoss,
+        "missing LAN route suppresses actual socket attempts through the next retry deadline")
+    retryClient.setNetworkAvailable(true)
+    eventually { offlineLogs.count { it.contains("正在连接") }>attemptsBeforeNetworkLoss }
+    verify(offlineLogs.any { it.contains("第 3 次重连") }, "network recovery immediately schedules the current target without losing retry history")
+    retryClient.pause()
     println("All $checks production automatic receipt checks passed.")
     // OkHttp 与进程级 scope 刻意不按 Activity 生命周期关闭；独立检查程序到此退出。
     kotlin.system.exitProcess(0)

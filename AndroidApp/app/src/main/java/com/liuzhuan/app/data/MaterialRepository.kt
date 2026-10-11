@@ -42,6 +42,9 @@ object MaterialRepository {
     private val displayOrder = HashMap<String, Long>()
     private val removedOrder = LinkedHashMap<String, Long>()
     private var nextDisplayOrder = -1L
+    private val ordered = java.util.TreeSet<MaterialItem>(
+        compareByDescending<MaterialItem> { it.time }
+            .thenBy { displayOrder[it.id] ?: Long.MAX_VALUE }.thenBy { it.id })
 
     /** gap 检测回调（连接层注册：发现丢包时重新请求 snapshot） */
     @Volatile
@@ -51,6 +54,7 @@ object MaterialRepository {
     @Synchronized
     fun replaceAll(items: List<MaterialItem>, sequence: Long) {
         map.clear()
+        ordered.clear()
         displayOrder.clear()
         removedOrder.clear()
         nextDisplayOrder = -1L
@@ -58,6 +62,7 @@ object MaterialRepository {
             map[item.id] = item
             displayOrder.putIfAbsent(item.id, index.toLong())
         }
+        ordered.addAll(map.values)
         // 包括空库和服务器重启后的 0，不能沿用上个连接的高序号。
         lastSequence = sequence.coerceAtLeast(0)
         awaitingSnapshot = false
@@ -71,10 +76,12 @@ object MaterialRepository {
     fun add(item: MaterialItem) {
         if (!acceptSequence(item.sequence)) return
         val existing = map.containsKey(item.id)
+        map[item.id]?.let { ordered.remove(it) }
         val previousOrder = removedOrder.remove(item.id)
         // 同秒的新素材/重复收集置于前面；撤回保留删除前位置。
         displayOrder[item.id] = if (existing || previousOrder == null) nextDisplayOrder-- else previousOrder
         map[item.id] = item
+        ordered.add(item)
         emitSorted()
         Log.d(TAG, "material added id=${item.id.take(8)} sequence=${item.sequence}")
     }
@@ -87,7 +94,9 @@ object MaterialRepository {
     @Synchronized
     fun delete(id: String, sequence: Long) {
         if (!acceptSequence(sequence)) return
-        if (map.remove(id) != null) {
+        val removed = map.remove(id)
+        if (removed != null) {
+            ordered.remove(removed)
             displayOrder.remove(id)?.let { rememberRemovedOrder(id, it) }
             emitSorted()
             Log.d(TAG, "material deleted id=${id.take(8)}")
@@ -99,6 +108,7 @@ object MaterialRepository {
         if (!acceptSequence(sequence)) return
         map.keys.forEach { id -> displayOrder[id]?.let { rememberRemovedOrder(id, it) } }
         map.clear()
+        ordered.clear()
         displayOrder.clear()
         emitSorted()
         Log.d(TAG, "materials cleared")
@@ -140,11 +150,7 @@ object MaterialRepository {
 
     /** 序号代表变更，撤回不能因此把旧素材推到列表顶部。 */
     private fun emitSorted() {
-        val sorted = map.values.sortedWith(
-            compareByDescending<MaterialItem> { it.time }
-                .thenBy { displayOrder[it.id] ?: Long.MAX_VALUE }
-        )
-        _materials.value = sorted
+        _materials.value = ordered.toList()
     }
 
     private const val TAG = "MaterialRepo"

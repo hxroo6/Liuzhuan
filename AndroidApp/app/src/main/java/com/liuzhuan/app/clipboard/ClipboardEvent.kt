@@ -1,6 +1,7 @@
 package com.liuzhuan.app.clipboard
 
 import java.security.MessageDigest
+import com.liuzhuan.app.core.hexString
 
 /**
  * 剪贴板捕获来源
@@ -58,5 +59,5 @@ data class ClipboardEvent(
 fun fingerprintOf(text: String, mimeTypes: List<String>): String {
     val raw = text + "|" + mimeTypes.sorted().joinToString(",")
     val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray())
-    return digest.joinToString("") { "%02x".format(it) }
+    return digest.hexString()
 }

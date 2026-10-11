@@ -298,7 +298,21 @@ fun main(args: Array<String>) = runBlocking {
         "action FIFO flush also revalidates queued source rules")
     val allowedFile = hook(ClipReceiver.KIND_FILE)
     receiver.onReceive(context, allowedFile)
+    awaitValue { client.files.size == 1 }
     verify(client.files.size == 1 && Base64.decodes == decodesBefore + 1, "permitted automatic file remains usable through guarded receiver path")
+    receiver.onReceive(context, allowedFile)
+    awaitValue { android.content.BroadcastReceiver.PendingResult.active.get()==0 }
+    verify(client.files.size==1, "duplicate legacy file broadcast cannot upload the same payload twice")
+    val binaryFile = hook(ClipReceiver.KIND_FILE).putExtra(ClipReceiver.EXTRA_FILE_BYTES, byteArrayOf(9,8,7))
+    receiver.onReceive(context, binaryFile)
+    awaitValue { client.files.size==2 && android.content.BroadcastReceiver.PendingResult.active.get()==0 }
+    verify(Base64.decodes==decodesBefore+2, "new byte broadcast needs no additional Base64 decode")
+    val oversized = hook(ClipReceiver.KIND_FILE).putExtra(ClipReceiver.EXTRA_FILE_BYTES, ByteArray(512*1024+1))
+    receiver.onReceive(context, oversized)
+    verify(client.files.size==2 && android.content.BroadcastReceiver.PendingResult.active.get()==0, "oversized byte broadcast is rejected before async file work")
+    val oldBinary = hook(ClipReceiver.KIND_FILE).putExtra(ClipReceiver.EXTRA_FILE_BYTES, byteArrayOf(1)).putExtra(ClipReceiver.EXTRA_TS,1L)
+    receiver.onReceive(context,oldBinary)
+    verify(oldBinary.reads[ClipReceiver.EXTRA_FILE_BYTES]==null, "delayed original copy time is rejected before binary payload extraction")
     ClipboardPrivacy.setAutomaticEnabled(false); ClipboardPrivacy.pause()
     val beforeManual = client.texts.size
     ClipboardEventDispatcher.dispatch(live("explicit manual text", source = ClipboardCaptureSource.MANUAL))

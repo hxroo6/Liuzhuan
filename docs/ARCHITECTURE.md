@@ -75,7 +75,7 @@
 
 - 状态机：`Idle → Connecting → Connected / AuthFailed`；意外断开（onClosed/onFailure 且非 manuallyClosed）设 `Disconnected` 并指数退避重连 1s→30s 上限；主动 `disconnect()` 设 `Paused` 不重连（与 Disconnected 的语义区分是 M11 保活修复的关键）。
 - 回调七参数：onState/onLog/onListData/onItemAdded/onItemDeleted/onItemCleared/onItemData，全部由 MainActivity 内联提供。
-- 防护细节：`webSocket !== ws` 早退防旧连接回调触发重连死循环；connect/disconnect/doConnect 前都关闭旧 WS；心跳双层维持（OkHttp pingInterval 30s + 应用层 heartbeat 每 30s）。
+- 防护细节：`webSocket !== ws` 早退防旧连接回调触发重连死循环；connect/disconnect/doConnect 前都关闭旧 WS；心跳由共享 OkHttp 客户端 pingInterval 30s 维持（应用层 heartbeat 仅兼容解析，无周期发送）；失败计数跨任务保留，退避上限 30s；无局域网路径时等待网络回调，恢复即重试。
 - 构造参数默认 `CoroutineScope(SupervisorJob() + Dispatchers.IO)`——进程级。
 
 ### 2.4 接收页数据层
@@ -89,7 +89,7 @@
 
 - **日常交付构建**：`assembleDistribution` 继承 Debug 的应用源码与签名，关闭 `isDebuggable`，不启用代码混淆；Debug 保留供开发，依然使用原正式签名（D01/D33）。`scripts/check_android_distribution.py` 检查实际 APK 的包名、调试标记、ClipReceiver action 和 Xposed 入口；CI 编译 Debug + Distribution，上传后者。无私人 keystore 的 CI 包使用测试证书。
 
-- `ForegroundService`：常驻通知 + START_STICKY + PARTIAL_WAKE_LOCK(无超时 acquire) + WIFI_MODE_FULL_LOW_LATENCY WifiLock；manifest 声明 `foregroundServiceType="dataSync"`。职责只有保活，不碰剪贴板不碰连接逻辑。
+- `ForegroundService`：常驻通知 + START_STICKY + 幂等 PARTIAL_WAKE_LOCK + WIFI_MODE_FULL_LOW_LATENCY WifiLock；默认即时模式维持后台基线，均衡模式按工作信号和传输数续期 / 释放；manifest 声明 `foregroundServiceType="connectedDevice"` 和网络前置权限。职责只有保活，不碰剪贴板不碰连接逻辑。
 - `SettingsStore`（DataStore "settings"）：serverIp/serverPort(默认"8899")/password/deviceName/autoSendClipboard。autoSend 开关运行时经 `LanHub.autoSendClipboard`(@Volatile) 直达 Dispatcher 过滤，DataStore 持久化由 UI 双写。
 
 ## 3. PC 端模块
@@ -252,3 +252,7 @@
 - ImageProcessingPresetStore 原子保存素材库 imagepresets.json，严格校验版本、20 个上限与格式/尺寸/质量。ImageProcessingWindow 选择预设仅填参数；损坏预设保留原文件，显式恢复先保留并校验副本。MigrationService 可选 Settings.ImagePresets 写入独立新库，旧包无此字段仍可导入。
 - 迁移包的 payload SHA-256 校验传输字节；素材内容基线记录用户以前确认的内容。两者不能互相替代：来源已变化时导入保留旧基线，使后续检查仍报告变化。
 - 检查：AutoReceiptChecks 包含实际 LanClient/OkHttp ↔ WsHub、幂等与状态机，AndroidPrivacyChecks 保留捕获隐私回归；IntegrityChecks 检查实际文件、取消与迁移，ImagePresetChecks/ImageProcessingChecks 检查参数持久化及真实图片/UI，DesktopUiChecks/迁移/快照/HTTP 检查共同回归。物理安卓、后台 ROM 行为和真实 GPU/DPI 单独验收。
+
+## Android v1.8.2 性能与功耗
+
+连接由进程级 LanController 持有，Activity 仅订阅状态；客户端 / 连接池共享。传输由 TransferWork 限制为 2 个活跃、最多 16 个在途任务，支持取消底层 Call。Hook 文件读取上限为 512 KiB，在有界工作线程执行，字节广播保留原复制时间；接收兼容旧 Base64，异步解码并短窗口去重，重试持有缓存路径。MEDIUM 选中文本捕获使用单消费者合并最新候选，保留尾沿读取；评分和进程级发送作用域不变。素材仓库维护有序索引，仍保留完整序号与撤回语义。

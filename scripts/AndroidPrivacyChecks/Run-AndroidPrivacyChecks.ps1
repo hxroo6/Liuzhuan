@@ -26,6 +26,8 @@ $privacyRuntimeClasspath = @($privacyStdlib, $privacyCoroutines, $privacyAnnotat
 $privacySources = @(
     (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/LanHub.kt'),
     (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/ClipReceiver.kt')
+    (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/core/RecentFileEvents.kt')
+    (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/core/Hex.kt')
 ) + @((Get-ChildItem -LiteralPath (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/clipboard') -Filter '*.kt' |
     Where-Object Name -ne 'ClipMonitorService.kt').FullName) +
     @((Get-ChildItem -LiteralPath (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/clipboard/action') -Filter '*.kt').FullName) +

@@ -16,6 +16,18 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 This release includes the Android startup fix and previously local improvements: batch organization/export, groups and tags, saved filters, source repair, clipboard privacy, image processing, and delivery receipts. The PC remains at v1.8.0 and is compatible with Android v1.8.1. To upgrade the PC, exit Liuzhuan, replace the `app` folder, and keep the adjacent `data` folder. The program ZIP contains no personal settings or materials.
 
+## Android v1.8.2: performance and power improvements (local build)
+
+Implementation details, 198 local regression checks and APK validation are recorded in the [optimization delivery report](docs/performance/ANDROID_POWER_OPTIMIZATION_2026-10-11.md) (Chinese).
+
+- **Balanced power** is available under Automatic sync on the connection page. It is off by default to retain instant delivery; when enabled, idle periods can sleep and work receives temporary protection. Delivery while locked may be slower.
+- Retry backoff survives consecutive failures, keep-alive acquisition is idempotent, and missing LAN connectivity waits for network changes without requiring Internet validation. A process-owned connection survives Activity recreation.
+- Image hooks use bounded background work and a hard 512 KiB read limit. Byte broadcasts avoid Base64 expansion, while the receiver remains compatible with older hooks. Failed image retries use cache files.
+- HTTP clients share connection resources. At most two file transfers run concurrently, with cancellation available in the task dialog. Off-screen thumbnails cancel their calls and concurrent requests for one URL are merged.
+- Progress is throttled before list allocation, material deltas use an ordered index, hidden pages avoid unnecessary subscriptions, and settings share one DataStore instance.
+- The foreground service declares `connectedDevice` for LAN device interaction and handles timeouts. Privacy checks, receipts, loop prevention, and process-owned background sending are retained.
+- Device power consumption and locked-screen latency are not yet measured. After an overwrite install, toggle accessibility off/on and restart source apps in the LSPosed scope to load the updated image hook. Public downloads above remain v1.8.1.
+
 ## Android v1.8.1: startup compatibility fix
 
 - On the tested Android 16 phone with LSPosed Irena 1.9.2, injecting a debuggable app crashed before the Activity started, leaving an apparently frozen splash screen. A production signing certificate does not disable the debuggable flag.

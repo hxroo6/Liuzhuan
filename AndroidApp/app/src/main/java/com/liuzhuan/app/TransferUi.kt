@@ -26,16 +26,70 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
-import okhttp3.OkHttpClient
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.launch
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 private val thumbnails=object:LruCache<String,Bitmap>(8*1024*1024) { override fun sizeOf(key:String,value:Bitmap)=value.byteCount }
 private val thumbnailSlots=Semaphore(3)
-private val thumbnailHttp=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECONDS).readTimeout(10,TimeUnit.SECONDS).build()
+private val thumbnailHttp=com.liuzhuan.app.net.HttpClients.thumbnail
+private val thumbnailFailure = object:LruCache<String,Long>(64) {}
+
+/** 每个 URL 的等待者共用锁；消费者归零后移除，长期滚动不会积累锁。 */
+private data class ThumbnailFlight(val mutex: kotlinx.coroutines.sync.Mutex = kotlinx.coroutines.sync.Mutex(), var users: Int = 0)
+private val flights = mutableMapOf<String, ThumbnailFlight>()
+
+private suspend fun loadThumbnail(url: String): Bitmap? {
+    val flight = synchronized(flights) { flights.getOrPut(url) { ThumbnailFlight() }.also { it.users++ } }
+    try {
+        return flight.mutex.withLock {
+            thumbnails.get(url)?.let { return@withLock it }
+            val failedAt = thumbnailFailure.get(url)
+            if (failedAt != null && android.os.SystemClock.elapsedRealtime() - failedAt < 3_000) return@withLock null
+            thumbnailSlots.withPermit {
+                thumbnails.get(url)?.let { return@withPermit it }
+                kotlinx.coroutines.coroutineScope {
+                    val call = thumbnailHttp.newCall(Request.Builder().url(url).build())
+                    kotlinx.coroutines.suspendCancellableCoroutine<Bitmap?> { continuation ->
+                        continuation.invokeOnCancellation { call.cancel() }
+                        launch(Dispatchers.IO) {
+                            try {
+                                val decoded = call.execute().use { response ->
+                                    if (!response.isSuccessful) return@use null
+                                    val body = response.body ?: return@use null
+                                    if (body.contentLength() > 2*1024*1024) return@use null
+                                    val bytes = body.byteStream().use { it.readNBytes(2*1024*1024+1) }
+                                    if (bytes.size > 2*1024*1024) return@use null
+                                    val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
+                                    BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
+                                    if(bounds.outWidth<=0 || bounds.outHeight<=0) return@use null
+                                    val options=BitmapFactory.Options().apply { inSampleSize=1; while(bounds.outWidth/inSampleSize>512 || bounds.outHeight/inSampleSize>512) inSampleSize*=2 }
+                                    BitmapFactory.decodeByteArray(bytes,0,bytes.size,options)
+                                }
+                                if (continuation.isActive) {
+                                    if (decoded != null) { thumbnails.put(url, decoded); thumbnailFailure.remove(url) }
+                                    else thumbnailFailure.put(url, android.os.SystemClock.elapsedRealtime())
+                                    continuation.resumeWith(Result.success(decoded))
+                                }
+                            } catch (ex: Exception) {
+                                if (continuation.isActive) {
+                                    thumbnailFailure.put(url, android.os.SystemClock.elapsedRealtime())
+                                    continuation.resumeWith(Result.success(null))
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    } finally {
+        synchronized(flights) { if (--flight.users == 0) flights.remove(url) }
+    }
+}
+
+internal fun clearThumbnailCache() { thumbnails.evictAll(); thumbnailFailure.evictAll() }
 
 @Composable fun PhotoThumbnail(url:String?, label:String) {
     // A recycled row must never briefly display another item's previously loaded bitmap.
@@ -43,27 +97,11 @@ private val thumbnailHttp=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECON
 }
 
 @Composable private fun ThumbnailContent(url:String?, label:String) {
-    val bitmap by produceState<Bitmap?>(null,url) {
-        value=null
-        if(url==null) return@produceState
-        value=thumbnails.get(url) ?: withContext(Dispatchers.IO) {
-            thumbnailSlots.withPermit {
-                try {
-                    thumbnailHttp.newCall(Request.Builder().url(url).build()).execute().use { response ->
-                        if(!response.isSuccessful) return@use null
-                        val body=response.body ?: return@use null
-                        if(body.contentLength()>2*1024*1024) return@use null
-                        val bytes=body.byteStream().use { it.readNBytes(2*1024*1024+1) }
-                        if(bytes.size>2*1024*1024) return@use null
-                        val bounds=BitmapFactory.Options().apply { inJustDecodeBounds=true }
-                        BitmapFactory.decodeByteArray(bytes,0,bytes.size,bounds)
-                        if(bounds.outWidth<=0 || bounds.outHeight<=0) return@use null
-                        val options=BitmapFactory.Options().apply { inSampleSize=1; while(bounds.outWidth/inSampleSize>512 || bounds.outHeight/inSampleSize>512) inSampleSize*=2 }
-                        BitmapFactory.decodeByteArray(bytes,0,bytes.size,options)?.also { thumbnails.put(url,it) }
-                    }
-                } catch(_:Exception) { null }
-            }
-        }
+    var bitmap by remember(url) { mutableStateOf<Bitmap?>(null) }
+    LaunchedEffect(url) {
+        bitmap=null
+        if(url==null) return@LaunchedEffect
+        bitmap=thumbnails.get(url) ?: loadThumbnail(url)
     }
     val opacity by animateFloatAsState(if (bitmap == null) 0f else 1f, tween(180), label = "thumbnail reveal")
     Surface(Modifier.size(56.dp),color=MaterialTheme.colorScheme.surfaceVariant,shape=MaterialTheme.shapes.small) {
@@ -104,6 +142,7 @@ private val thumbnailHttp=OkHttpClient.Builder().connectTimeout(5,TimeUnit.SECON
                             } else if(task.running) LinearProgressIndicator(Modifier.fillMaxWidth())
                             if(task.error.isNotEmpty()) Text(task.error,style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.error)
                             if(task.failed && TransferTasks.canRetry(task.id)) OutlinedButton(onClick={TransferTasks.retry(task.id)},modifier=Modifier.align(Alignment.End)) { Text("重新传输") }
+                            if(task.running && TransferTasks.canCancel(task.id)) TextButton(onClick={TransferTasks.cancel(task.id)},modifier=Modifier.align(Alignment.End)) { Text("取消传输") }
                         }
                     }
                 }

@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.liuzhuan.app.core.SettingsStore
-import com.liuzhuan.app.data.toMaterialItem
 import com.liuzhuan.app.net.LanClient
 import com.liuzhuan.app.net.LanDiscovery
 import com.liuzhuan.app.net.Proto
@@ -45,12 +44,10 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
-import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.util.concurrent.TimeUnit
 
 class MainActivity : ComponentActivity() {
 
@@ -58,6 +55,9 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this, object : androidx.activity.OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() { moveTaskToBack(true) }
+        })
         store = SettingsStore(this)
         Proto.deviceLabel = Build.MODEL
         // 幂等装配剪贴板监控组件（无障碍服务未启动时也要可用，供前台捕获/测试）
@@ -68,98 +68,24 @@ class MainActivity : ComponentActivity() {
             requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         }
 
-        // 创建全局连接（供剪贴板服务共享）
-        // 先断开旧 client（防止 Activity 重建时残留多个 LanClient → 日志重复）
-        LanHub.client?.disconnect()
-        val logLines = mutableStateListOf<String>()
-        val stateText = mutableStateOf("未连接")
-        val isConnected = mutableStateOf(false)
-        val isReconnecting = mutableStateOf(false)
-        val client = LanClient(
-            onState = { s ->
-                android.util.Log.d("LanClient", "[WS] state=$s")
-                stateText.value = when (s) {
-                    LanClient.State.Idle -> "未连接"
-                    LanClient.State.Connecting -> "连接中..."
-                    LanClient.State.Connected -> "已连接 ✓"
-                    is LanClient.State.AuthFailed -> "认证失败：${s.reason}"
-                    LanClient.State.Disconnected -> "已断开（自动重连中...）"
-                    LanClient.State.Paused -> "已暂停重连"
-                }
-                isConnected.value = s == LanClient.State.Connected
-                // 是否处于「断开后自动重连」状态（供暂停按钮显示）
-                isReconnecting.value = s == LanClient.State.Disconnected || s == LanClient.State.Connecting
-                // 前台服务保活：连接成功 → 启动；认证失败/主动暂停 → 停止。
-                // ⚠️ 关键：Disconnected（意外断开，自动重连中）绝不能停前台服务——
-                // 否则释放 Wi-Fi/CPU 保活锁，后台重连失败，后台复制事件只能积压、
-                // 直到切回前台才 flush（这正是「后台复制失效、切前台才发送」的根因）。
-                if (s == LanClient.State.Connected) {
-                    // 新连接的 sequence 可能从零开始；保留旧画面，等待权威快照。
-                    com.liuzhuan.app.data.MaterialRepository.markSyncing()
-                    ContextCompat.startForegroundService(
-                        this,
-                        Intent(this, ForegroundService::class.java)
-                    )
-                    // WS 恢复连接 → 补发断线期间积压的剪贴板事件（FIFO）
-                    com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.onWsConnected()
-                } else if (s is LanClient.State.AuthFailed || s == LanClient.State.Paused) {
-                    stopService(Intent(this, ForegroundService::class.java))
-                }
-            },
-            onLog = { msg ->
-                if (logLines.size > 50) logLines.removeAt(0)
-                logLines.add(msg)
-            },
-            // 接收页：全量快照 → 单一事实源（Repository）
-            onListData = { items, seq ->
-                com.liuzhuan.app.data.MaterialRepository.replaceAll(
-                    items.map { it.toMaterialItem() }, seq
-                )
-            },
-            // 接收页：增量新增 → Repository（去重/保序在 Repository 内）
-            onItemAdded = { item ->
-                com.liuzhuan.app.data.MaterialRepository.add(item.toMaterialItem())
-            },
-            // 接收页：增量删除 → Repository
-            onItemDeleted = { id, sequence ->
-                com.liuzhuan.app.data.MaterialRepository.delete(id, sequence)
-            },
-            // 接收页：清空 → Repository
-            onItemCleared = { sequence ->
-                com.liuzhuan.app.data.MaterialRepository.clear(sequence)
-            },
-            // 接收页：点击素材 → 文字复制 / 文件下载
-            onItemData = { data ->
-                val appContext = applicationContext
-                if (data.error.isNotEmpty()) {
-                    toast(appContext, "❌ 获取素材失败")
-                    return@LanClient
-                }
-                if (data.content.isNotEmpty()) {
-                    // 文字 → 复制剪贴板
-                    copyToClipboard(appContext, data.content)
-                    toast(appContext, "📝 已复制到剪贴板")
-                } else if (data.downloadUrl.isNotEmpty()) {
-                    // 文件 → 下载保存（MediaStore，Android 10+ 免存储权限）
-                    receiveFile(appContext, data)
-                }
-            }
-        )
-        // sequence gap 检测 → 触发重新快照（resync）
-        com.liuzhuan.app.data.MaterialRepository.onSequenceGap = {
-            client.requestSnapshot()
-        }
-        LanHub.client = client
+        val client = LanController.init(applicationContext)
 
         setContent {
             FlowTheme {
+                val connection by LanController.state.collectAsStateWithLifecycle()
                 MainScreen(
                     store = store,
                     client = client,
-                    stateText = stateText.value,
-                    isConnected = isConnected.value,
-                    isReconnecting = isReconnecting.value,
-                    logLines = logLines
+                    stateText = when (val state = connection) {
+                        LanClient.State.Idle -> "未连接"
+                        LanClient.State.Connecting -> "连接中…"
+                        LanClient.State.Connected -> "已连接 ✓"
+                        is LanClient.State.AuthFailed -> "认证失败：${state.reason}"
+                        LanClient.State.Disconnected -> "已断开（自动重连中…）"
+                        LanClient.State.Paused -> "已暂停重连"
+                    },
+                    isConnected = connection == LanClient.State.Connected,
+                    isReconnecting = connection == LanClient.State.Disconnected || connection == LanClient.State.Connecting
                 )
             }
         }
@@ -171,12 +97,6 @@ class MainActivity : ComponentActivity() {
         if (intent.action == Intent.ACTION_SEND) {
             handleShareIntent(intent)
         }
-    }
-
-    /** 返回键 → 缩进后台（不退出 App，保活连接不断） */
-    @Deprecated("Deprecated in Java")
-    override fun onBackPressed() {
-        moveTaskToBack(true)
     }
 
     /**
@@ -221,15 +141,16 @@ class MainActivity : ComponentActivity() {
 
     /** 分享的文件 → HTTP POST 流式上传到电脑（大文件不整载内存，见 uploadFileStreaming） */
     private fun uploadSharedFile(uri: android.net.Uri) {
-        toast(this, "⬆️ 正在上传...")
+        val app = applicationContext
+        toast(app, "⬆️ 正在上传...")
         uploadFileStreaming(
-            context = this,
+            context = app,
             uri = uri,
             store = store,
             onProgress = { _, _ -> /* 分享路径无进度 UI，完成/失败以 Toast 提示 */ },
             onResult = { ok, msg ->
-                if (ok) toast(this, "✅ 已上传到电脑")
-                else toast(this, "❌ 上传失败: $msg")
+                if (ok) toast(app, "✅ 已上传到电脑")
+                else toast(app, "❌ 上传失败: $msg")
             }
         )
     }
@@ -242,23 +163,35 @@ fun MainScreen(
     client: LanClient,
     stateText: String,
     isConnected: Boolean,
-    isReconnecting: Boolean,
-    logLines: androidx.compose.runtime.snapshots.SnapshotStateList<String>
+    isReconnecting: Boolean
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
 
-    // 接收页数据单一事实源：Repository → StateFlow → collectAsStateWithLifecycle
-    val materials by com.liuzhuan.app.data.MaterialRepository.materials.collectAsStateWithLifecycle()
-    val syncState by com.liuzhuan.app.data.MaterialRepository.syncState.collectAsStateWithLifecycle()
-
-    // 链路诊断 + 最近事件（渲染在下方日志卡片；2026-08-28 从剪贴板监控卡片归集迁移）
-    val clipDiagnostic by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
-        .diagnostic.collectAsStateWithLifecycle()
-    val diagnosticHistory by com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
-        .diagnosticHistory.collectAsStateWithLifecycle()
+    var selectedTab by rememberSaveable { mutableStateOf(0) }
+    var showLogs by rememberSaveable { mutableStateOf(false) }
+    // 不可见面板不订阅；后台业务仍在进程中继续。
+    val materials = if (selectedTab == 2) com.liuzhuan.app.data.MaterialRepository.materials.collectAsStateWithLifecycle().value else emptyList()
+    val syncState = if (selectedTab == 2) com.liuzhuan.app.data.MaterialRepository.syncState.collectAsStateWithLifecycle().value else com.liuzhuan.app.data.MaterialRepository.SyncState.IDLE
+    val clipDiagnostic = if (selectedTab == 0) com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.diagnostic.collectAsStateWithLifecycle().value else ""
+    val diagnosticHistory = if (selectedTab == 0 && showLogs) com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.diagnosticHistory.collectAsStateWithLifecycle().value else emptyList()
+    val logLines = if (selectedTab == 0 && showLogs) LanController.logs.collectAsStateWithLifecycle().value else emptyList()
+    val diagnosticOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(diagnosticOwner, selectedTab, showLogs) {
+        fun updateTrace() {
+            com.liuzhuan.app.clipboard.CaptureDiagnostics.verbose = selectedTab == 0 && showLogs &&
+                diagnosticOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.STARTED)
+        }
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, _ -> updateTrace() }
+        diagnosticOwner.lifecycle.addObserver(observer)
+        updateTrace()
+        onDispose {
+            diagnosticOwner.lifecycle.removeObserver(observer)
+            com.liuzhuan.app.clipboard.CaptureDiagnostics.verbose = false
+        }
+    }
 
     // 自动发现状态
     var searching by remember { mutableStateOf(false) }
@@ -271,15 +204,13 @@ fun MainScreen(
     var textInput by rememberSaveable { mutableStateOf("") }
     var showTransfers by remember { mutableStateOf(false) }
     val runningTransfers by remember { TransferTasks.tasks.map { tasks -> tasks.count { it.running } }.distinctUntilChanged() }.collectAsStateWithLifecycle(0)
-    var selectedTab by rememberSaveable { mutableStateOf(0) }
     var manualConnection by rememberSaveable { mutableStateOf(false) }
-    var showLogs by rememberSaveable { mutableStateOf(false) }
     var receiveSearch by rememberSaveable { mutableStateOf("") }
     var receiveType by rememberSaveable { mutableStateOf("All") }
     var sendStatus by remember { mutableStateOf("") }
     val pageScrollStates = List(3) { rememberLazyListState() }
     val visibleMaterials = remember(materials, receiveType, receiveSearch) {
-        materials.filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50)
+        materials.asSequence().filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50).toList()
     }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
 
@@ -299,6 +230,7 @@ fun MainScreen(
         androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri == null) return@rememberLauncherForActivityResult
+        try { context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         uploading = true
         lastProgressPct = -1
         uploadStatus = "⬆️ 准备上传…"
@@ -351,7 +283,8 @@ fun MainScreen(
             serverPort = port.trim().ifBlank { "8899" },
             password = password.trim(),
             autoSendClipboard = com.liuzhuan.app.clipboard.ClipboardPrivacy.state.value.automaticEnabled,
-            deviceName = android.os.Build.MODEL
+            deviceName = android.os.Build.MODEL,
+            balancedPower = settings?.balancedPower ?: false
         )
         settings = newSettings
         scope.launch { store.save(newSettings) }
@@ -566,7 +499,7 @@ fun MainScreen(
                                 onClick = {
                                     // 检测剪贴板监控：未启用则先跳转开启（LanClient 有指数退避重连，无需用户手动重连）
                                     if (!isAccessibilityEnabled(context)) {
-                                        logLines.add("⚠️ 未开启剪贴板监控，正在跳转到无障碍设置...")
+                                        LanController.appendLog("⚠️ 未开启剪贴板监控，正在跳转到无障碍设置...")
                                         context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                                     }
                                     saveAndConnect()
@@ -600,6 +533,22 @@ fun MainScreen(
                 Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                     Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("自动同步", style = MaterialTheme.typography.titleSmall)
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("均衡省电", style = MaterialTheme.typography.titleSmall)
+                                Text(if (settings?.balancedPower == true) "空闲时允许休眠，锁屏到达可能稍慢" else "当前优先即时同步，后台保持唤醒",
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
+                            Switch(checked = settings?.balancedPower == true, enabled = settings != null,
+                                onCheckedChange = { enabled ->
+                                    val previous = settings ?: return@Switch
+                                    scope.launch {
+                                        try { store.save(previous.copy(balancedPower = enabled)) }
+                                        catch (ex: CancellationException) { throw ex }
+                                        catch (_: Exception) { toast(context, "省电设置保存失败，请重试") }
+                                    }
+                                })
+                        }
                         ClipboardPrivacyControls(settingsReady = settings != null) { checked ->
                             val saved = settings ?: return@ClipboardPrivacyControls
                             // 隐私组件已确认落盘；旧连接偏好仅保留兼容副本，不能反向覆盖隐私规则。
@@ -671,17 +620,11 @@ fun MainScreen(
                             .pointerInput(logLines) {
                                 detectTapGestures(
                                     onDoubleTap = {
-                                        if (logLines.isEmpty()) {
-                                            toast(context, "暂无日志可复制")
-                                        } else {
-                                            val clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE)
-                                                    as android.content.ClipboardManager
-                                            clipboard.setPrimaryClip(
-                                                android.content.ClipData.newPlainText(
-                                                    "liuzhuan_logs", logLines.joinToString("\n")
-                                                )
-                                            )
-                                            toast(context, "✅ 已复制 ${logLines.size} 条日志")
+                                        val allLogs = LanController.logs.value
+                                        if (allLogs.isEmpty()) toast(context, "暂无日志可复制")
+                                        else {
+                                            copyToClipboard(context, allLogs.joinToString("\n"))
+                                            toast(context, "✅ 已复制 ${allLogs.size} 条日志")
                                         }
                                     }
                                 )
@@ -882,14 +825,14 @@ private fun formatTime(unix: Long): String {
 }
 
 /** Toast（主线程） */
-private fun toast(context: Context, msg: String) {
+internal fun toast(context: Context, msg: String) {
     android.os.Handler(android.os.Looper.getMainLooper()).post {
         android.widget.Toast.makeText(context, msg, android.widget.Toast.LENGTH_SHORT).show()
     }
 }
 
 /** 复制文字到剪贴板 */
-private fun copyToClipboard(context: Context, text: String) {
+internal fun copyToClipboard(context: Context, text: String) {
     val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
     cm.setPrimaryClip(ClipData.newPlainText("liuzhuan", text))
     // 循环回写防护：本 App 写入的内容标记为已处理，避免再被捕获回推 PC
@@ -915,13 +858,13 @@ private fun uploadFileStreaming(
     taskId:String = java.util.UUID.randomUUID().toString()
 ) {
     val appContext=context.applicationContext
-    TransferTasks.start("准备文件", "手机 → 电脑",taskId) {
+    TransferTasks.start("准备文件", "手机 → 电脑",taskId,cancel={TransferWork.cancel(taskId)}) {
         uploadFileStreaming(appContext,uri,SettingsStore(appContext),{_,_->},{ok,msg->toast(appContext,msg)},taskId)
     }
-    Thread {
+    val scheduled = TransferWork.launch(taskId) {
         var tmp: java.io.File? = null
         try {
-            val resolver = context.contentResolver
+            val resolver = appContext.contentResolver
             var name = "file_${System.currentTimeMillis()}.bin"
             var size = -1L
             resolver.query(uri, null, null, null, null)?.use { c ->
@@ -938,17 +881,33 @@ private fun uploadFileStreaming(
             var readFrom = uri
             if (size < 0) {
                 // 个别 DocumentsProvider 不报长度 → 先流式落缓存拿 Content-Length
-                val f = java.io.File(context.cacheDir, "lz_upload_${System.currentTimeMillis()}")
-                resolver.openInputStream(uri)?.use { input ->
-                    f.outputStream().use { input.copyTo(it, 64 * 1024) }
-                } ?: throw Exception("无法读取文件")
+                val f = java.io.File(appContext.cacheDir, "lz_upload_${java.util.UUID.randomUUID()}")
+                tmp = f // 中途失败也能清理，不能等复制完成才登记。
+                val budget = (appContext.cacheDir.usableSpace - 1024 * 1024).coerceAtLeast(0)
+                val source = resolver.openInputStream(uri) ?: throw Exception("无法读取文件")
+                val copyJob = kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job]!!
+                TransferWork.useResource(taskId, source) { input ->
+                    f.outputStream().use { output ->
+                        val buffer = ByteArray(64 * 1024)
+                        var copied = 0L
+                        while (true) {
+                            copyJob.ensureActive()
+                            val n = input.read(buffer)
+                            if (n < 0) break
+                            copied += n
+                            if (copied > budget) throw Exception("缓存空间不足，请释放手机空间后重试")
+                            output.write(buffer, 0, n)
+                            PowerSignals.touch()
+                        }
+                    }
+                }
                 size = f.length()
                 readFrom = android.net.Uri.fromFile(f)
                 tmp = f
             }
             if (size <= 0L) throw Exception("空文件")
 
-            val settings = runBlocking { store.settings.first() }
+            val settings = store.settings.first()
             if (settings.serverIp.isBlank()) throw Exception("未配置电脑 IP")
             val auth = Proto.sha256Hex(settings.password)
             val url = "http://${settings.serverIp}:${(settings.serverPort.toIntOrNull() ?: 8899)+1}/upload?name=" +
@@ -959,37 +918,47 @@ private fun uploadFileStreaming(
                     "application/octet-stream".toMediaTypeOrNull()
                 override fun contentLength(): Long = size
                 override fun writeTo(sink: okio.BufferedSink) {
-                    resolver.openInputStream(readFrom)?.use { input ->
+                    val source = resolver.openInputStream(readFrom) ?: throw Exception("无法读取文件")
+                    TransferWork.useResource(taskId, source) { input ->
                         val buf = ByteArray(64 * 1024)
                         var sent = 0L
+                        var lastUiAt = 0L
                         while (true) {
                             val n = input.read(buf)
                             if (n <= 0) break
                             sink.write(buf, 0, n)
                             sent += n
-                            TransferTasks.progress(taskId,sent,size)
-                            onProgress(sent, size)
+                            PowerSignals.touch()
+                            val now = android.os.SystemClock.elapsedRealtime()
+                            if (now - lastUiAt >= 250 || sent == size) {
+                                lastUiAt = now
+                                TransferTasks.progress(taskId,sent,size)
+                                val published = sent
+                                android.os.Handler(android.os.Looper.getMainLooper()).post { onProgress(published, size) }
+                            }
                         }
-                    } ?: throw Exception("无法读取文件")
+                    }
                 }
             }
-            val client = OkHttpClient.Builder()
-                .connectTimeout(10, TimeUnit.SECONDS)
-                .writeTimeout(300, TimeUnit.SECONDS)
-                .readTimeout(300, TimeUnit.SECONDS)
-                .build()
-            client.newCall(Request.Builder().url(url).post(body).build()).execute().use { resp ->
+            TransferWork.withCall(taskId, com.liuzhuan.app.net.HttpClients.transfer.newCall(Request.Builder().url(url).post(body).build())) { call ->
+            call.execute().use { resp ->
                 if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
                 TransferTasks.finish(taskId,true,"电脑已接收")
-                onResult(true,name)
+                android.os.Handler(android.os.Looper.getMainLooper()).post { onResult(true,name) }
+            }
             }
         } catch (ex: Exception) {
+            if (ex is CancellationException) {
+                android.os.Handler(android.os.Looper.getMainLooper()).post { onResult(false, "已取消") }
+                throw ex
+            }
             TransferTasks.finish(taskId,false,"${ex.message ?: "传输失败"}；重试前请检查电脑是否已收到")
-            onResult(false, ex.message?.take(40) ?: "未知错误")
+            android.os.Handler(android.os.Looper.getMainLooper()).post { onResult(false, ex.message?.take(40) ?: "未知错误") }
         } finally {
             tmp?.delete()
         }
-    }.start()
+    }
+    if (!scheduled) onResult(false, "等待任务较多，请稍后重新传输")
 }
 
 /** 字节数 → 人类可读大小 */
@@ -1001,21 +970,22 @@ private fun formatSize(bytes: Long): String = when {
 }
 
 /** 下载采用流式写入与 IS_PENDING，未完成的文件不会出现在相册。 */
-private fun receiveFile(context:Context,data:Proto.ItemData) {
+internal fun receiveFile(context:Context,data:Proto.ItemData) {
     val id="download:${data.id}"
     if(TransferTasks.running(id)) return
     val name=data.name.ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
-    TransferTasks.start(name,"电脑 → 手机",id) { receiveFile(context,data) }
-    Thread {
-        try { downloadToMediaStore(context,data.downloadUrl,name,data.type,id); TransferTasks.finish(id,true,"已保存到手机"); toast(context,"已保存到手机") }
-        catch(ex:Exception) { TransferTasks.finish(id,false,ex.message ?: "保存失败");toast(context,"保存失败，请在收发任务中重试") }
-    }.start()
+    val app = context.applicationContext
+    TransferTasks.start(name,"电脑 → 手机",id,cancel={TransferWork.cancel(id)}) { receiveFile(app,data) }
+    TransferWork.launch(id) {
+        try { downloadToMediaStore(app,data.downloadUrl,name,data.type,id); TransferTasks.finish(id,true,"已保存到手机"); toast(context,"已保存到手机") }
+        catch(ex:Exception) { if(ex is CancellationException) throw ex;TransferTasks.finish(id,false,ex.message ?: "保存失败");toast(app,"保存失败，请在收发任务中重试") }
+    }
 }
 
-private fun downloadToMediaStore(context: Context, url: String, fileName: String, type: String, taskId:String) {
+private suspend fun downloadToMediaStore(context: Context, url: String, fileName: String, type: String, taskId:String) {
     val safeName = fileName.substringAfterLast('/').ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
-    val client = OkHttpClient.Builder().connectTimeout(10, TimeUnit.SECONDS).readTimeout(180, TimeUnit.SECONDS).build()
-    client.newCall(Request.Builder().url(url).build()).execute().use { resp ->
+    TransferWork.withCall(taskId, com.liuzhuan.app.net.HttpClients.transfer.newCall(Request.Builder().url(url).build())) { call ->
+    call.execute().use { resp ->
         if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
         val body=resp.body ?: throw Exception("empty body")
         val total=body.contentLength()
@@ -1038,12 +1008,13 @@ private fun downloadToMediaStore(context: Context, url: String, fileName: String
             resolver.openOutputStream(uri)?.use { output ->
                 body.byteStream().use { input ->
                     val buffer=ByteArray(65536); var done=0L
-                    while(true) { val n=input.read(buffer); if(n<0) break; output.write(buffer,0,n); done+=n;TransferTasks.progress(taskId,done,total.coerceAtLeast(0)) }
+                    while(true) { val n=input.read(buffer); if(n<0) break; output.write(buffer,0,n); done+=n;PowerSignals.touch();TransferTasks.progress(taskId,done,total.coerceAtLeast(0)) }
                     if(total>=0 && done!=total) throw Exception("下载中断：$done/$total 字节")
                 }
             } ?: throw Exception("无法写入文件")
             if(resolver.update(uri,ContentValues().apply {put(MediaStore.MediaColumns.IS_PENDING,0)},null,null)<=0) throw Exception("无法完成文件保存")
         } catch(ex:Exception) { resolver.delete(uri,null,null);throw ex }
+    }
     }
 }
 private fun mimeFor(name: String): String {
