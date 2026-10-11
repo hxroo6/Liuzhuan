@@ -122,7 +122,7 @@
 
 #### M35 收发控制与保存位置（2026-10-11）
 
-- Android `TransferTaskDialog` 使用全屏 Dialog、任务状态筛选；成功写入 MediaStore 并清除 IS_PENDING 后，将实际相对目录记入任务，支持逐项打开与四类接收目录入口。`ReceivedFiles` 通过目录 ACTION_VIEW / ACTION_OPEN_DOCUMENT_TREE 和 EXTRA_INITIAL_URI 调用系统或指定管理器，仅查询目录处理应用，不获取额外存储授权。
+- Android `TransferTaskDialog` 使用全屏 Dialog、任务状态筛选；M36 起所有类型通过 MediaStore.Downloads 写入固定 `Download/Liuzhuan`，成功清除 IS_PENDING 后将实际相对目录记入任务。顶部按钮直接浏览统一目录，逐项按钮兼容旧位置。`ReceivedFiles` 只用目录 ACTION_VIEW；默认限定系统处理器并优先 DocumentsUI，也可指定兼容的管理器。不调用 ACTION_OPEN_DOCUMENT_TREE，不额外获取存储授权；目录由首次文件写入创建。
 - Android 文件暂停取消当前 I/O，保留来源与重试回调，清理结束后显示暂停；继续沿原回调从头传输，取消释放缓存并移除继续入口。进程级 TransferWork 的旧任务清理/同 ID 重试等待机制保留，已提交文字不可撤回。
 - PC `TransferWindow` 为 840 × 680 的可调整窗口；`TransferControl` 在每次读写边界等待异步门闩，暂停当前连接最多 90 秒；取消中断读写/门闩并关闭远端流，上传部分文件删除后才显示已取消。停止 LAN 也取消门闩。HTTP / WS 字段与旧端点不变，不支持跨断线字节续传。
 - PC 完成接收条目保存原始上传路径；`FolderLauncher` 通过 ArgumentList 调用系统 Explorer 或用户指定 EXE，参数模板按引号拆分后替换 `{folder}`，不经 shell。当前电脑偏好保存为 `data/file-browser.json`，不把可执行程序路径迁移到新电脑。

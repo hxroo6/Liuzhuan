@@ -981,29 +981,23 @@ internal fun receiveFile(context:Context,data:Proto.ItemData) {
     val app = context.applicationContext
     TransferTasks.start(name,"电脑 → 手机",id,cancel={TransferWork.cancel(id)}) { receiveFile(app,data) }
     TransferWork.launch(id) {
-        try { downloadToMediaStore(app,data.downloadUrl,name,data.type,id); TransferTasks.finish(id,true,"已保存到手机"); toast(context,"已保存到手机") }
+        try { downloadToMediaStore(app,data.downloadUrl,name,id); TransferTasks.finish(id,true,"已保存到手机"); toast(context,"已保存到手机") }
         catch(ex:Exception) { if(ex is CancellationException) throw ex;TransferTasks.finish(id,false,ex.message ?: "保存失败");toast(app,"保存失败，请在收发任务中重试") }
     }
 }
 
-private suspend fun downloadToMediaStore(context: Context, url: String, fileName: String, type: String, taskId:String) {
+private suspend fun downloadToMediaStore(context: Context, url: String, fileName: String, taskId:String) {
     val safeName = fileName.substringAfterLast('/').ifBlank { "liuzhuan_${System.currentTimeMillis()}" }
     TransferWork.withCall(taskId, com.liuzhuan.app.net.HttpClients.transfer.newCall(Request.Builder().url(url).build())) { call ->
     call.execute().use { resp ->
         if (!resp.isSuccessful) throw Exception("HTTP ${resp.code}")
         val body=resp.body ?: throw Exception("empty body")
         val total=body.contentLength()
-        val collection = when(type) {
-            "Image"->MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            "Video"->MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            "Audio"->MediaStore.Audio.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-            else->MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-        }
-        val folder=when(type) { "Image"->"Pictures"; "Video"->"Movies"; "Audio"->"Music";else->"Download" }
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
         val values=ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME,safeName)
             put(MediaStore.MediaColumns.MIME_TYPE,mimeFor(safeName))
-            put(MediaStore.MediaColumns.RELATIVE_PATH,"$folder/Liuzhuan")
+            put(MediaStore.MediaColumns.RELATIVE_PATH,ReceivedFiles.FOLDER)
             put(MediaStore.MediaColumns.IS_PENDING,1)
         }
         val resolver=context.contentResolver
@@ -1017,7 +1011,7 @@ private suspend fun downloadToMediaStore(context: Context, url: String, fileName
                 }
             } ?: throw Exception("无法写入文件")
             if(resolver.update(uri,ContentValues().apply {put(MediaStore.MediaColumns.IS_PENDING,0)},null,null)<=0) throw Exception("无法完成文件保存")
-            TransferTasks.savedTo(taskId,"$folder/Liuzhuan")
+            TransferTasks.savedTo(taskId,ReceivedFiles.FOLDER)
         } catch(ex:Exception) { resolver.delete(uri,null,null);throw ex }
     }
     }

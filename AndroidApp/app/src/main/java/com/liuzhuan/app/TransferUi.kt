@@ -124,7 +124,6 @@ internal fun clearThumbnailCache() { thumbnails.evictAll(); thumbnailFailure.evi
     val store=remember { com.liuzhuan.app.core.SettingsStore(context) }
     val settings by store.settings.collectAsStateWithLifecycle(com.liuzhuan.app.core.SettingsStore.Settings())
     val scope=rememberCoroutineScope()
-    var folderPicker by remember { mutableStateOf(false) }
     var managerPicker by remember { mutableStateOf(false) }
     var filter by remember { mutableIntStateOf(0) }
     var managers by remember { mutableStateOf<List<ReceivedFiles.Manager>>(emptyList()) }
@@ -143,9 +142,10 @@ internal fun clearThumbnailCache() { thumbnails.evictAll(); thumbnailFailure.evi
             Text("${entries.count { it.running }} 项进行中 · ${entries.count { it.paused }} 项暂停 · ${entries.count { it.failed }} 项失败",
                 style=MaterialTheme.typography.bodyMedium,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Row(horizontalArrangement=Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(onClick={folderPicker=true}) { Text("接收目录") }
+                OutlinedButton(onClick={ReceivedFiles.open(context,ReceivedFiles.FOLDER,settings.fileManagerPackage)}) { Text("打开接收目录") }
                 TextButton(onClick={managerPicker=true}) { Text("文件管理器") }
             }
+            Text("保存到：内部存储 / ${ReceivedFiles.FOLDER}",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Text("暂停后继续会从头传输，暂不支持断点续传。",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
             Row(Modifier.fillMaxWidth().padding(top=8.dp),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
                 listOf("全部","进行中","已结束").forEachIndexed { index,label ->
@@ -194,15 +194,9 @@ internal fun clearThumbnailCache() { thumbnails.evictAll(); thumbnailFailure.evi
         }
         }
     }
-    if(folderPicker) AlertDialog(onDismissRequest={folderPicker=false},title={Text("接收文件保存位置")},confirmButton={TextButton(onClick={folderPicker=false}){Text("关闭")}},text={
-        Column {
-            Text("按文件类型保存到内部存储下的流转目录。空目录或定位功能由文件管理器处理。",style=MaterialTheme.typography.bodySmall)
-            ReceivedFiles.folders.forEach { folder -> TextButton(onClick={ReceivedFiles.open(context,folder,settings.fileManagerPackage)}) {Text(folder)} }
-        }
-    })
     if(managerPicker) AlertDialog(onDismissRequest={managerPicker=false},title={Text("打开目录的文件管理器")},confirmButton={TextButton(onClick={managerPicker=false}){Text("关闭")}},text={
         LazyColumn(Modifier.heightIn(max=400.dp)) {
-            item { Text("选择支持目录定位的应用。系统文件打开浏览选择器，不会修改保存位置或获取新授权。",style=MaterialTheme.typography.bodySmall) }
+            item { Text("仅更换打开目录的应用；接收位置固定，不会弹出目录选择或授权界面。首次接收文件后创建目录。",style=MaterialTheme.typography.bodySmall) }
             item { TextButton(onClick={selectManager("")}) { Text(if(settings.fileManagerPackage.isBlank()) "✓ 系统文件（默认）" else "系统文件（默认）") } }
             items(managers,key={it.packageName}) { manager ->
                 TextButton(onClick={selectManager(manager.packageName)}) {

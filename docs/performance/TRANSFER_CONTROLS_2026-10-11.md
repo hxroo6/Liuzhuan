@@ -1,5 +1,9 @@
 # M35 收发界面、保存位置与任务控制
 
+## 后续修订
+
+Android M36 / v1.8.4 已将所有新接收文件改为固定 `Download/Liuzhuan`，目录按钮改为直接调用文件管理器浏览，不再调用目录选择器。下文保留 M35 交付时的测试与设计记录，安卓目录行为以 [M36 修订记录](RECEIVE_DIRECTORY_2026-10-11.md)为准。
+
 2026-10-11，本地 Android v1.8.3 / versionCode 8，PC v1.8.1。修改前备份：`backup/1011-1150-transfer-controls/`（含 Android 源码、PC 源码、原 app 发布目录、文档和相关检查脚本）。不更改 HTTP/WS 协议，不移动现有素材，不推送 GitHub 或发布 Releases。
 
 ## 完成的交互

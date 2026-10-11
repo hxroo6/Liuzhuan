@@ -16,12 +16,12 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 This release includes the Android startup fix and previously local improvements: batch organization/export, groups and tags, saved filters, source repair, clipboard privacy, image processing, and delivery receipts. The PC remains at v1.8.0 and is compatible with Android v1.8.1. To upgrade the PC, exit Liuzhuan, replace the `app` folder, and keep the adjacent `data` folder. The program ZIP contains no personal settings or materials.
 
-## Transfer experience: Android v1.8.3 / PC v1.8.1 (local builds)
+## Transfer experience: Android v1.8.4 / PC v1.8.1 (local builds)
 
 - Android transfer tasks now use a full-screen view with status filters. The desktop transfer window is enlarged to 840 × 680 and remains resizable.
-- Open the receive folder or a completed task's saved location. Android supports document browsing and compatible directory-intent handlers; received files keep their existing type-based folders. Windows defaults to Explorer and supports a custom EXE with a `{folder}` argument template. The executable preference stays on the current PC and is excluded from migration packages.
+- All new Android downloads, including images, videos and audio, go to **Internal storage / Download / Liuzhuan**. "Open receive folder" opens that location in a system file manager, without a folder-selection or permission picker. You can configure a compatible directory browser; the save location stays fixed. The folder is created on the first download. Existing files stay in their original locations, which remain accessible from their task records. Windows defaults to Explorer and supports a custom EXE with a `{folder}` argument template. The executable preference stays on the current PC and is excluded from migration packages.
 - File tasks offer pause, continue and cancel. Android pause closes I/O and retains the task source; continuing **restarts the entire transfer**. Desktop pause retains the current HTTP connection for up to 90 seconds; connection loss requires retrying from the sender. **Byte-offset resume and task recovery across process restarts are not supported.** Submitted text and file registration cannot be recalled.
-- Toggle accessibility off and back on after APK replacement. No Android device is currently attached, so directory navigation and third-party file manager compatibility still require device validation. See the [delivery record](docs/performance/TRANSFER_CONTROLS_2026-10-11.md) (Chinese). Public downloads remain v1.8.1.
+- Toggle accessibility off and back on after APK replacement. No Android device is currently attached, so directory navigation and third-party file manager compatibility still require device validation. Unsupported browsers show a message instead of falling back to a folder picker. See the [delivery record](docs/performance/TRANSFER_CONTROLS_2026-10-11.md) and [M36 directory correction](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md) (Chinese). Public downloads remain v1.8.1.
 
 ## Android v1.8.2: performance and power improvements (local build)
 
