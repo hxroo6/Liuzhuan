@@ -17,7 +17,7 @@ Android 参考：[MediaStore.Downloads 与共享存储](https://developer.androi
 
 ## 交付
 
-Android v1.8.4 / versionCode 9：`F:/QW《流转》 - 副本/AndroidApp/Liuzhuan-M36-signed.apk`，生成时间（Asia/Shanghai）**2026-10-11 12:20:47**，20908450 字节。
+Android v1.8.4 / versionCode 9：`AndroidApp/Liuzhuan-M36-signed.apk`，生成时间（Asia/Shanghai）**2026-10-11 12:20:47**，20908450 字节。
 
 SHA-256：`A6AE704ED51E50D435D87620768D6FAA1EE50952649CF032B1803146CD10BB26`。Distribution 禁止调试，APK v2 验签通过、与 M35 签名证书一致；包名、ClipReceiver action 和 Xposed 入口检查通过。交付副本哈希与构建产物一致，保留 M35 回退包。
 

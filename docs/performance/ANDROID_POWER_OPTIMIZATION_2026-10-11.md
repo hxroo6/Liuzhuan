@@ -49,7 +49,7 @@
 
 - 主源码同步至 `F:/LiuzhuanApp`，52 个源文件逐项 SHA-256 一致，应用 Gradle 配置一致。
 - JDK 21 下 `assembleDebug assembleDistribution lintDebug` 成功。Lint 为 0 错误、18 警告、2 信息；已有默认区域格式、私有 Xposed 反射、即时模式无超时 CPU 锁等警告仍保留。当前 D8 对 API 36 的兼容警告也仍存在，本轮未扩展修改工具链。
-- 交付 APK：`F:/QW《流转》 - 副本/AndroidApp/Liuzhuan-M34-signed.apk`。
+- 交付 APK：`AndroidApp/Liuzhuan-M34-signed.apk`。
 - 生成时间：**2026-10-11 11:37:58（Asia/Shanghai）**；大小：20,859,206 字节。
 - SHA-256：`E42564206AB3360140241C38A6F34BEFE5D7DC4A89B75C96076FB6DF0208561C`。
 - 安装包与编译输出逐字节摘要一致。不可调试、包名、versionName 1.8.2 / versionCode 7、minSdk / targetSdk 36、ClipReceiver action、Xposed 入口和最终 connectedDevice 类型已检查。APK v2 签名验证成功，与 M33 签名证书一致；未改签名配置。

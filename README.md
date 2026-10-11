@@ -10,20 +10,20 @@
 
 **全程不经过任何云端服务器**，数据只在你自己的局域网里流动。
 
-## 最新下载：v1.8.1
+## 最新下载：v1.8.4
 
-[发布说明](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.1) · [安卓 v1.8.1 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-android.apk) · [电脑 v1.8.0 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.0-windows-x64.zip) · [SHA-256 校验文件](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-SHA256SUMS.txt)
+[发布说明](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.4) · [安卓 v1.8.4 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-android.apk) · [电脑 v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 校验文件](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-SHA256SUMS.txt)
 
-本次 Release 包含安卓启动修复，以及此前本地完成的批量整理、分组标签、常用筛选、来源修复、隐私控制、图片处理和发送回执。电脑端版本保持 v1.8.0，两端兼容。升级电脑端时先退出流转，替换 `app` 目录，保留同级 `data` 目录；程序 ZIP 不含个人配置和素材。
+本次 Release 包含安卓功耗与性能优化、统一接收目录和直接打开保存位置，以及两端收发界面和暂停/取消控制。两端尚不支持真正断点续传；均衡省电为可选设置，默认关闭。电脑端升级先退出流转、替换整个 `app`，保留同级 `data`；程序 ZIP 不含个人配置和素材。详见[双语发布说明](docs/releases/v1.8.4.md)。
 
-## 收发体验更新：Android v1.8.4 / PC v1.8.1（本地版本）
+## 收发体验更新：Android v1.8.4 / PC v1.8.1
 
 - 安卓「收发」改为全屏，增加全部/进行中/已结束筛选；电脑收发窗口扩大为 840 × 680，并可调整大小。
 - 安卓新接收的图片、视频、音频和其他文件统一保存到**内部存储 / Download / Liuzhuan**。「打开接收目录」直接调用系统文件管理器浏览该位置，不弹出目录选择或授权界面；可自选支持目录浏览的管理器，保存位置始终固定。目录首次接收文件时创建，旧文件保留原位置，旧任务仍能打开原保存位置。电脑默认使用资源管理器，可自选 EXE 与 `{folder}` 参数模板；此程序路径仅保存在当前电脑，不随迁移包复制。
 - 文件任务增加暂停、继续和取消。安卓暂停关闭 I/O 并保留任务来源，继续**从头重传**；电脑暂停仅保留当前 HTTP 连接，最多 90 秒，断线或超时需要发送端重传。**尚不支持真正的断点续传，也不能跨进程恢复任务。** 已提交文字和文件登记处理阶段无法撤回。
-- 覆盖安装后，到无障碍设置关闭→重新开启流转服务。本轮 ADB 无设备，安卓目录定位与第三方文件管理器兼容性仍需实机确认；不支持时会提示更换应用，不回退到目录选择器。详情见 [收发交付记录](docs/performance/TRANSFER_CONTROLS_2026-10-11.md)与 [M36 接收目录修订](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md)。公开下载仍为 v1.8.1。
+- 覆盖安装后，到无障碍设置关闭→重新开启流转服务。本轮 ADB 无设备，安卓目录定位与第三方文件管理器兼容性仍需实机确认；不支持时会提示更换应用，不回退到目录选择器。详情见 [收发交付记录](docs/performance/TRANSFER_CONTROLS_2026-10-11.md)与 [M36 接收目录修订](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md)。已包含在 v1.8.4 Release。
 
-## Android v1.8.2：性能与功耗优化（本地版本）
+## Android v1.8.2 起：性能与功耗优化
 
 - 连接页「自动同步」新增 **均衡省电**：默认关闭，保持即时同步；开启后空闲时允许休眠，任务期间临时保活，锁屏到达可能稍慢。
 - 修复重连退避计数重置和保活锁重复获取；无局域网路径时等待网络恢复，不要求外网可用。连接由进程持有，页面重建不再重复建连。

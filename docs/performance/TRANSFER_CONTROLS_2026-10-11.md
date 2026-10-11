@@ -43,8 +43,8 @@ Android M36 / v1.8.4 已将所有新接收文件改为固定 `Download/Liuzhuan`
 
 | 文件 | 生成时间（Asia/Shanghai） |
 | --- | --- |
-| `F:/QW《流转》 - 副本/AndroidApp/Liuzhuan-M35-signed.apk` | 2026-10-11 12:02:59 |
-| `F:/QW《流转》 - 副本/app/Liuzhuan.exe` | 2026-10-11 12:06:22 |
+| `AndroidApp/Liuzhuan-M35-signed.apk` | 2026-10-11 12:02:59 |
+| `app/Liuzhuan.exe` | 2026-10-11 12:06:22 |
 
 APK 大小 20,908,498 字节，SHA-256 `CD9B971E99F6205D7E12CFE9D466279817A0962CC98589A4DD70479D3ABC5825`；与 Distribution 输出摘要一致，APK v2 签名验证成功，证书与 M34 一致；不可调试标记、包名、版本、ClipReceiver action 与 Xposed 入口检查通过。电脑 app 为完整 self-contained win-x64 发布目录，EXE 需要同目录依赖，不是单文件包。旧 APK 与原 app 备份保留。
 

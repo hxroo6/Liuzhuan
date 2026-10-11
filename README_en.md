@@ -10,20 +10,20 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
-## Latest download: v1.8.1
+## Latest download: v1.8.4
 
-[Release notes](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.1) · [Android v1.8.1 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-android.apk) · [PC v1.8.0 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.0-windows-x64.zip) · [SHA-256 checksums](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.1/Liuzhuan-v1.8.1-SHA256SUMS.txt)
+[Release notes](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.4) · [Android v1.8.4 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-android.apk) · [PC v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 checksums](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-SHA256SUMS.txt)
 
-This release includes the Android startup fix and previously local improvements: batch organization/export, groups and tags, saved filters, source repair, clipboard privacy, image processing, and delivery receipts. The PC remains at v1.8.0 and is compatible with Android v1.8.1. To upgrade the PC, exit Liuzhuan, replace the `app` folder, and keep the adjacent `data` folder. The program ZIP contains no personal settings or materials.
+This release adds Android performance and power improvements, a unified receive folder with direct file-manager navigation, and transfer UI plus pause/cancel controls on both devices. Byte-offset resume remains unsupported. Balanced mode is optional and off by default. Exit the desktop app before replacing the entire `app` directory; preserve the adjacent `data` folder. The ZIP excludes personal settings and materials. See the [bilingual release notes](docs/releases/v1.8.4.md).
 
-## Transfer experience: Android v1.8.4 / PC v1.8.1 (local builds)
+## Transfer experience: Android v1.8.4 / PC v1.8.1
 
 - Android transfer tasks now use a full-screen view with status filters. The desktop transfer window is enlarged to 840 × 680 and remains resizable.
 - All new Android downloads, including images, videos and audio, go to **Internal storage / Download / Liuzhuan**. "Open receive folder" opens that location in a system file manager, without a folder-selection or permission picker. You can configure a compatible directory browser; the save location stays fixed. The folder is created on the first download. Existing files stay in their original locations, which remain accessible from their task records. Windows defaults to Explorer and supports a custom EXE with a `{folder}` argument template. The executable preference stays on the current PC and is excluded from migration packages.
 - File tasks offer pause, continue and cancel. Android pause closes I/O and retains the task source; continuing **restarts the entire transfer**. Desktop pause retains the current HTTP connection for up to 90 seconds; connection loss requires retrying from the sender. **Byte-offset resume and task recovery across process restarts are not supported.** Submitted text and file registration cannot be recalled.
-- Toggle accessibility off and back on after APK replacement. No Android device is currently attached, so directory navigation and third-party file manager compatibility still require device validation. Unsupported browsers show a message instead of falling back to a folder picker. See the [delivery record](docs/performance/TRANSFER_CONTROLS_2026-10-11.md) and [M36 directory correction](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md) (Chinese). Public downloads remain v1.8.1.
+- Toggle accessibility off and back on after APK replacement. No Android device is currently attached, so directory navigation and third-party file manager compatibility still require device validation. Unsupported browsers show a message instead of falling back to a folder picker. See the [delivery record](docs/performance/TRANSFER_CONTROLS_2026-10-11.md) and [M36 directory correction](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md) (Chinese). Included in the v1.8.4 release.
 
-## Android v1.8.2: performance and power improvements (local build)
+## Since Android v1.8.2: performance and power improvements
 
 Implementation details, 198 local regression checks and APK validation are recorded in the [optimization delivery report](docs/performance/ANDROID_POWER_OPTIMIZATION_2026-10-11.md) (Chinese).
 
