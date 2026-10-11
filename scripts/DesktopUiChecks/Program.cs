@@ -60,6 +60,7 @@ internal static class Program
         Liuzhuan.Utils.Logger.Init(output);
         var app = new OffscreenApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.Resources = ReadProductionResources();
+        if(args.Length>1 && args[1]=="--transfer-only") {TransferUiChecks.Run(output);return;}
         var window = new MainWindow(); // 离屏渲染，不启动服务，不访问用户素材库。
         var loadedHandler = typeof(MainWindow).GetMethod("Window_Loaded", BindingFlags.Instance | BindingFlags.NonPublic)!;
         window.Loaded -= (RoutedEventHandler)loadedHandler.CreateDelegate(typeof(RoutedEventHandler), window);

@@ -20,8 +20,8 @@ android {
         applicationId = "com.liuzhuan.app"
         minSdk = 36          // Android 16+（决策 #2）
         targetSdk = 36
-        versionCode = 7
-        versionName = "1.8.2"
+        versionCode = 8
+        versionName = "1.8.3"
     }
 
     signingConfigs {

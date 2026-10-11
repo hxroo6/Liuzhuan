@@ -1,9 +1,15 @@
-<Window x:Class="Liuzhuan.Views.TransferWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="收发任务" Width="520" Height="540" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" WindowStartupLocation="CenterOwner">
+<Window x:Class="Liuzhuan.Views.TransferWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="收发任务" Width="840" Height="680" MinWidth="620" MinHeight="460" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" WindowStartupLocation="CenterOwner">
+    <Window.Resources><Style x:Key="TransferButtonStyle" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}"><Setter Property="Padding" Value="14,8"/><Setter Property="MinHeight" Value="36"/><Setter Property="FontSize" Value="13"/></Style></Window.Resources>
     <DockPanel Margin="20" Background="{StaticResource PanelBrush}">
         <StackPanel DockPanel.Dock="Top" Margin="0,0,0,14">
             <TextBlock Text="收发任务" FontSize="22" FontWeight="SemiBold"/>
             <TextBlock Text="本次运行记录 · 失败后请在发送端重试" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,0"/>
             <TextBlock Text="已发送表示电脑已写出文件；手机保存结果请在手机查看。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" FontSize="11" Margin="0,6,0,0"/>
+            <TextBlock Text="暂停仅保留当前连接，最多 90 秒；连接超时后请在发送端重传，暂不支持断点续传。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="0,6,0,0"/>
+            <StackPanel Orientation="Horizontal" Margin="0,14,0,0">
+                <Button Content="打开接收目录" Style="{StaticResource TransferButtonStyle}" Click="OpenReceived_Click" Margin="0,0,10,0"/>
+                <Button Content="文件管理器设置" Style="{StaticResource TransferButtonStyle}" Click="Manager_Click"/>
+            </StackPanel>
         </StackPanel>
         <Grid>
             <TextBlock Text="暂无收发任务，传输文件后会显示在这里。" HorizontalAlignment="Center" VerticalAlignment="Center">
@@ -19,6 +25,18 @@
                             </TextBlock>
                             <ProgressBar Minimum="0" Maximum="{Binding Total}" Value="{Binding Done}" Foreground="{StaticResource AccentBrush}" Background="{StaticResource PanelBrush}" BorderThickness="0" Height="4" Margin="0,8,0,0"/>
                             <TextBlock Text="{Binding Detail}" Foreground="{StaticResource TextDimBrush}" Margin="0,7,0,0" TextWrapping="Wrap" FontSize="11"/>
+                            <TextBlock Text="{Binding SavedPath}" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="0,7,0,0"/>
+                            <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                                <Button Content="{Binding PauseLabel}" Tag="{Binding Id}" Click="Pause_Click" Margin="0,0,8,0">
+                                    <Button.Style><Style TargetType="Button" BasedOn="{StaticResource TransferButtonStyle}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding CanControl}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                </Button>
+                                <Button Content="取消" Tag="{Binding Id}" Click="Cancel_Click" Margin="0,0,8,0">
+                                    <Button.Style><Style TargetType="Button" BasedOn="{StaticResource TransferButtonStyle}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding CanControl}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                </Button>
+                                <Button Content="打开保存位置" Tag="{Binding SavedPath}" Click="OpenSaved_Click">
+                                    <Button.Style><Style TargetType="Button" BasedOn="{StaticResource TransferButtonStyle}"><Setter Property="Visibility" Value="Collapsed"/><Style.Triggers><DataTrigger Binding="{Binding CanOpenFolder}" Value="True"><Setter Property="Visibility" Value="Visible"/></DataTrigger></Style.Triggers></Style></Button.Style>
+                                </Button>
+                            </StackPanel>
                         </StackPanel>
                     </Border>
                 </DataTemplate></ListBox.ItemTemplate>

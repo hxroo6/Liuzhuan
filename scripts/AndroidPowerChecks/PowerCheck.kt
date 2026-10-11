@@ -143,7 +143,37 @@ fun main() = runBlocking {
         verify(requestEntered.await(3,TimeUnit.SECONDS), "real HTTP body starts before cancellation")
         TransferTasks.cancel(id)
         eventually { !TransferTasks.running(id) && TransferWork.active.value==0 }
-        verify(cleaned && TransferTasks.tasks.value.first().failed, "cancel interrupts a blocked HTTP body and waits for cleanup before releasing its slot")
+        verify(cleaned && TransferTasks.tasks.value.first().cancelled && !TransferTasks.tasks.value.first().failed, "cancel interrupts a blocked HTTP body and reports cancellation after cleanup")
     } finally { releaseServer.countDown(); server.stop(0) }
+    val pauseGate=CompletableDeferred<Unit>()
+    var pauseDiscarded=0
+    var resumed=0
+    fun startPausedTask() {
+        TransferTasks.start("pause file","upload","pause-control",discard={pauseDiscarded++},cancel={TransferWork.cancel("pause-control")},retry={resumed++;startPausedTask()})
+        TransferWork.launch("pause-control") {pauseGate.await();TransferTasks.finish("pause-control",true,"stored")}
+    }
+    startPausedTask()
+    eventually {TransferWork.active.value==1}
+    TransferTasks.pause("pause-control")
+    eventually {TransferWork.active.value==0 && !TransferTasks.running("pause-control")}
+    verify(TransferTasks.tasks.value.first().paused && !TransferTasks.tasks.value.first().failed && pauseDiscarded==0,"pause releases its slot and retains retry source without reporting failure")
+    TransferTasks.progress("pause-control",99,100)
+    verify(TransferTasks.tasks.value.first().done==0L,"late progress cannot overwrite paused task state")
+    TransferTasks.resume("pause-control")
+    eventually {TransferWork.active.value==1}
+    TransferTasks.resume("pause-control")
+    verify(resumed==1 && !TransferTasks.tasks.value.first().paused,"continue starts one full retry; duplicate continue cannot create another transfer")
+    TransferTasks.pause("pause-control")
+    eventually {TransferWork.active.value==0 && !TransferTasks.running("pause-control")}
+    TransferTasks.cancel("pause-control")
+    verify(TransferTasks.tasks.value.first().cancelled && !TransferTasks.canRetry("pause-control") && pauseDiscarded==1,"canceling paused work releases cache and removes continue action")
+    TransferTasks.resume("pause-control")
+    verify(resumed==1,"a canceled task cannot be resumed accidentally")
+    TransferTasks.start("completion race","upload","completion-race",discard={pauseDiscarded++},cancel={},retry={})
+    TransferTasks.pause("completion-race")
+    TransferTasks.finish("completion-race",true,"stored")
+    verify(!TransferTasks.tasks.value.first().paused && TransferTasks.tasks.value.first().state=="stored","actual confirmed completion wins a concurrent pause request")
+    TransferTasks.savedTo("completion-race","Pictures/Liuzhuan")
+    verify(TransferTasks.tasks.value.first().savedFolder=="Pictures/Liuzhuan","saved directory remains attached to the completed task")
     println("All $checks Android power and transfer checks passed.")
 }

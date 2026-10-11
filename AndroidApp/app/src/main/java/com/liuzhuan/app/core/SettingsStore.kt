@@ -21,6 +21,7 @@ class SettingsStore(context: Context) {
         private val KEY_DEVICE_NAME = stringPreferencesKey("device_name")
         private val KEY_AUTO_SEND = booleanPreferencesKey("auto_send_clipboard")
         private val KEY_BALANCED_POWER = booleanPreferencesKey("balanced_power")
+        private val KEY_FILE_MANAGER = stringPreferencesKey("receive_file_manager")
     }
 
     data class Settings(
@@ -29,7 +30,8 @@ class SettingsStore(context: Context) {
         val password: String = "",
         val deviceName: String = android.os.Build.MODEL,
         val autoSendClipboard: Boolean = true,
-        val balancedPower: Boolean = false
+        val balancedPower: Boolean = false,
+        val fileManagerPackage: String = ""
     )
 
     val settings: Flow<Settings> = context.settingsDataStore.data.map { prefs ->
@@ -39,7 +41,8 @@ class SettingsStore(context: Context) {
             password = prefs[KEY_PASSWORD] ?: "",
             deviceName = prefs[KEY_DEVICE_NAME] ?: android.os.Build.MODEL,
             autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true,
-            balancedPower = prefs[KEY_BALANCED_POWER] ?: false
+            balancedPower = prefs[KEY_BALANCED_POWER] ?: false,
+            fileManagerPackage = prefs[KEY_FILE_MANAGER] ?: ""
         )
     }
 
@@ -52,5 +55,10 @@ class SettingsStore(context: Context) {
             prefs[KEY_AUTO_SEND] = s.autoSendClipboard
             prefs[KEY_BALANCED_POWER] = s.balancedPower
         }
+    }
+
+    // 专用写入避免连接设置的旧页面快照覆盖文件管理器偏好。
+    suspend fun saveFileManager(packageName: String) {
+        context.settingsDataStore.edit { it[KEY_FILE_MANAGER] = packageName }
     }
 }

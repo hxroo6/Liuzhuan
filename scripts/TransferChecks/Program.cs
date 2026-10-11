@@ -44,6 +44,48 @@ static class Program
         Check(width<=256,"thumbnail bounded width");
         var download=await http.GetByteArrayAsync($"/file/photo?auth={auth}");Check(download.SequenceEqual(bytes),"download exact bytes");
         Check(TransferJournal.Entries.Any(x=>x.State=="失败") && TransferJournal.Entries.Any(x=>x.State=="已接收") && TransferJournal.Entries.Any(x=>x.State=="已发送"),"task journal receives failure and completion");
+        Check(TransferJournal.Entries.Any(x=>x.State=="已接收" && x.SavedPath==uploaded && x.CanOpenFolder),"received task exposes its actual saved path");
+        var launch=FolderLauncher.CreateStartInfo(new("custom.exe","/O /T /L={folder} \"fixed option\""),"F:\\素材 文件夹\\");
+        Check(launch.ArgumentList.SequenceEqual(new[]{"/O","/T","/L=F:\\素材 文件夹\\","fixed option"}) && !launch.UseShellExecute,"custom manager receives directory as one safe argument, including spaces and trailing slash");
+        bool rejected=false;try {FolderLauncher.BuildArguments("/O","sample");}catch(ArgumentException){rejected=true;}
+        Check(rejected,"manager template without directory placeholder is rejected");
+        using(var control=new TransferControl(()=>{},()=>{})) {
+            control.TogglePause();var waiting=control.WaitAsync();await Task.Delay(30);
+            Check(!waiting.IsCompleted,"desktop pause blocks the next I/O boundary");
+            control.TogglePause();await waiting.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(!control.IsPaused,"desktop continue opens the same connection gate");
+            control.TogglePause();waiting=control.WaitAsync();control.Cancel();
+            try{await waiting;throw new Exception("cancellation not observed");}catch(OperationCanceledException){}
+            Check(control.IsCancelled,"desktop cancel interrupts a paused gate");
+        }
+        using(var socket=new TcpClient()) {
+            await socket.ConnectAsync(IPAddress.Loopback,port);var stream=socket.GetStream();
+            await stream.WriteAsync(Encoding.ASCII.GetBytes($"POST /upload?name=controlled.bin&auth={auth} HTTP/1.1\r\nContent-Length: 100000\r\n\r\na"));
+            async Task<TransferEntry> AwaitEntry(Func<TransferEntry,bool> predicate) {
+                using var deadline=new CancellationTokenSource(5000);
+                while(true) {var entry=TransferJournal.Entries.FirstOrDefault(x=>x.Name=="controlled.bin" && predicate(x));if(entry!=null)return entry;await Task.Delay(10,deadline.Token);}
+            }
+            var active=await AwaitEntry(x=>x.CanControl);TransferJournal.TogglePause(active.Id);
+            await stream.WriteAsync(new byte[]{2});var paused=await AwaitEntry(x=>x.IsPaused);
+            Check(paused.PauseLabel=="继续" && paused.State=="已暂停","real HTTP upload publishes paused controls");
+            TransferJournal.TogglePause(active.Id);await stream.WriteAsync(new byte[]{3});await AwaitEntry(x=>!x.IsPaused && x.CanControl);
+            TransferJournal.Cancel(active.Id);await AwaitEntry(x=>x.State=="已取消" && !x.CanControl);
+            Check(uploads==1 && !Directory.GetFiles(Path.Combine(output,"uploads"),"*.part").Any(),"desktop cancel closes actual upload and removes incomplete source before registration");
+        }
+        using(var control=new TransferControl(()=>{},()=>{},pauseTimeout:TimeSpan.FromMilliseconds(20))) {
+            control.TogglePause();bool expired=false;try{await control.WaitAsync();}catch(TimeoutException){expired=true;}
+            Check(expired,"paused connection has a finite lease instead of retaining dead sockets indefinitely");
+        }
+        var leaseClosed=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        using(var control=new TransferControl(()=>leaseClosed.TrySetResult(true),()=>{},pauseTimeout:TimeSpan.FromMilliseconds(20))) {
+            control.TogglePause();await leaseClosed.Task.WaitAsync(TimeSpan.FromSeconds(2));
+            Check(control.IsPauseExpired && control.Token.IsCancellationRequested,"pause expiry closes even the current blocked I/O instead of waiting for its next boundary");
+        }
+        using(var lifetime=new CancellationTokenSource()) using(var control=new TransferControl(()=>{},()=>{},lifetime.Token)) {
+            control.TogglePause();var waiting=control.WaitAsync();lifetime.Cancel();
+            bool stopped=false;try{await waiting;}catch(OperationCanceledException){stopped=true;}
+            Check(stopped,"stopping LAN service also cancels a paused transfer gate");
+        }
         var hub=new WsHub();int wsPort=FreePort(); bool stored=false;hub.TextReceived+=(_,_)=>stored=true;hub.Start(wsPort,auth);
         try
         {

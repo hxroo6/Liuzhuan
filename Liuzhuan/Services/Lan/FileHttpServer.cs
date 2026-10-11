@@ -57,11 +57,11 @@ public class FileHttpServer : IDisposable
             TcpClient client;
             try { client = await listener.AcceptTcpClientAsync(ct); }
             catch { break; }
-            _ = Task.Run(() => HandleClient(client));
+            _ = Task.Run(() => HandleClient(client,ct));
         }
     }
 
-    private async Task HandleClient(TcpClient client)
+    private async Task HandleClient(TcpClient client,CancellationToken lifetime)
     {
         try
         {
@@ -87,7 +87,7 @@ public class FileHttpServer : IDisposable
 
             if (parts[0] == "POST" && pathAndQuery.StartsWith("upload", StringComparison.OrdinalIgnoreCase))
             {
-                await HandleUpload(stream, query, pathAndQuery);
+                await HandleUpload(stream, query, pathAndQuery,lifetime);
                 return;
             }
 
@@ -153,7 +153,7 @@ public class FileHttpServer : IDisposable
             await stream.WriteAsync(headerBytes);
             await using (var fs = File.OpenRead(item.FilePath))
             {
-                await CopyTracked(fs, stream, fileLen, Guid.NewGuid().ToString("N"), item.DisplayName, "电脑 → 手机", "已发送");
+                await CopyTracked(fs, stream, fileLen, Guid.NewGuid().ToString("N"), item.DisplayName, "电脑 → 手机", "已发送",lifetime);
             }
             Logger.Run("FileHttpServer: served {0} ({1} bytes)", item.DisplayName, fileLen);
         }
@@ -168,7 +168,7 @@ public class FileHttpServer : IDisposable
     }
 
     /// <summary>处理手机上传：POST /upload?name=文件名&auth=口令哈希 → 存 data/uploads/ → 触发 FileUploaded</summary>
-    private async Task HandleUpload(NetworkStream stream, string query, string fullPath)
+    private async Task HandleUpload(NetworkStream stream, string query, string fullPath,CancellationToken lifetime)
     {
         // 上传鉴权：URL 必须带 auth=口令哈希（与 WS 握手一致）
         var auth = ParseQueryValue(query, "auth");
@@ -210,16 +210,16 @@ public class FileHttpServer : IDisposable
         {
             using (var fs = File.Create(partial))
             {
-                await CopyTracked(stream, fs, length, transferId, name, "手机 → 电脑", "处理中");
+                await CopyTracked(stream, fs, length, transferId, name, "手机 → 电脑", "处理中",lifetime);
             }
             File.Move(partial, savePath);
             FileUploaded?.Invoke(savePath, name);
-            TransferJournal.Report(new(transferId,name,"手机 → 电脑",length,length,"已接收","",0));
+            TransferJournal.Report(new(transferId,name,"手机 → 电脑",length,length,"已接收","",0,savePath));
         }
         catch (Exception ex)
         {
             if (File.Exists(partial)) File.Delete(partial);
-            TransferJournal.Report(new(transferId,name,"手机 → 电脑",0,length,"失败",ex.Message,0));
+            TransferJournal.Report(new(transferId,name,"手机 → 电脑",0,length,ex is OperationCanceledException?"已取消":"失败",ex is OperationCanceledException?"":ex.Message,0));
             await WriteSimpleAsync(stream,400,"Incomplete or Failed Upload");
             return;
         }
@@ -231,26 +231,35 @@ public class FileHttpServer : IDisposable
         await stream.WriteAsync(Encoding.ASCII.GetBytes(resp));
     }
 
-    private static async Task CopyTracked(Stream input, Stream output, long total, string id, string name, string direction, string finalState)
+    private static async Task CopyTracked(Stream input, Stream output, long total, string id, string name, string direction, string finalState,CancellationToken lifetime)
     {
         var clock = System.Diagnostics.Stopwatch.StartNew();
         long done = 0, lastReport = -200;
         var buffer = new byte[65536];
+        var remote=direction=="手机 → 电脑"?input:output;
+        using var control=TransferJournal.RegisterControl(id,remote.Dispose,lifetime);
         void Report(string state, string error = "") => TransferJournal.Report(new(id,name,direction,done,total,state,error,done / Math.Max(0.01,clock.Elapsed.TotalSeconds)));
         Report("传输中");
         try
         {
             while (done < total)
             {
-                int n = await input.ReadAsync(buffer.AsMemory(0,(int)Math.Min(buffer.Length,total-done))).AsTask().WaitAsync(TimeSpan.FromSeconds(120));
+                await control.WaitAsync();
+                int n = await input.ReadAsync(buffer.AsMemory(0,(int)Math.Min(buffer.Length,total-done)),control.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(120),control.Token);
                 if (n == 0) throw new EndOfStreamException($"文件未收完整：{done}/{total} 字节");
-                await output.WriteAsync(buffer.AsMemory(0,n)).AsTask().WaitAsync(TimeSpan.FromSeconds(120));
+                await control.WaitAsync();
+                await output.WriteAsync(buffer.AsMemory(0,n),control.Token).AsTask().WaitAsync(TimeSpan.FromSeconds(120),control.Token);
                 done += n;
                 if (clock.ElapsedMilliseconds-lastReport>=200) { Report("传输中");lastReport=clock.ElapsedMilliseconds; }
             }
             Report(finalState);
         }
-        catch(Exception ex) { Report("失败",ex.Message);throw; }
+        catch(Exception ex) {
+            if(control.IsCancelled) { Report(direction=="手机 → 电脑"?"正在取消…":"已取消");throw new OperationCanceledException("传输已取消",ex); }
+            if(ex is TimeoutException || control.IsPauseExpired) {const string message="暂停过久或连接超时，请在发送端重新传输";Report("失败",message);throw new TimeoutException(message,ex);}
+            Report("失败",ex.Message);throw;
+        }
+        finally { TransferJournal.EndControl(id); }
     }
 
     private static async Task<string?> ReadLineAsync(NetworkStream stream, int maxLen)

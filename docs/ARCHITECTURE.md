@@ -65,7 +65,7 @@
 - **`ClipboardMonitorCoordinator`**：object 进程级单例，唯一装配点。持有 deduplicator/queue/pipeline/captureManager + appInForeground(ActivityLifecycleCallbacks) + diagnostic/diagnosticHistory(StateFlow)。`init(context)` 幂等双检锁，被两处调用：
   - `ClipMonitorService.onCreate`（无障碍已启用时）
   - `MainActivity.onCreate`（无障碍未启用时前台测试可用）
-- **`MainActivity.onCreate`**：创建 `LanClient`（7 个回调全部内联注册）存入 `LanHub.client`；注册 `MaterialRepository.onSequenceGap → client.requestSnapshot`。onState 回调里管理前台服务启停（Connected→startForegroundService+`Coordinator.onWsConnected()` 唤醒回执发送器；AuthFailed/Paused→stopService；**Disconnected 不停**）。Activity 重建会先 disconnect 旧 client 再新建（launchMode=singleTask 缓解频率）。
+- **`MainActivity.onCreate`**：调用幂等 `LanController.init(applicationContext)`，连接、7 个回调、网络监听及 `MaterialRepository.onSequenceGap → client.requestSnapshot` 由进程控制器持有。控制器管理前台服务启停（Connected→startForegroundService+`Coordinator.onWsConnected()` 唤醒回执发送器；AuthFailed/Paused→stopService；**Disconnected 不停**）。Activity 重建只重新订阅状态。
 - **ON_RESUME 兜底**：接收页 Compose `DisposableEffect` 生命周期观察里刷新三态无障碍状态 + `captureManager.captureOnForeground()` 直接读剪贴板走同一 Dispatcher。
 - **直连路径（不经 Dispatcher/Pipeline）**：
   - `ProcessTextActivity`（ACTION_PROCESS_TEXT 选中文本直达）：pushClipboard 直发 + 写剪贴板 + markLocalText；
@@ -74,7 +74,7 @@
 ### 2.3 连接层 `LanClient`
 
 - 状态机：`Idle → Connecting → Connected / AuthFailed`；意外断开（onClosed/onFailure 且非 manuallyClosed）设 `Disconnected` 并指数退避重连 1s→30s 上限；主动 `disconnect()` 设 `Paused` 不重连（与 Disconnected 的语义区分是 M11 保活修复的关键）。
-- 回调七参数：onState/onLog/onListData/onItemAdded/onItemDeleted/onItemCleared/onItemData，全部由 MainActivity 内联提供。
+- 回调七参数：onState/onLog/onListData/onItemAdded/onItemDeleted/onItemCleared/onItemData，全部由进程级 LanController 提供。
 - 防护细节：`webSocket !== ws` 早退防旧连接回调触发重连死循环；connect/disconnect/doConnect 前都关闭旧 WS；心跳由共享 OkHttp 客户端 pingInterval 30s 维持（应用层 heartbeat 仅兼容解析，无周期发送）；失败计数跨任务保留，退避上限 30s；无局域网路径时等待网络回调，恢复即重试。
 - 构造参数默认 `CoroutineScope(SupervisorJob() + Dispatchers.IO)`——进程级。
 
@@ -119,6 +119,14 @@
 - DesktopUiChecks 采用无业务启动的 Application 和真实资源字典、MainWindow，推动 Dispatcher 检查连续反向/快速三连、关闭动画同步落地、窄条布局与绑定更新；离屏截图不能证明真实帧率、多屏 DPI 或手机触控效果，仍需设备验收。
 
 ### 收发任务与快捷预览（M27，2026-09-12）
+
+#### M35 收发控制与保存位置（2026-10-11）
+
+- Android `TransferTaskDialog` 使用全屏 Dialog、任务状态筛选；成功写入 MediaStore 并清除 IS_PENDING 后，将实际相对目录记入任务，支持逐项打开与四类接收目录入口。`ReceivedFiles` 通过目录 ACTION_VIEW / ACTION_OPEN_DOCUMENT_TREE 和 EXTRA_INITIAL_URI 调用系统或指定管理器，仅查询目录处理应用，不获取额外存储授权。
+- Android 文件暂停取消当前 I/O，保留来源与重试回调，清理结束后显示暂停；继续沿原回调从头传输，取消释放缓存并移除继续入口。进程级 TransferWork 的旧任务清理/同 ID 重试等待机制保留，已提交文字不可撤回。
+- PC `TransferWindow` 为 840 × 680 的可调整窗口；`TransferControl` 在每次读写边界等待异步门闩，暂停当前连接最多 90 秒；取消中断读写/门闩并关闭远端流，上传部分文件删除后才显示已取消。停止 LAN 也取消门闩。HTTP / WS 字段与旧端点不变，不支持跨断线字节续传。
+- PC 完成接收条目保存原始上传路径；`FolderLauncher` 通过 ArgumentList 调用系统 Explorer 或用户指定 EXE，参数模板按引号拆分后替换 `{folder}`，不经 shell。当前电脑偏好保存为 `data/file-browser.json`，不把可执行程序路径迁移到新电脑。
+- 两端任务记录仍限本次运行；暂停记录视为未结束，和活跃记录一样不被历史淘汰。超过保留数量时只淘汰普通结束记录。断点续传需另加文件身份、分块/Range 与偏移校验，当前暂停不冒充此能力。
 
 - PC 底部「收发」打开 `Views/TransferWindow`，由进程内 `TransferJournal` 汇总文件上传/下载与接收文字。Android 顶部「收发」打开 `TransferTaskDialog`，`TransferTasks` 跟踪文件和 `sendText` 手动/分享文字。两端最多保留 40 条最近记录，超额时仅淘汰已结束任务；重启清空。
 - Android 失败任务支持手动重试，重新完整传输，不做断点续传。上传确认丢失时不能判断电脑是否已登记，因此提示先检查电脑，避免重复。分享 URI 权限过期需要重新选择文件；下载重试沿用该次地址，换电脑或改口令后请重新获取素材。

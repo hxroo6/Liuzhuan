@@ -252,6 +252,9 @@ fun MainScreen(
                 if (ok) {
                     uploadStatus = "✅ $msg 已上传到电脑"
                     toast(context, "✅ 已上传到电脑")
+                } else if(msg.startsWith("已暂停") || msg.startsWith("已取消")) {
+                    uploadStatus=msg
+                    toast(context,msg)
                 } else {
                     uploadStatus = "❌ 上传失败：$msg"
                     toast(context, "❌ 上传失败: $msg")
@@ -949,7 +952,8 @@ private fun uploadFileStreaming(
             }
         } catch (ex: Exception) {
             if (ex is CancellationException) {
-                android.os.Handler(android.os.Looper.getMainLooper()).post { onResult(false, "已取消") }
+                val stopped=if(TransferTasks.tasks.value.firstOrNull {it.id==taskId}?.paused==true) "已暂停，可在收发任务中继续" else "已取消"
+                android.os.Handler(android.os.Looper.getMainLooper()).post { onResult(false, stopped) }
                 throw ex
             }
             TransferTasks.finish(taskId,false,"${ex.message ?: "传输失败"}；重试前请检查电脑是否已收到")
@@ -1013,6 +1017,7 @@ private suspend fun downloadToMediaStore(context: Context, url: String, fileName
                 }
             } ?: throw Exception("无法写入文件")
             if(resolver.update(uri,ContentValues().apply {put(MediaStore.MediaColumns.IS_PENDING,0)},null,null)<=0) throw Exception("无法完成文件保存")
+            TransferTasks.savedTo(taskId,"$folder/Liuzhuan")
         } catch(ex:Exception) { resolver.delete(uri,null,null);throw ex }
     }
     }
