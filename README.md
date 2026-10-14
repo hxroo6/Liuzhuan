@@ -10,31 +10,31 @@
 
 **全程不经过任何云端服务器**，数据只在你自己的局域网里流动。
 
-## 最新下载：v1.8.4
+## 最新下载：v1.8.6
 
-[发布说明](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.4) · [安卓 v1.8.4 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-android.apk) · [电脑 v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 校验文件](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-SHA256SUMS.txt)
+[发布说明](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.6) · [安卓 v1.8.6 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.6-android.apk) · [电脑 v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 校验文件](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.6-SHA256SUMS.txt)
 
-本次 Release 包含安卓功耗与性能优化、统一接收目录和直接打开保存位置，以及两端收发界面和暂停/取消控制。两端尚不支持真正断点续传；均衡省电为可选设置，默认关闭。电脑端升级先退出流转、替换整个 `app`，保留同级 `data`；程序 ZIP 不含个人配置和素材。详见[双语发布说明](docs/releases/v1.8.4.md)。
+本次 Release 修复电脑连接手机热点后安卓仍等待局域网的问题，新增成功连接历史、点选重连与历史口令本机加密。电脑端沿用 v1.8.1，兼容当前安卓。此前功耗优化、统一接收目录及两端收发控制均保留；尚不支持真正断点续传，移动数据远程同步暂缓。电脑端升级先退出流转、替换整个 `app`，保留同级 `data`；程序 ZIP 不含个人配置和素材。详见[双语发布说明](docs/releases/v1.8.6.md)。
 
-## 历史连接：Android v1.8.6（本地版本）
+## 历史连接：Android v1.8.6
 
 - 安卓连接页新增「历史连接」，只记录成功鉴权的地址，最多保留 20 个，按最近连接排序。同地址和端口再次连接会更新记录，不重复增加。
 - 点选历史地址即可重连或切换电脑，支持逐条删除、确认后清空。历史口令使用本机 Android Keystore 密钥加密，不展示明文；删除历史不影响当前连接、现有素材或当前连接设置。
 - 连接地址随 Wi-Fi/热点变化，旧地址不可用时请重新扫码。换机或密钥失效时可能需要重新输入口令。包含 v1.8.5 热点修复；仍为局域网功能，尚未加入手机流量远程同步模式。
-- 验证与本地交付见 [M38 记录](docs/performance/CONNECTION_HISTORY_2026-10-14.md)。公开下载仍为 v1.8.4，覆盖安装后将无障碍服务关闭→重新开启。
+- 验证与交付见 [M38 记录](docs/performance/CONNECTION_HISTORY_2026-10-14.md)。已包含在 v1.8.6 Release，覆盖安装后将无障碍服务关闭→重新开启。历史保存、重启保留、点选重连和素材同步已实机通过；删除/清空交互未做实机验收。
 
-## 手机热点修复：Android v1.8.5（本地版本）
+## 手机热点修复：Android v1.8.5 起
 
 - 修复电脑已连接手机热点、扫码地址正确，安卓仍提示「等待局域网恢复」而不连接的问题；热点提供方与连接 Wi-Fi 的手机现在分别识别，保持事件驱动。
 - 电脑连接手机热点后，重新生成该 Wi-Fi 地址的二维码并扫描。大文件继续使用双向流式传输；不支持字节断点续传，暂停后继续仍从头传输。
-- 本地修复与验收见 [M37 记录](docs/performance/HOTSPOT_CONNECTION_2026-10-14.md)。公开下载仍为 v1.8.4，覆盖安装后请将无障碍服务关闭→重新开启。
+- 修复与验收见 [M37 记录](docs/performance/HOTSPOT_CONNECTION_2026-10-14.md)。已包含在 v1.8.6 Release，覆盖安装后请将无障碍服务关闭→重新开启。
 
 ## 收发体验更新：Android v1.8.4 / PC v1.8.1
 
 - 安卓「收发」改为全屏，增加全部/进行中/已结束筛选；电脑收发窗口扩大为 840 × 680，并可调整大小。
 - 安卓新接收的图片、视频、音频和其他文件统一保存到**内部存储 / Download / Liuzhuan**。「打开接收目录」直接调用系统文件管理器浏览该位置，不弹出目录选择或授权界面；可自选支持目录浏览的管理器，保存位置始终固定。目录首次接收文件时创建，旧文件保留原位置，旧任务仍能打开原保存位置。电脑默认使用资源管理器，可自选 EXE 与 `{folder}` 参数模板；此程序路径仅保存在当前电脑，不随迁移包复制。
 - 文件任务增加暂停、继续和取消。安卓暂停关闭 I/O 并保留任务来源，继续**从头重传**；电脑暂停仅保留当前 HTTP 连接，最多 90 秒，断线或超时需要发送端重传。**尚不支持真正的断点续传，也不能跨进程恢复任务。** 已提交文字和文件登记处理阶段无法撤回。
-- 覆盖安装后，到无障碍设置关闭→重新开启流转服务。本轮 ADB 无设备，安卓目录定位与第三方文件管理器兼容性仍需实机确认；不支持时会提示更换应用，不回退到目录选择器。详情见 [收发交付记录](docs/performance/TRANSFER_CONTROLS_2026-10-11.md)与 [M36 接收目录修订](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md)。已包含在 v1.8.4 Release。
+- 覆盖安装后，到无障碍设置关闭→重新开启流转服务。安卓目录定位与第三方文件管理器兼容性仍需专项实机确认；不支持时会提示更换应用，不回退到目录选择器。详情见 [收发交付记录](docs/performance/TRANSFER_CONTROLS_2026-10-11.md)与 [M36 接收目录修订](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md)。已包含在 v1.8.4 及后续 Release。
 
 ## Android v1.8.2 起：性能与功耗优化
 
@@ -43,7 +43,7 @@
 - 图片 Hook 使用有界后台工作和 512 KiB 硬读取上限，字节广播减少 Base64 开销；失败图片通过缓存文件重试。HTTP 客户端共享，文件传输最多 2 个活跃任务，任务面板支持取消。
 - 离屏缩略图及时取消，同一 URL 合并请求；进度先节流再更新，素材增量使用有序索引，不可见页面减少订阅。设置存储使用单例 DataStore。
 - 常驻服务按局域网外部设备连接声明 `connectedDevice`，补超时清理。后台发送、隐私排除、回执与防循环链路保留。
-- 本轮实机功耗与锁屏延迟尚未测量，不承诺具体省电比例。覆盖安装后到无障碍设置关闭→重新开启；重启 LSPosed 作用域内的来源 App，使新版图片 Hook 生效。公开下载仍为上方 v1.8.1。
+- 实机功耗与锁屏延迟尚未测量，不承诺具体省电比例。覆盖安装后到无障碍设置关闭→重新开启；重启 LSPosed 作用域内的来源 App，使新版图片 Hook 生效。已包含在当前公开下载。
 
 优化对应关系、198 项本地回归及安装包验证见 [优化交付记录](docs/performance/ANDROID_POWER_OPTIMIZATION_2026-10-11.md)。
 

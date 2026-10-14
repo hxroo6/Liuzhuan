@@ -10,31 +10,31 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 **No cloud servers involved.** All data flows only inside your own local network.
 
-## Latest download: v1.8.4
+## Latest download: v1.8.6
 
-[Release notes](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.4) · [Android v1.8.4 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-android.apk) · [PC v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 checksums](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.4/Liuzhuan-v1.8.4-SHA256SUMS.txt)
+[Release notes](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.6) · [Android v1.8.6 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.6-android.apk) · [PC v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 checksums](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.6-SHA256SUMS.txt)
 
-This release adds Android performance and power improvements, a unified receive folder with direct file-manager navigation, and transfer UI plus pause/cancel controls on both devices. Byte-offset resume remains unsupported. Balanced mode is optional and off by default. Exit the desktop app before replacing the entire `app` directory; preserve the adjacent `data` folder. The ZIP excludes personal settings and materials. See the [bilingual release notes](docs/releases/v1.8.4.md).
+This release fixes Android waiting for LAN connectivity while the PC is connected to the phone hotspot, and adds successful connection history, one-tap reconnection and locally encrypted historical credentials. PC v1.8.1 is unchanged and compatible. Earlier power, receive-folder and transfer controls remain included. Byte-offset resume is unsupported; remote synchronization over cellular data is deferred. Exit the desktop app before replacing the entire `app` directory; preserve the adjacent `data` folder. The ZIP excludes personal settings and materials. See the [bilingual release notes](docs/releases/v1.8.6.md).
 
-## Connection history: Android v1.8.6 (local build)
+## Connection history: Android v1.8.6
 
 - The Android connection page now remembers up to 20 successfully authenticated endpoints, newest first. Reconnecting to the same address and port updates its entry instead of duplicating it.
 - Select an entry to reconnect or switch PCs, delete individual entries, or confirm clearing history. Historical passwords are encrypted using a local Android Keystore key and never displayed. Removing history does not disconnect the active session, delete materials, or clear current connection settings.
 - Addresses can change between Wi-Fi and hotspot networks; scan a fresh QR code if an old address stops working. Device migration or key loss may require entering the password again. Includes the v1.8.5 hotspot fix; remote synchronization over cellular data has not been added.
-- See the [M38 verification record](docs/performance/CONNECTION_HISTORY_2026-10-14.md) (Chinese). Public downloads remain v1.8.4. Toggle accessibility off and back on after APK replacement.
+- See the [M38 verification record](docs/performance/CONNECTION_HISTORY_2026-10-14.md) (Chinese). Included in v1.8.6. Saving history, persistence after process restart, recalling a connection and material synchronization passed on the device. Delete/clear interactions have not received device acceptance. Toggle accessibility off and back on after APK replacement.
 
-## Phone hotspot fix: Android v1.8.5 (local build)
+## Phone hotspot fix: since Android v1.8.5
 
 - Fixes QR pairing being blocked by "waiting for LAN" when the PC is already connected to the phone's hotspot. Hotspot hosting and Wi-Fi client connections are tracked separately through callbacks.
 - Connect the PC to the phone hotspot, generate a fresh QR code for that Wi-Fi address, then scan it. Large files still use bidirectional streaming; byte-offset resume remains unsupported and Android continue restarts the transfer.
-- See the [M37 verification record](docs/performance/HOTSPOT_CONNECTION_2026-10-14.md) (Chinese). Public downloads remain v1.8.4. Toggle accessibility off and back on after APK replacement.
+- See the [M37 verification record](docs/performance/HOTSPOT_CONNECTION_2026-10-14.md) (Chinese). Included in v1.8.6. Toggle accessibility off and back on after APK replacement.
 
 ## Transfer experience: Android v1.8.4 / PC v1.8.1
 
 - Android transfer tasks now use a full-screen view with status filters. The desktop transfer window is enlarged to 840 × 680 and remains resizable.
 - All new Android downloads, including images, videos and audio, go to **Internal storage / Download / Liuzhuan**. "Open receive folder" opens that location in a system file manager, without a folder-selection or permission picker. You can configure a compatible directory browser; the save location stays fixed. The folder is created on the first download. Existing files stay in their original locations, which remain accessible from their task records. Windows defaults to Explorer and supports a custom EXE with a `{folder}` argument template. The executable preference stays on the current PC and is excluded from migration packages.
 - File tasks offer pause, continue and cancel. Android pause closes I/O and retains the task source; continuing **restarts the entire transfer**. Desktop pause retains the current HTTP connection for up to 90 seconds; connection loss requires retrying from the sender. **Byte-offset resume and task recovery across process restarts are not supported.** Submitted text and file registration cannot be recalled.
-- Toggle accessibility off and back on after APK replacement. No Android device is currently attached, so directory navigation and third-party file manager compatibility still require device validation. Unsupported browsers show a message instead of falling back to a folder picker. See the [delivery record](docs/performance/TRANSFER_CONTROLS_2026-10-11.md) and [M36 directory correction](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md) (Chinese). Included in the v1.8.4 release.
+- Toggle accessibility off and back on after APK replacement. Directory navigation and third-party file manager compatibility still require dedicated device validation. Unsupported browsers show a message instead of falling back to a folder picker. See the [delivery record](docs/performance/TRANSFER_CONTROLS_2026-10-11.md) and [M36 directory correction](docs/performance/RECEIVE_DIRECTORY_2026-10-11.md) (Chinese). Included in v1.8.4 and later releases.
 
 ## Since Android v1.8.2: performance and power improvements
 
@@ -46,7 +46,7 @@ Implementation details, 198 local regression checks and APK validation are recor
 - HTTP clients share connection resources. At most two file transfers run concurrently, with cancellation available in the task dialog. Off-screen thumbnails cancel their calls and concurrent requests for one URL are merged.
 - Progress is throttled before list allocation, material deltas use an ordered index, hidden pages avoid unnecessary subscriptions, and settings share one DataStore instance.
 - The foreground service declares `connectedDevice` for LAN device interaction and handles timeouts. Privacy checks, receipts, loop prevention, and process-owned background sending are retained.
-- Device power consumption and locked-screen latency are not yet measured. After an overwrite install, toggle accessibility off/on and restart source apps in the LSPosed scope to load the updated image hook. Public downloads above remain v1.8.1.
+- Device power consumption and locked-screen latency are not yet measured. After an overwrite install, toggle accessibility off/on and restart source apps in the LSPosed scope to load the updated image hook. Included in the current public download.
 
 ## Android v1.8.1: startup compatibility fix
 

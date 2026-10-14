@@ -22,7 +22,7 @@ ConnectivityManager 当时只报告蜂窝上游 NetworkAgent，流转日志却�
 - Android assembleDebug / assembleDistribution / lintDebug 通过（2m 22s），lint 0 错误、18 警告、2 信息；54 个源码文件与 ASCII 编译副本哈希一致。正式 APK v2 验签通过、证书与 M36 一致，非调试标记、模块与接收 action 检查通过。
 - 新交付为 Android v1.8.5 / versionCode 10，M37 不可调试 Distribution，沿用正式签名。旧 M36 APK 保留可回退；电脑程序本轮不变。
 
-本轮仅本地交付，不推送 GitHub 或发布 Releases。覆盖安装后，到无障碍设置关闭→重新开启流转服务。
+开发阶段仅本地交付。用户随后授权脱敏推送 GitHub 与发布，修复纳入 Android v1.8.6，见[双语发布说明](../releases/v1.8.6.md)。覆盖安装后，到无障碍设置关闭→重新开启流转服务。
 
 ## 实机结果
 

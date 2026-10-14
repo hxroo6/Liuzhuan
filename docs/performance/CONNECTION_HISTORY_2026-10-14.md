@@ -11,7 +11,7 @@
 
 ## 验证
 
-- 22 项生产历史模型/JSON 与实际 AES-GCM 检查通过：去重、端口区分、排序、上限、持久化编解码、损坏数据拒绝、随机 IV、篡改与错密钥拒绝。JVM 使用测试密钥，Android Keystore 需设备验证。
+- 22 项生产历史模型/JSON 与实际 AES-GCM 检查通过：去重、端口区分、排序、上限、持久化编解码、损坏数据拒绝、随机 IV、篡改与错密钥拒绝。JVM 使用测试密钥，设备上的 Android Keystore 验证结果见下。
 - 修改后生产 LanClient / WsHub 回归通过：44 项自动回执与真实 HTTP/失败 socket 检查、14 项电脑 WebSocket 回归。两端协议未变。
 - Android Debug / Distribution / lint 通过（2m 1s）。不可调试、包名、模块入口、ClipReceiver action 与正式签名已检查；证书与 M37 相同。工具链现有 API 36 D8 警告仍保留。
 - 实机已覆盖安装：首次成功连接后出现 1 条历史；强制结束进程并重新打开后仍保留；点选历史重连成功、记录保持 1 条，接收页重新同步 50 项素材。这一过程覆盖设备上的 Android Keystore 加解密和 DataStore 持久化。
@@ -23,4 +23,4 @@ Android v1.8.6 / versionCode 11，`AndroidApp/Liuzhuan-M38-signed.apk`，构建�
 
 SHA-256：`ED10D363A1F271FFB37C33D375873AD5E753A50A1230512F513EE973A0B853AF`。
 
-本轮仅本地提交，不推送 GitHub 或发布 Releases。用户提出的手机 4G/5G 远程同步尚未加入，需要另行设计远程组网/中转、下载地址及安全连接。覆盖安装后，将无障碍服务关闭→重新开启。
+开发阶段仅本地提交。用户随后授权脱敏推送 GitHub 和发布 v1.8.6，见[双语发布说明](../releases/v1.8.6.md)，直接复用上述已交付 APK，不恢复手机测试。手机 4G/5G 远程同步尚未加入，当前暂缓。覆盖安装后，将无障碍服务关闭→重新开启。
