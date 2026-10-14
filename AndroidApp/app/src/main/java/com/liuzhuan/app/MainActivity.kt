@@ -203,6 +203,10 @@ fun MainScreen(
     var password by remember { mutableStateOf("") }
     var textInput by rememberSaveable { mutableStateOf("") }
     var showTransfers by remember { mutableStateOf(false) }
+    var showHistory by rememberSaveable { mutableStateOf(false) }
+    val historyStore = remember { com.liuzhuan.app.core.ConnectionHistoryStore(context) }
+    val history by historyStore.state.collectAsStateWithLifecycle(com.liuzhuan.app.core.ConnectionHistoryStore.State())
+    var recallingHistory by remember { mutableStateOf(false) }
     val runningTransfers by remember { TransferTasks.tasks.map { tasks -> tasks.count { it.running } }.distinctUntilChanged() }.collectAsStateWithLifecycle(0)
     var manualConnection by rememberSaveable { mutableStateOf(false) }
     var receiveSearch by rememberSaveable { mutableStateOf("") }
@@ -323,6 +327,30 @@ fun MainScreen(
     }
 
     if (showTransfers) TransferTaskDialog { showTransfers = false }
+    if (showHistory) ConnectionHistoryDialog(history, recallingHistory, onDismiss = { showHistory = false },
+        onConnect = { profile ->
+            if (!recallingHistory) {
+                recallingHistory = true
+                scope.launch {
+                    try {
+                        val recalled = historyStore.recall(profile.id)
+                        ip = recalled.serverIp; port = recalled.serverPort; password = recalled.password
+                        showHistory = false
+                        saveAndConnect()
+                    } catch (ex: CancellationException) { throw ex }
+                    catch (_: Exception) { toast(context, "历史口令不可用，请重新扫码或手动输入") }
+                    finally { recallingHistory = false }
+                }
+            }
+        }, onDelete = { profile -> scope.launch {
+            try { historyStore.remove(profile.id) }
+            catch (ex: CancellationException) { throw ex }
+            catch (_: Exception) { toast(context, "历史记录未能删除，请稍后重试") }
+        } }, onClear = { scope.launch {
+            try { historyStore.clear() }
+            catch (ex: CancellationException) { throw ex }
+            catch (_: Exception) { toast(context, "历史记录未能清空，请稍后重试") }
+        } })
     Scaffold(
         topBar = {
             CenterAlignedTopAppBar(
@@ -411,6 +439,9 @@ fun MainScreen(
                                 enabled = !isConnected,
                                 modifier = Modifier.weight(1f)
                             ) { Text("扫码连接") }
+                        }
+                        TextButton(onClick = { showHistory = true }, modifier = Modifier.fillMaxWidth()) {
+                            Text(if (history.unavailable) "历史连接 · 暂不可读取" else "历史连接 · ${history.entries.size} 个地址")
                         }
                         if (discoveryError.isNotEmpty()) Text(discoveryError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         if (discoveredServers.isNotEmpty()) {

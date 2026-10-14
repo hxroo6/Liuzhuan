@@ -231,3 +231,10 @@
 - **原因**：实际手机热点下两端端口可达，但手机只有 CELLULAR NetworkAgent，v1.8.4 将其误判离线，扫码后输出「等待局域网恢复」并阻止 WebSocket 连接。
 - **约束**：使用已有 ACCESS_NETWORK_STATE 权限，不增加 Root、隐藏 API、额外权限或轮询。LanRouteState 串行合并两类回调，只在可用性改变时发布；客户端 Wi-Fi 断开不能覆盖仍开启的热点，热点关闭也不能覆盖仍可用的 Wi-Fi。保留进程级 scope、用户暂停、服务启停和配对鉴权。
 - **依据**：[Android TetheringManager](https://developer.android.com/reference/android/net/TetheringManager)与[接口变化回调](https://developer.android.com/reference/android/net/TetheringManager.TetheringEventCallback)。支持范围与本项目 minSdk 36 一致；未改传输协议，不宣称断点续传。
+
+## D38 历史连接只保存成功目标，历史口令单独加密
+
+- **决策**：LanClient 收到当前 socket 的 welcome 后，在进程级 SupervisorJob / IO 保存目标。最多 20 个地址，身份为规范化 host + port，按连接时间排序。扫描、填入地址、失败/鉴权失败不新增历史，不添加协议字段。
+- **持久化**：独立顶层 preferencesDataStore 委托避免同文件多实例。历史凭据用 Android Keystore AES-256 / GCM、随机 IV 与完整性标签加密；密钥生成串行，历史 UI 不显示口令。既有 SettingsStore 当前目标结构保留，本决策只加密新增历史字段。
+- **恢复**：回忆历史时读取最新当前设置，只替换 host / port / password，沿既有 saveAndConnect 路径重连；保留省电、隐私和文件管理器偏好。存储失败不影响活跃连接，损坏历史不自动空覆盖；清空是用户确认后执行的独立操作。
+- **边界**：删除历史不删除素材、不撤回当前目标设置、不断开当前会话。旧 IP 可能过期，设备恢复或密钥丢失时不能解密的口令需重新扫码。历史不提供远程网络、断点续传或跨电脑地址跟随。

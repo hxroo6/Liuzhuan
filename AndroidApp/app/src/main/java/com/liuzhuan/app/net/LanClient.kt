@@ -32,7 +32,8 @@ class LanClient(
     private val onItemAdded: (Proto.ItemSummary) -> Unit = {},
     private val onItemDeleted: (String, Long) -> Unit = { _, _ -> },
     private val onItemCleared: (Long) -> Unit = {},
-    private val onItemData: (Proto.ItemData) -> Unit = {}
+    private val onItemData: (Proto.ItemData) -> Unit = {},
+    private val onConnected: (SettingsStore.Settings) -> Unit = {}
 ) {
     sealed class State {
         data object Idle : State()
@@ -329,6 +330,7 @@ class LanClient(
                             features.optString(it) == Proto.CLIPBOARD_RECEIPTS
                         }
                         setState(State.Connected)
+                        onConnected(s)
                         log("✅ 已连接电脑端流转")
                         log("[SYNC] request snapshot")
                         // 连接成功后拉取最近素材全量快照（接收页初始化）

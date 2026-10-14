@@ -16,6 +16,13 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 This release adds Android performance and power improvements, a unified receive folder with direct file-manager navigation, and transfer UI plus pause/cancel controls on both devices. Byte-offset resume remains unsupported. Balanced mode is optional and off by default. Exit the desktop app before replacing the entire `app` directory; preserve the adjacent `data` folder. The ZIP excludes personal settings and materials. See the [bilingual release notes](docs/releases/v1.8.4.md).
 
+## Connection history: Android v1.8.6 (local build)
+
+- The Android connection page now remembers up to 20 successfully authenticated endpoints, newest first. Reconnecting to the same address and port updates its entry instead of duplicating it.
+- Select an entry to reconnect or switch PCs, delete individual entries, or confirm clearing history. Historical passwords are encrypted using a local Android Keystore key and never displayed. Removing history does not disconnect the active session, delete materials, or clear current connection settings.
+- Addresses can change between Wi-Fi and hotspot networks; scan a fresh QR code if an old address stops working. Device migration or key loss may require entering the password again. Includes the v1.8.5 hotspot fix; remote synchronization over cellular data has not been added.
+- See the [M38 verification record](docs/performance/CONNECTION_HISTORY_2026-10-14.md) (Chinese). Public downloads remain v1.8.4. Toggle accessibility off and back on after APK replacement.
+
 ## Phone hotspot fix: Android v1.8.5 (local build)
 
 - Fixes QR pairing being blocked by "waiting for LAN" when the PC is already connected to the phone's hotspot. Hotspot hosting and Wi-Fi client connections are tracked separately through callbacks.

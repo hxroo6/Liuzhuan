@@ -43,6 +43,7 @@ object LanController {
         }.orEmpty()
         scope.launch(Dispatchers.IO) { oldCache.forEach { runCatching { it.delete() } } }
         val main = Handler(Looper.getMainLooper())
+        val history = com.liuzhuan.app.core.ConnectionHistoryStore(app)
         fun ui(block: () -> Unit) { if (Looper.myLooper() == Looper.getMainLooper()) block() else main.post(block) }
         val client = LanClient(
             onState = { next ->
@@ -62,6 +63,11 @@ object LanController {
                 }
             } },
             onLog = { text -> ui { appendLog(text) } },
+            onConnected = { settings -> scope.launch(Dispatchers.IO) {
+                try { history.remember(settings) }
+                catch (ex: kotlinx.coroutines.CancellationException) { throw ex }
+                catch (_: Exception) { appendLog("历史连接未能保存；当前连接不受影响") }
+            } },
             onListData = { items, seq -> MaterialRepository.replaceAll(items.map { it.toMaterialItem() }, seq) },
             onItemAdded = { MaterialRepository.add(it.toMaterialItem()) },
             onItemDeleted = { id, seq -> MaterialRepository.delete(id, seq) },

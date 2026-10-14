@@ -120,6 +120,11 @@
 
 ### 收发任务与快捷预览（M27，2026-09-12）
 
+#### M38 成功连接历史（2026-10-14）
+
+- LanClient welcome 分支新增默认空的 onConnected 回调；LanController 在进程级 IO 作用域写入 ConnectionHistoryStore，不阻塞握手和素材快照。历史最多 20 个，按 host + port 去重，元数据与 AES-GCM 密文存于独立 DataStore。
+- ConnectionHistoryUi 展示最近目标、时间与连接/删除操作；clear 有确认。恢复先解密历史口令并读取最新 Settings，再进入原连接路径。历史存储错误与当前连接独立，Android Keystore 由首次保存时的 IO 工作初始化，不在 Service/Activity 构造阶段读取 Context。
+
 #### M37 手机热点可用性（2026-10-14）
 
 - 手机作为热点提供方时，ConnectivityManager 可能只报告蜂窝上游网络；热点本身由 TetheringManager.TetheringEventCallback.onTetheredInterfacesChanged 单独通知。LanController 在进程级幂等初始化中注册两个监听，LanRouteState 合并它们，只有实际可用性改变时才通知 LanClient。
