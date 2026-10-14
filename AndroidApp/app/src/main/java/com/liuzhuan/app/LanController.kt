@@ -6,10 +6,13 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.TetheringInterface
+import android.net.TetheringManager
 import android.os.Handler
 import android.os.Looper
 import androidx.core.content.ContextCompat
 import com.liuzhuan.app.core.SettingsStore
+import com.liuzhuan.app.core.LanRouteState
 import com.liuzhuan.app.data.MaterialRepository
 import com.liuzhuan.app.data.toMaterialItem
 import com.liuzhuan.app.net.LanClient
@@ -87,27 +90,32 @@ object LanController {
             }
         }
         val manager = app.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
-        val routes = mutableMapOf<Network, NetworkCapabilities>()
-        fun publishNetwork() = synchronized(routes) {
-            val available = routes.values.any { caps ->
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
-            }
-            client.setNetworkAvailable(available)
-        }
+        val routes = LanRouteState<Network> { client.setNetworkAvailable(it) }
+        fun isLan(caps: NetworkCapabilities) =
+            caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
         try {
             // 初始查询一次；后续使用回调的能力数据，避免 onLost 后查询到旧网络。
-            manager.allNetworks.forEach { network -> manager.getNetworkCapabilities(network)?.let { routes[network]=it } }
+            manager.allNetworks.forEach { network -> manager.getNetworkCapabilities(network)?.let { routes.updateNetwork(network,isLan(it)) } }
             manager.registerNetworkCallback(NetworkRequest.Builder().clearCapabilities().build(),
                 object : ConnectivityManager.NetworkCallback() {
-                    override fun onLost(network: Network) { synchronized(routes) { routes.remove(network); publishNetwork() } }
+                    override fun onLost(network: Network) { routes.removeNetwork(network) }
                     override fun onCapabilitiesChanged(network: Network, caps: NetworkCapabilities) {
-                        synchronized(routes) { routes[network]=caps; publishNetwork() }
+                        routes.updateNetwork(network,isLan(caps))
                     }
                 })
-            publishNetwork()
+            routes.publish()
         } catch (_: Exception) { appendLog("网络状态监听不可用，将使用有上限的自动重连") }
+        try {
+            // Android 16 公共 API，注册后立即回调已有热点；热点不是 TRANSPORT_WIFI 网络。
+            app.getSystemService(TetheringManager::class.java).registerTetheringEventCallback(
+                ContextCompat.getMainExecutor(app), object : TetheringManager.TetheringEventCallback {
+                    override fun onTetheredInterfacesChanged(interfaces: Set<TetheringInterface>) {
+                        routes.updateWifiHotspot(interfaces.any { it.type == TetheringManager.TETHERING_WIFI })
+                    }
+                })
+        } catch (_: Exception) { appendLog("热点状态监听不可用，请使用普通 Wi-Fi 连接并查看系统权限") }
         return client
     }
 

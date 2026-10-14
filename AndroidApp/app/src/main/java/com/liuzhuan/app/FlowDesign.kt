@@ -52,7 +52,7 @@ fun FlowTheme(content: @Composable () -> Unit) {
 @Composable
 fun FlowIntro(page: Int, connected: Boolean, state: String) {
     val titles = listOf("让设备，连在一起", "把灵感，送到电脑", "你的素材，随时取用")
-    val subtitles = listOf("同一 Wi-Fi 下，扫码或搜索即可开始", "文字、照片与文件，都有一条近路", "来自电脑的素材，在这里实时汇合")
+    val subtitles = listOf("同一局域网，或电脑连接手机热点后，扫码即可开始", "文字、照片与文件，都有一条近路", "来自电脑的素材，在这里实时汇合")
     Row(Modifier.fillMaxWidth().background(
         Brush.linearGradient(listOf(Color(0xFF24483F), Color(0xFF192E32))), RoundedCornerShape(24.dp)
     ).padding(20.dp), verticalAlignment = Alignment.CenterVertically) {

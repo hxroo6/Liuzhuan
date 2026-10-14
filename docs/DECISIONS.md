@@ -224,3 +224,10 @@
 - **原因**：用户明确要求统一接收位置并调用系统文件管理器浏览；M35 的 ACTION_OPEN_DOCUMENT_TREE 是目录选择/授权界面，不能作为浏览位置的替代。
 - **约束**：禁止回退到目录选择或授权界面；无可用目录浏览处理器时明确提示更换应用。首次接收文件才创建目录，不预写占位文件、不请求全部文件权限。旧文件不自动迁移，任务原位置信息仍可打开；保留 IS_PENDING、流式下载、长度校验和未完成文件清理。
 - **验证边界**：本地测试验证实际 Intent 分发与调用点固定路径，Debug / Distribution 编译及 lint 通过后交付；ROM 目录定位和图库索引属于实机验收，不能以测试替身代替。
+
+## D37 手机作为 Wi-Fi 热点时仍是可用局域网
+
+- **决策**：网络可用性合并 ConnectivityManager 的 Wi-Fi / 以太网 / VPN 路径与 Android 16 公共 TetheringManager 回调中的 Wi-Fi 共享接口。已开启热点在注册回调时立即更新；普通移动网络仍不单独启用局域网重连。
+- **原因**：实际手机热点下两端端口可达，但手机只有 CELLULAR NetworkAgent，v1.8.4 将其误判离线，扫码后输出「等待局域网恢复」并阻止 WebSocket 连接。
+- **约束**：使用已有 ACCESS_NETWORK_STATE 权限，不增加 Root、隐藏 API、额外权限或轮询。LanRouteState 串行合并两类回调，只在可用性改变时发布；客户端 Wi-Fi 断开不能覆盖仍开启的热点，热点关闭也不能覆盖仍可用的 Wi-Fi。保留进程级 scope、用户暂停、服务启停和配对鉴权。
+- **依据**：[Android TetheringManager](https://developer.android.com/reference/android/net/TetheringManager)与[接口变化回调](https://developer.android.com/reference/android/net/TetheringManager.TetheringEventCallback)。支持范围与本项目 minSdk 36 一致；未改传输协议，不宣称断点续传。

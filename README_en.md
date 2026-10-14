@@ -16,6 +16,12 @@ Liuzhuan is a **pure LAN** material transfer tool. The desktop side is a floatin
 
 This release adds Android performance and power improvements, a unified receive folder with direct file-manager navigation, and transfer UI plus pause/cancel controls on both devices. Byte-offset resume remains unsupported. Balanced mode is optional and off by default. Exit the desktop app before replacing the entire `app` directory; preserve the adjacent `data` folder. The ZIP excludes personal settings and materials. See the [bilingual release notes](docs/releases/v1.8.4.md).
 
+## Phone hotspot fix: Android v1.8.5 (local build)
+
+- Fixes QR pairing being blocked by "waiting for LAN" when the PC is already connected to the phone's hotspot. Hotspot hosting and Wi-Fi client connections are tracked separately through callbacks.
+- Connect the PC to the phone hotspot, generate a fresh QR code for that Wi-Fi address, then scan it. Large files still use bidirectional streaming; byte-offset resume remains unsupported and Android continue restarts the transfer.
+- See the [M37 verification record](docs/performance/HOTSPOT_CONNECTION_2026-10-14.md) (Chinese). Public downloads remain v1.8.4. Toggle accessibility off and back on after APK replacement.
+
 ## Transfer experience: Android v1.8.4 / PC v1.8.1
 
 - Android transfer tasks now use a full-screen view with status filters. The desktop transfer window is enlarged to 840 × 680 and remains resizable.

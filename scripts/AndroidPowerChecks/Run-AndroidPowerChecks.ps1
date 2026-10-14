@@ -17,7 +17,7 @@ $powerCompiler=@((Find-PowerJar 'org.jetbrains.kotlin/kotlin-compiler-embeddable
     (Find-PowerJar 'org.jetbrains.intellij.deps/trove4j/1.0.20200330'),$powerAnnotations,$powerCoroutines) -join ';'
 $powerRuntime=@($powerStdlib,$powerCoroutines,$powerAnnotations,(Find-PowerJar 'com.squareup.okhttp3/okhttp/4.12.0'),(Find-PowerJar 'com.squareup.okio/okio-jvm/3.6.0')) -join ';'
 $powerSourceRoot=Join-Path $powerRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app'
-$powerSources=@('TransferTasks.kt','TransferWork.kt','PowerSignals.kt','net/HttpClients.kt','net/RetryBackoff.kt','core/BoundedRead.kt','core/KeepAlivePolicy.kt','core/RecentFileEvents.kt','core/Hex.kt') | ForEach-Object { Join-Path $powerSourceRoot $_ }
+$powerSources=@('TransferTasks.kt','TransferWork.kt','PowerSignals.kt','net/HttpClients.kt','net/RetryBackoff.kt','core/BoundedRead.kt','core/KeepAlivePolicy.kt','core/RecentFileEvents.kt','core/Hex.kt','core/LanRouteState.kt') | ForEach-Object { Join-Path $powerSourceRoot $_ }
 $powerSources+=(Join-Path $powerRepoRoot 'scripts/AndroidPrivacyChecks/AndroidOsStub.kt')
 $powerSources+=(Join-Path $PSScriptRoot 'PowerCheck.kt')
 New-Item -ItemType Directory -Force -Path $OutputDirectory | Out-Null

@@ -120,6 +120,11 @@
 
 ### 收发任务与快捷预览（M27，2026-09-12）
 
+#### M37 手机热点可用性（2026-10-14）
+
+- 手机作为热点提供方时，ConnectivityManager 可能只报告蜂窝上游网络；热点本身由 TetheringManager.TetheringEventCallback.onTetheredInterfacesChanged 单独通知。LanController 在进程级幂等初始化中注册两个监听，LanRouteState 合并它们，只有实际可用性改变时才通知 LanClient。
+- 不依赖热点是否有外网，不申请新的存储/网络权限；普通蜂窝数据独自存在仍不视为局域网。热点已开启的冷启动、热点与普通 Wi-Fi 切换均由回调驱动，没有新增定时轮询。
+
 #### M35 收发控制与保存位置（2026-10-11）
 
 - Android `TransferTaskDialog` 使用全屏 Dialog、任务状态筛选；M36 起所有类型通过 MediaStore.Downloads 写入固定 `Download/Liuzhuan`，成功清除 IS_PENDING 后将实际相对目录记入任务。顶部按钮直接浏览统一目录，逐项按钮兼容旧位置。`ReceivedFiles` 只用目录 ACTION_VIEW；默认限定系统处理器并优先 DocumentsUI，也可指定兼容的管理器。不调用 ACTION_OPEN_DOCUMENT_TREE，不额外获取存储授权；目录由首次文件写入创建。
