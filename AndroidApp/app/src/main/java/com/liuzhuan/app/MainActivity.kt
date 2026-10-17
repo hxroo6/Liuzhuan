@@ -203,6 +203,10 @@ fun MainScreen(
     var password by remember { mutableStateOf("") }
     var textInput by rememberSaveable { mutableStateOf("") }
     var showTransfers by remember { mutableStateOf(false) }
+    var showMicrophone by rememberSaveable { mutableStateOf(false) }
+    var microphoneInvitation by remember { mutableStateOf("") } // Invitation is memory-only, not saved settings.
+    var microphoneConnecting by remember { mutableStateOf(false) }
+    var microphoneCandidate by remember { mutableStateOf<LanClient.MicrophoneInvitation?>(null) }
     var showHistory by rememberSaveable { mutableStateOf(false) }
     val historyStore = remember { com.liuzhuan.app.core.ConnectionHistoryStore(context) }
     val history by historyStore.state.collectAsStateWithLifecycle(com.liuzhuan.app.core.ConnectionHistoryStore.State())
@@ -298,7 +302,72 @@ fun MainScreen(
         client.connect(newSettings)
     }
 
-    // 扫码连接（ScanContract 现代ActivityResult API，绕过 onActivityResult 的坑）
+    suspend fun startIntegratedMicrophone(candidate: LanClient.MicrophoneInvitation) {
+        if (!candidate.isCurrent()) { toast(context, "电脑连接已变化，请点左上音波图重新连接麦克风"); return }
+        if (com.liuzhuan.app.audio.MicrophoneState.status.value.active) return
+        try {
+            val options = com.liuzhuan.app.audio.MicrophoneOptionsStore(context).current()
+            if (!candidate.isCurrent() || com.liuzhuan.app.audio.MicrophoneState.status.value.active) return
+            ContextCompat.startForegroundService(context, Intent(context, com.liuzhuan.app.audio.MicrophoneService::class.java)
+                .setAction(com.liuzhuan.app.audio.MicrophoneService.START).putExtra("payload", candidate.payload)
+                .putExtra("suppressSilence", options.suppressSilence).putExtra("thresholdDb", options.thresholdDb))
+            toast(context, "素材已连接，正在开启麦克风；可在左上音波图查看或关闭")
+        } catch (ex: CancellationException) { throw ex
+        } catch (_: Exception) { toast(context, "无法读取麦克风设置或启动服务，请在前台点左上音波图重试") }
+    }
+    val microphonePermission = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val candidate = microphoneCandidate; microphoneCandidate = null
+        if (granted && candidate != null) scope.launch { startIntegratedMicrophone(candidate) }
+        else toast(context, "素材连接可继续使用；麦克风未授权，稍后可点左上音波图开启")
+    }
+    fun connectIntegratedMicrophone(host: String = ip.trim(), serverPort: String = port.trim()) {
+        if (microphoneConnecting) return
+        if (com.liuzhuan.app.audio.MicrophoneState.status.value.active) {
+            toast(context, "麦克风会话已开启，点左上音波图查看；切换电脑前请先结束原会话")
+            return
+        }
+        microphoneConnecting = true
+        scope.launch {
+            try {
+                val candidate = client.requestMicrophoneInvitation(host, serverPort)
+                kotlinx.coroutines.withTimeout(15_000) {
+                    diagnosticOwner.lifecycle.currentStateFlow.first { it.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) }
+                }
+                if (!candidate.isCurrent()) throw java.io.IOException("电脑连接已变化，请重新连接麦克风")
+                if (ContextCompat.checkSelfPermission(context, android.Manifest.permission.RECORD_AUDIO) == android.content.pm.PackageManager.PERMISSION_GRANTED)
+                    startIntegratedMicrophone(candidate)
+                else { microphoneCandidate = candidate; microphonePermission.launch(android.Manifest.permission.RECORD_AUDIO) }
+            } catch (ex: kotlinx.coroutines.TimeoutCancellationException) { toast(context, "素材连接或麦克风握手未完成；可点左上音波图重试，无需重扫") }
+            catch (ex: CancellationException) { throw ex }
+            catch (ex: Exception) { toast(context, ex.message ?: "麦克风连接暂不可用，素材功能不受影响") }
+            finally { microphoneConnecting = false }
+        }
+    }
+    fun applyPairing(content: String) {
+        try {
+            require(content.length <= 8192)
+            val json = org.json.JSONObject(content)
+            // An invalid optional invitation must not prevent a valid material connection.
+            val mic = runCatching { com.liuzhuan.app.audio.AudioPairing.microphone(content) }.getOrNull()
+            val qrIp = json.optString("ip")
+            val qrPort = json.optInt("port", 8899).toString()
+            val qrPwd = json.optString("pwd", "")
+            val materials = qrIp.isNotBlank() && qrPwd.isNotBlank() && qrPort.toIntOrNull() in 1..65534
+            if (materials) {
+                microphoneInvitation = ""
+                ip = qrIp.trim(); port = qrPort; password = qrPwd; saveAndConnect()
+                connectIntegratedMicrophone(ip, port)
+            } else if (mic != null) { microphoneInvitation = mic; showMicrophone = true }
+            toast(context, when {
+                materials -> "扫码成功，正在连接素材与麦克风；首次请允许系统录音权限"
+                mic != null -> "麦克风邀请已读取，请确认开启会话"
+                else -> "二维码内容无效，请在电脑重新生成"
+            })
+        } catch (_: Exception) { toast(context, "二维码解析失败，请重新扫描电脑流转二维码") }
+    }
+    // One foreground scan connects materials first, then requests fresh audio pairing over its authenticated socket.
     val scanLauncher = androidx.activity.compose.rememberLauncherForActivityResult(
         com.journeyapps.barcodescanner.ScanContract()
     ) { result ->
@@ -306,26 +375,13 @@ fun MainScreen(
         if (content == null) {
             toast(context, "未识别到二维码")
         } else {
-            try {
-                val json = org.json.JSONObject(content)
-                val qrIp = json.optString("ip")
-                val qrPort = json.optInt("port", 8899).toString()
-                val qrPwd = json.optString("pwd", "")
-                if (qrIp.isNotBlank() && qrPwd.isNotBlank()) {
-                    ip = qrIp
-                    port = qrPort
-                    password = qrPwd
-                    saveAndConnect()
-                    toast(context, "✅ 扫码成功，正在连接 $qrIp")
-                } else {
-                    toast(context, "❌ 二维码内容无效")
-                }
-            } catch (ex: Exception) {
-                toast(context, "❌ 二维码解析失败")
-            }
+            applyPairing(content)
         }
     }
 
+    if (showMicrophone) com.liuzhuan.app.audio.MicrophoneDialog(initialPayload = microphoneInvitation,
+        onConnectCurrentComputer = { if (isConnected) connectIntegratedMicrophone() else toast(context, "请先在连接页扫码连接电脑") },
+        connecting = microphoneConnecting) { showMicrophone = false; selectPage(0) }
     if (showTransfers) TransferTaskDialog { showTransfers = false }
     if (showHistory) ConnectionHistoryDialog(history, recallingHistory, onDismiss = { showHistory = false },
         onConnect = { profile ->
@@ -355,7 +411,16 @@ fun MainScreen(
         topBar = {
             CenterAlignedTopAppBar(
                 title = { Text("流转  /  LIUZHUAN", style = MaterialTheme.typography.titleMedium) },
-                actions = { TextButton(onClick = { showTransfers = true }) { Text("收发 $runningTransfers") } },
+                navigationIcon = {
+                    androidx.compose.animation.AnimatedVisibility(visible = !showMicrophone,
+                        enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(160)) + androidx.compose.animation.scaleIn(initialScale = 0.85f),
+                        exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(90))) {
+                        com.liuzhuan.app.audio.MicrophoneMiniControl { showMicrophone = true }
+                    }
+                },
+                actions = {
+                    TextButton(onClick = { showTransfers = true }) { Text("收发 $runningTransfers") }
+                },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
                     containerColor = MaterialTheme.colorScheme.background
                 )
@@ -431,15 +496,16 @@ fun MainScreen(
                                 onClick = {
                                     val options = com.journeyapps.barcodescanner.ScanOptions().apply {
                                         setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
-                                        setPrompt("扫描电脑屏幕上的配对二维码")
+                                        setPrompt("扫码连接素材与麦克风 · 首次请允许录音")
                                         setBeepEnabled(false)
                                     }
                                     scanLauncher.launch(options)
                                 },
-                                enabled = !isConnected,
+                                enabled = !microphoneConnecting,
                                 modifier = Modifier.weight(1f)
-                            ) { Text("扫码连接") }
+                            ) { Text("扫码连接全部功能") }
                         }
+                        Text("扫一次码即可连接素材与手机麦克风，首次需允许录音；可随时点左上音波图查看或关闭。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         TextButton(onClick = { showHistory = true }, modifier = Modifier.fillMaxWidth()) {
                             Text(if (history.unavailable) "历史连接 · 暂不可读取" else "历史连接 · ${history.entries.size} 个地址")
                         }

@@ -10,6 +10,7 @@ var checks=0;
 void Check(bool ok,string label){if(!ok)throw new Exception(label);checks++;Console.WriteLine("PASS "+label);}
 var reservation=new TcpListener(IPAddress.Loopback,0);reservation.Start();var port=((IPEndPoint)reservation.LocalEndpoint).Port;reservation.Stop();
 LanConfig.PasswordHash=AuthService.HashPassword("isolated-only");
+if (args.Contains("--microphone-pairing")) { await MicrophonePairingChecks.Run(); return; }
 var stored=0;var contents=new List<string>();
 var hub=new WsHub();
 hub.TextReceived+=(content,_)=>{ if(content=="fail-registration")throw new IOException("injected registration error"); Interlocked.Increment(ref stored);lock(contents)contents.Add(content); };

@@ -29,12 +29,13 @@ public partial class QrCodeWindow : Window
         NetworkChoice.SelectedItem = addresses.FirstOrDefault(a => a.Address == ip) ?? addresses[0];
     }
 
-    private void NetworkChoice_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+    private void NetworkChoice_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e) => RefreshQr();
+    private void RefreshQr()
     {
         if (NetworkChoice.SelectedItem is not Utils.LanNetUtil.LanAddress address) return;
+        QrImage.Source = null;
         var ip = address.Address;
-        // 二维码内容（JSON）
-        var payload = System.Text.Json.JsonSerializer.Serialize(new { ip, port = _port, pwd = _password });
+        var payload = Services.Audio.CombinedPairing.Create(ip, _port, _password, null);
         var writer = new BarcodeWriterPixelData
         {
             Format = BarcodeFormat.QR_CODE,
@@ -45,6 +46,7 @@ public partial class QrCodeWindow : Window
         bmp.WritePixels(new Int32Rect(0, 0, data.Width, data.Height), data.Pixels, data.Width * 4, 0);
         QrImage.Source = bmp;
 
-        InfoText.Text = $"电脑 {ip}:{_port}\n口令 {_password}";
+        InfoText.Text = $"电脑 {ip}:{_port}\n口令 {_password}\n扫码一次，素材握手成功后自动连接麦克风\n首次请允许手机系统录音权限\n虚拟设备未配置时，素材仍可正常使用";
     }
+    private void Refresh_Click(object sender, RoutedEventArgs e) => RefreshQr();
 }

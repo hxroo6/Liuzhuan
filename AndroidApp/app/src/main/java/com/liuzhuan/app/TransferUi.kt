@@ -19,8 +19,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
@@ -132,9 +130,8 @@ internal fun clearThumbnailCache() { thumbnails.evictAll(); thumbnailFailure.evi
         try {store.saveFileManager(packageName);managerPicker=false}
         catch(_:Exception) {toast(context,"文件管理器设置未保存，请稍后重试")}
     } }
-    Dialog(onDismissRequest=onDismiss,properties=DialogProperties(usePlatformDefaultWidth=false)) {
-        Surface(Modifier.fillMaxSize(),color=MaterialTheme.colorScheme.background) {
-        Column(Modifier.fillMaxSize().safeDrawingPadding().padding(horizontal=20.dp)) {
+    SecondaryPanel(onDismiss=onDismiss) {
+        Column(Modifier.fillMaxSize().padding(horizontal=20.dp)) {
             Row(Modifier.fillMaxWidth().padding(vertical=12.dp),verticalAlignment=Alignment.CenterVertically) {
                 Text("收发任务",style=MaterialTheme.typography.headlineSmall,modifier=Modifier.weight(1f))
                 TextButton(onClick=onDismiss){Text("关闭")}
@@ -190,8 +187,7 @@ internal fun clearThumbnailCache() { thumbnails.evictAll(); thumbnailFailure.evi
                     }
                 }
             }
-            Text("仅保留本次运行记录；重传前请检查对端是否已收到。",modifier=Modifier.padding(vertical=10.dp),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
-        }
+            Text("下拉关闭不影响传输；仅保留本次运行记录，重传前请检查对端是否已收到。",modifier=Modifier.padding(vertical=10.dp),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
     if(managerPicker) AlertDialog(onDismissRequest={managerPicker=false},title={Text("打开目录的文件管理器")},confirmButton={TextButton(onClick={managerPicker=false}){Text("关闭")}},text={

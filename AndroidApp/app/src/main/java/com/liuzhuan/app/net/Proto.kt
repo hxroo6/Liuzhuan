@@ -10,6 +10,11 @@ import java.util.UUID
  * 与电脑端 LanMessage 对应：docs/流转安卓版开发文档.md §3
  */
 object Proto {
+    const val MICROPHONE_PAIRING = "microphone_pairing_v1"
+    const val MICROPHONE_INVITE = "microphone_invite"
+    const val MICROPHONE_INVITE_RESULT = "microphone_invite_result"
+    fun buildMicrophoneInvite(requestId: String): String = JSONObject().put("v", 1)
+        .put("type", MICROPHONE_INVITE).put("id", requestId).put("device", deviceLabel).put("data", JSONObject()).toString()
 
     /**
      * 设备名（hello/heartbeat 等消息的 device 字段）。

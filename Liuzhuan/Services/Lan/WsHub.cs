@@ -15,6 +15,9 @@ public class WsHub
     private WebSocketServer? _server;
     private readonly ConcurrentDictionary<string, IWebSocketConnection> _sessions = new();
     private readonly ConcurrentDictionary<string, string> _sessionDevices = new();
+    private readonly ConcurrentDictionary<string, byte> _microphonePending = new();
+    private readonly ConcurrentDictionary<string, long> _microphoneLastRequest = new();
+    public Func<Task<Dictionary<string, object?>>>? MicrophoneInviteProvider { get; set; }
     private readonly object _receiptGate = new();
     private readonly Dictionary<string, TextReceipt> _textReceipts = new();
     private sealed record TextReceipt(string Fingerprint, DateTime CreatedAt, Lazy<bool> Registered);
@@ -26,6 +29,7 @@ public class WsHub
 
     /// <summary>会话数变化（设备数）</summary>
     public event Action<int>? ClientCountChanged;
+    public event Action? ClientAuthenticated;
 
     /// <summary>最近素材摘要提供者（list_sync 用），由外部注入</summary>
     public Func<List<LanItemSummary>>? ListProvider { get; set; }
@@ -82,6 +86,7 @@ public class WsHub
             _server = null;
             _sessions.Clear();
             _sessionDevices.Clear();
+            _microphoneLastRequest.Clear();
             Logger.Run("LanServer: stopped");
         }
         catch (Exception ex)
@@ -118,6 +123,10 @@ public class WsHub
 
                 case "get_item":
                     HandleGetItem(socket, msg);
+                    break;
+
+                case LanMessage.MicrophoneInviteRequest:
+                    _ = HandleMicrophoneInviteAsync(socket, msg);
                     break;
 
                 case "bye":
@@ -167,12 +176,51 @@ public class WsHub
             Data = new Dictionary<string, object?>
             {
                 ["serverVersion"] = "1.0",
-                ["features"] = new[] { "text", "file", LanMessage.ClipboardReceiptsFeature },
+                ["features"] = MicrophoneInviteProvider == null
+                    ? new[] { "text", "file", LanMessage.ClipboardReceiptsFeature }
+                    : new[] { "text", "file", LanMessage.ClipboardReceiptsFeature, LanMessage.MicrophonePairingFeature },
                 ["sessionId"] = sessionId
             }
         });
         Logger.Run("Lan: device connected: {0} ({1})", device, socket.ConnectionInfo.ClientIpAddress);
         ClientCountChanged?.Invoke(_sessions.Count);
+        ClientAuthenticated?.Invoke();
+    }
+
+    private async Task HandleMicrophoneInviteAsync(IWebSocketConnection socket, LanMessage message)
+    {
+        // Only the authenticated socket is authority. Client-supplied device/session names are ignored.
+        var session = _sessions.FirstOrDefault(kv => ReferenceEquals(kv.Value, socket)).Key;
+        if (session == null || string.IsNullOrEmpty(message.Id) || message.Id.Length > 128) return;
+        if (!_microphonePending.TryAdd(session, 0)) return;
+        try
+        {
+            Dictionary<string, object?> result;
+            long now = Environment.TickCount64;
+            if (_microphoneLastRequest.TryGetValue(session, out var previous) && now - previous < 2000)
+                result = new() { ["status"] = "retry_later" };
+            else
+            {
+                _microphoneLastRequest[session] = now;
+                result = MicrophoneInviteProvider == null ? new() { ["status"] = "unavailable" } : await MicrophoneInviteProvider();
+            }
+            if (_sessions.TryGetValue(session, out var current) && ReferenceEquals(current, socket))
+            {
+                result["requestId"] = message.Id;
+                Send(socket, new LanMessage { Type = LanMessage.MicrophoneInviteReply, Id = message.Id, Data = result });
+            }
+        }
+        catch
+        {
+            if (_sessions.TryGetValue(session, out var current) && ReferenceEquals(current, socket))
+                try { Send(socket, new LanMessage { Type = LanMessage.MicrophoneInviteReply, Id = message.Id,
+                    Data = new() { ["requestId"] = message.Id, ["status"] = "unavailable" } }); } catch { }
+        }
+        finally
+        {
+            _microphonePending.TryRemove(session, out _);
+            if (!_sessions.ContainsKey(session)) _microphoneLastRequest.TryRemove(session, out _);
+        }
     }
 
     private void HandleText(IWebSocketConnection socket, LanMessage msg)
@@ -360,6 +408,7 @@ public class WsHub
             var device = _sessionDevices.TryGetValue(key, out var d) ? d : "unknown";
             _sessions.TryRemove(key, out _);
             _sessionDevices.TryRemove(key, out _);
+            _microphoneLastRequest.TryRemove(key, out _);
             Logger.Run("Lan: device disconnected: {0}", device);
             ClientCountChanged?.Invoke(_sessions.Count);
         }

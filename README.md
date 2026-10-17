@@ -10,11 +10,27 @@
 
 **全程不经过任何云端服务器**，数据只在你自己的局域网里流动。
 
-## 最新下载：v1.8.6
+## 最新下载：v1.9.0
 
-[发布说明](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.8.6) · [安卓 v1.8.6 APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.6-android.apk) · [电脑 v1.8.1 Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.1-windows-x64.zip) · [SHA-256 校验文件](https://github.com/hxroo6/Liuzhuan/releases/download/v1.8.6/Liuzhuan-v1.8.6-SHA256SUMS.txt)
+[Release](https://github.com/hxroo6/Liuzhuan/releases/tag/v1.9.0) · [Android APK](https://github.com/hxroo6/Liuzhuan/releases/download/v1.9.0/Liuzhuan-v1.9.0-android.apk) · [Windows x64](https://github.com/hxroo6/Liuzhuan/releases/download/v1.9.0/Liuzhuan-v1.9.0-windows-x64.zip) · [SHA-256](https://github.com/hxroo6/Liuzhuan/releases/download/v1.9.0/Liuzhuan-v1.9.0-SHA256SUMS.txt)
 
-本次 Release 修复电脑连接手机热点后安卓仍等待局域网的问题，新增成功连接历史、点选重连与历史口令本机加密。电脑端沿用 v1.8.1，兼容当前安卓。此前功耗优化、统一接收目录及两端收发控制均保留；尚不支持真正断点续传，移动数据远程同步暂缓。电脑端升级先退出流转、替换整个 `app`，保留同级 `data`；程序 ZIP 不含个人配置和素材。详见[双语发布说明](docs/releases/v1.8.6.md)。
+手机麦克风实验功能、一次扫码、标题音波、持久化收音偏好和手机连接成功提示已包含。请同时升级两端；虚拟音频驱动需从官网下载，不内置于流转。
+
+[VB-CABLE official download](https://vb-audio.com/Cable/) · [Independent licensing](https://vb-audio.com/Services/licensing.htm) · [v1.9.0 release notes](docs/releases/v1.9.0.md)
+
+## 手机麦克风（v1.9.0，实验功能）
+
+- 手机连接页点**“扫码连接全部功能”**，扫电脑常规配对码一次：素材握手成功后自动获取新的麦克风邀请、前台开启采音并接通转发；首次只需允许系统录音权限，无需再扫麦克风码或点电脑“开始转发”。普通启动/后台重连不自动开麦。
+- 电脑按已保存的虚拟设备ID启用音频，首次可识别标准CABLE Input/Output；没有驱动或设备失效时会提示先在“设置 → 手机麦克风”配置，素材功能仍可用。已连素材后，从左上音波图进入麦克风页点“连接当前电脑麦克风”即可直接重连，不必重新扫码。
+- 麦克风页返回后回到连接首页，**真实音波图缩在左上角**，显示待命、传音、安静和暂停；点击重新展开，返回不停止采音。小音波图仅在可见时更新，不使整页随音量刷新。
+- 手机确认开启后**持续待命，没有15分钟或闲置时限**。支持手机暂停/允许再次请求/结束，电脑手动转发/停止/结束手机会话/关闭服务。停止转发不等于停采；主动结束、断线、撤权或系统阻断才释放，断线/重启不自动开麦。电脑锁定/睡眠仍关闭音频服务。
+- 首版按用户要求为**局域网明文音频**，端口8902，短时单次扫码口令；不保存录音。没有内置ASR、没有MicYou/AndroidMic应用依赖，也不自动安装虚拟驱动或更改系统默认设备。Codex识别仍遵循其自身联网与服务行为。
+- 手机新增实际采音波形、dBFS电平、采集/发送帧数与60秒本机试音；本机试音不连接电脑、不发送或保存录音。电脑新增接收电平及“仅诊断收音”模式，清楚区分手机收音、网络到达和虚拟设备输出。
+- 默认“安静省流量”：音量足够才发PCM，安静时只留轻量心跳。灵敏/标准/抗噪三档，200ms开头缓存、500ms尾音，安静批量读取100ms；可关闭后连续发送。它按音量判断，不识别人声，手机仍持续采音；实际省电比例、弱声/噪声环境待专项测量。
+- 电脑新增**实验自动跟随**：先校准一次原听写“开始→结束”，验证独立Codex录音会话后再勾选，绑定本次手机连接。停止、手机暂停、断线或身份变化自动退出；默认关闭、不监听鼠标、不更改系统默认音频。记住本机设备ID，设备失效需重新选择。
+- 电脑素材栏标题旁新增可点击的真实音频波形，直接打开麦克风设置；手机省流量开关与三档灵敏度自动保存，扫码、连接当前电脑和本机试音统一读取，下次开启会话生效。
+- 麦克风和收发二级面板支持下拉关闭，滚动内容到顶部后可继续下拉，关闭面板不停止采音或任务。电脑麦克风页可展开链路诊断并复制脱敏统计，区分接收和播放端读取；暂停后按两端提示恢复，无需重扫。
+- 原手机→局域网→CABLE→Codex手动听写已通过，当前Codex录音会话0→1→0已现场确认；M42一次扫码和左上音波图按[交付记录](docs/performance/PHONE_MIC_M42_2026-10-17.md)分别标明验收范围，长时间待命/功耗仍需实测。Windows系统播放使用实体扬声器，流转写入CABLE Input，Codex读取CABLE Output。现已包含在上方v1.9.0下载中。
 
 ## 历史连接：Android v1.8.6
 

@@ -7,6 +7,8 @@
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <!-- 持续连接局域网电脑；满足 connectedDevice 的网络前置权限。 -->
     <uses-permission android:name="android.permission.CHANGE_NETWORK_STATE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
@@ -71,6 +73,8 @@
         </service>
 
         <!-- 前台服务保活（后台连接常驻） -->
+        <service android:name=".audio.MicrophoneService" android:exported="false"
+            android:foregroundServiceType="microphone" />
         <service
             android:name=".ForegroundService"
             android:exported="false"

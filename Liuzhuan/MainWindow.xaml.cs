@@ -26,6 +26,10 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<MaterialItem> _currentView = new();
     private readonly HotkeyService _hotkeyService = new();
     private readonly LanServer _lanServer = new();
+    private readonly Services.Audio.MicrophoneHost _microphone = new();
+    private Views.MicrophoneWindow? _microphoneWindow;
+    private readonly ConnectionNoticePolicy _connectionNotice = new();
+    private long _connectionNoticeUntil;
     private readonly ClipboardMonitorService _clipMonitor = new();
 
     private string _currentTab = "Recent";
@@ -63,6 +67,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        HeaderMicrophone.ServerProvider = () => _microphone.Server;
         _dataStore = new DataStore();
         _savedViews = new SavedViewStore(ConfigService.GetEffectiveDataDir());
         GridView.ItemsSource = _currentView;
@@ -126,10 +131,12 @@ public partial class MainWindow : Window
             }
             _lanServer.TextReceived += OnLanTextReceived;
             _lanServer.ClientCountChanged += OnLanClientCountChanged;
+            _lanServer.ClientAuthenticated += OnLanClientAuthenticated;
             _lanServer.FileUploaded += OnLanFileUploaded;
             _lanServer.SnapshotDispatcher = action => Dispatcher.Invoke(action);
             _lanServer.SnapshotProvider = () => new LanListSnapshot(_dataStore.GetRecentSummaries(50), _dataStore.CurrentSequence);
             _lanServer.ItemLookup = id => _dataStore.Items.FirstOrDefault(x => x.Id == id);
+            _lanServer.MicrophoneInviteProvider = _microphone.MaterialInvitationAsync;
             _dataStore.ItemAdded += OnDataStoreItemAdded;
             _dataStore.ItemRemoved += OnDataStoreItemRemoved;
             _dataStore.ItemCleared += OnDataStoreItemCleared;
@@ -320,6 +327,20 @@ public partial class MainWindow : Window
         });
     }
 
+    private void OnLanClientAuthenticated()
+    {
+        Dispatcher.BeginInvoke(new Action(() =>
+        {
+            if (Dispatcher.HasShutdownStarted || !_connectionNotice.ShouldNotify(Environment.TickCount64)) return;
+            if (!IsVisible) Show();
+            if (WindowState == WindowState.Minimized) WindowState = WindowState.Normal;
+            ExpandPanel();
+            _connectionNoticeUntil = Environment.TickCount64 + 6000;
+            ShowFeedback("手机连接成功 · 素材同步已就绪");
+            _collapseTimer?.Start();
+        }));
+    }
+
     /// <summary>注册全局热键（默认 Ctrl+` 切换面板）</summary>
     private void SetupGlobalHotkey()
     {
@@ -433,7 +454,7 @@ public partial class MainWindow : Window
         _collapseTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(CollapseDelayMs) };
         _collapseTimer.Tick += (s, e) =>
         {
-            if (_isWindowDragging || IsMouseOver || _menuOpen || _toolDialogOpen || _isDragging || IsKeyboardFocusWithin && IsActive) return;
+            if (Environment.TickCount64 < _connectionNoticeUntil || _isWindowDragging || IsMouseOver || _menuOpen || _toolDialogOpen || _microphoneWindow?.IsVisible == true || _isDragging || IsKeyboardFocusWithin && IsActive) return;
             _collapseTimer.Stop();
             if (!_isLeftAnchored && !_isPinned) CollapsePanel();
         };
@@ -601,7 +622,7 @@ public partial class MainWindow : Window
     private void CollapsePanel()
     {
         if (_isWindowDragging || !_isExpanded) return;
-        if (_isPinned || _menuOpen || _toolDialogOpen) return;
+        if (_isPinned || _menuOpen || _toolDialogOpen || _microphoneWindow?.IsVisible == true) return;
         if (_isLeftAnchored) return; // 左锚定：保持展开，不收起不跳右
         _isExpanded = false;
         CloseHoverPreview();
@@ -1465,6 +1486,15 @@ public partial class MainWindow : Window
 
     #region 设置 + 退出
 
+    private void MicrophoneEntry_Click(object sender, RoutedEventArgs e)
+    {
+        e.Handled = true;
+        if (_microphoneWindow != null) { _microphoneWindow.Activate(); return; }
+        _microphoneWindow = new Views.MicrophoneWindow(_microphone) { Owner = this };
+        _microphoneWindow.Closed += (_, _) => _microphoneWindow = null;
+        _microphoneWindow.Show();
+    }
+
     private void SettingsBtn_Click(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu
@@ -1482,6 +1512,9 @@ public partial class MainWindow : Window
         };
         autoStartItem.Click += (s, e) => StartupService.SetEnabled(autoStartItem.IsChecked);
         menu.Items.Add(autoStartItem);
+        var microphoneItem = new MenuItem { Header = "手机麦克风（局域网实验功能）…" };
+        microphoneItem.Click += MicrophoneEntry_Click;
+        menu.Items.Add(microphoneItem);
 
         // 剪贴板监控：电脑上任意复制 → 自动加载进流转（可选开关）
         var clipMonitorItem = new MenuItem
@@ -1596,7 +1629,7 @@ public partial class MainWindow : Window
             LanConfig.Enabled = lanToggleItem.IsChecked;
             LanConfig.Save();
             if (LanConfig.Enabled) { _lanServer.Start(); }
-            else { _lanServer.Stop(); }
+            else { _ = _microphone.StopAsync(); _lanServer.Stop(); }
             Logger.Run("Settings: LAN server {0}", LanConfig.Enabled ? "enabled" : "disabled");
         };
         menu.Items.Add(lanToggleItem);
@@ -1823,6 +1856,7 @@ public partial class MainWindow : Window
         _hoverPreviewTimer?.Stop();
         _collapseTimer?.Stop();
         _hotkeyService.Dispose();
+        _ = _microphone.StopAsync();
         _lanServer.Dispose();
         _dataStore.Dispose();
         _trayIcon?.Dispose();
@@ -1843,6 +1877,7 @@ public partial class MainWindow : Window
         }) { IsBackground = true };
         watchdog.Start();
 
+        _ = _microphone.StopAsync();
         try { _lanServer.Stop(); } catch (Exception ex) { Logger.Error("QuickExit: lan stop {0}", ex.Message); }
         try { _dataStore.Dispose(); } catch (Exception ex) { Logger.Error("QuickExit: datastore {0}", ex.Message); }
         try { _trayIcon?.Dispose(); } catch (Exception ex) { Logger.Error("QuickExit: tray {0}", ex.Message); }

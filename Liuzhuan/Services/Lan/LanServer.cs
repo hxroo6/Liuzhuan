@@ -18,6 +18,7 @@ public class LanServer : IDisposable
 
     /// <summary>设备连接数变化</summary>
     public event Action<int>? ClientCountChanged;
+    public event Action? ClientAuthenticated;
 
     /// <summary>手机文件上传完成（文件路径, 显示名）</summary>
     public event Action<string, string>? FileUploaded;
@@ -53,6 +54,11 @@ public class LanServer : IDisposable
     }
 
     public int ClientCount => _hub.ClientCount;
+    public Func<Task<Dictionary<string, object?>>>? MicrophoneInviteProvider
+    {
+        get => _hub.MicrophoneInviteProvider;
+        set => _hub.MicrophoneInviteProvider = value;
+    }
 
     /// <summary>端口自检：TCP 自连 127.0.0.1:Port 确认 WS 真的在监听（Fleck 静默失败检测）</summary>
     public bool IsListening
@@ -93,6 +99,7 @@ public class LanServer : IDisposable
 
         _hub.TextReceived += OnTextReceived;
         _hub.ClientCountChanged += OnClientCountChanged;
+        _hub.ClientAuthenticated += OnClientAuthenticated;
         _fileServer.FileUploaded += OnFileUploaded;
         _hub.Start(LanConfig.Port, LanConfig.PasswordHash);
         _fileServer.Start(LanConfig.Port + 1);
@@ -106,6 +113,7 @@ public class LanServer : IDisposable
         if (!_running) return;
         _hub.TextReceived -= OnTextReceived;
         _hub.ClientCountChanged -= OnClientCountChanged;
+        _hub.ClientAuthenticated -= OnClientAuthenticated;
         _fileServer.FileUploaded -= OnFileUploaded;
         _hub.Stop();
         _fileServer.Stop();
@@ -128,6 +136,7 @@ public class LanServer : IDisposable
     {
         ClientCountChanged?.Invoke(count);
     }
+    private void OnClientAuthenticated() => ClientAuthenticated?.Invoke();
 
     public void Dispose()
     {

@@ -7,6 +7,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.CoroutineStart
 import okhttp3.Call
 import okhttp3.Callback
@@ -56,6 +57,38 @@ class LanClient(
     @Volatile private var clipboardReceipts = false
     @Volatile private var cachedIdentity = ""
     @Volatile private var cachedAuth = ""
+    private data class AudioLink(val socket: WebSocket, val host: String, val port: String, val supported: Boolean)
+    private data class AudioRequest(val id: String, val socket: WebSocket, val result: kotlinx.coroutines.CompletableDeferred<String>)
+    private val audioLink = kotlinx.coroutines.flow.MutableStateFlow<AudioLink?>(null)
+    private var audioRequest: AudioRequest? = null
+    private fun clearAudioLink() {
+        audioLink.value = null
+        audioRequest?.result?.completeExceptionally(IOException("电脑连接已变化，请重新连接麦克风")); audioRequest = null
+    }
+
+    /** An explicit foreground UI action requests one invitation over the authenticated material socket. */
+    class MicrophoneInvitation internal constructor(val payload: String, private val current: () -> Boolean) {
+        fun isCurrent() = current()
+    }
+    suspend fun requestMicrophoneInvitation(expectedHost: String, expectedPort: String): MicrophoneInvitation = kotlinx.coroutines.withTimeout(10_000) {
+        val link = audioLink.first { it != null && it.host == expectedHost && it.port == expectedPort }!!
+        if (!link.supported) throw IOException("电脑版本不支持一次扫码启用麦克风，请同时更新电脑端")
+        val request = synchronized(this@LanClient) {
+            if (ws !== link.socket || state != State.Connected) throw IOException("电脑连接已变化，请重试")
+            if (audioRequest != null) throw IOException("正在连接麦克风，请稍候")
+            AudioRequest(java.util.UUID.randomUUID().toString(), link.socket, kotlinx.coroutines.CompletableDeferred()).also {
+                audioRequest = it
+                if (!link.socket.send(Proto.buildMicrophoneInvite(it.id))) {
+                    audioRequest = null; throw IOException("无法提交麦克风连接请求")
+                }
+            }
+        }
+        try {
+            val payload = request.result.await()
+            MicrophoneInvitation(payload) { synchronized(this@LanClient) { ws === link.socket && state == State.Connected && audioLink.value === link } }
+        }
+        finally { synchronized(this@LanClient) { if (audioRequest === request) audioRequest = null } }
+    }
     private fun buildIdentity(s: SettingsStore.Settings): String =
         "${s.serverIp.trim().lowercase()}:${s.serverPort.toIntOrNull() ?: 8899}:${Proto.sha256Hex(s.password)}:${Proto.sha256Hex(s.deviceName)}:${Proto.sha256Hex(Proto.deviceLabel)}"
     private fun connectionIdentity(s: SettingsStore.Settings): String = if (s === lastSettings) cachedIdentity else buildIdentity(s)
@@ -71,6 +104,7 @@ class LanClient(
             return
         }
         manuallyClosed = false
+        clearAudioLink()
         reconnectJob?.cancel()
         reconnectJob = null
         handshakeJob?.cancel()
@@ -90,6 +124,7 @@ class LanClient(
     }
 
     @Synchronized fun disconnect() {
+        clearAudioLink()
         manuallyClosed = true
         reconnectJob?.cancel()
         reconnectJob = null
@@ -105,6 +140,7 @@ class LanClient(
 
     /** 暂停自动重连（阻止死循环；下次 connect() 可恢复） */
     @Synchronized fun pause() {
+        clearAudioLink()
         manuallyClosed = true
         reconnectJob?.cancel()
         reconnectJob = null
@@ -286,6 +322,7 @@ class LanClient(
 
     @Synchronized private fun doConnect(s: SettingsStore.Settings) {
         if (manuallyClosed || !networkAvailable) return
+        clearAudioLink()
         handshakeJob?.cancel()
         clipboardReceipts = false
         // 关闭残留 WebSocket（防重连时叠加）
@@ -330,6 +367,8 @@ class LanClient(
                             features.optString(it) == Proto.CLIPBOARD_RECEIPTS
                         }
                         setState(State.Connected)
+                        audioLink.value = AudioLink(webSocket, s.serverIp, s.serverPort, features != null &&
+                            (0 until features.length()).any { features.optString(it) == Proto.MICROPHONE_PAIRING })
                         onConnected(s)
                         log("✅ 已连接电脑端流转")
                         log("[SYNC] request snapshot")
@@ -337,6 +376,7 @@ class LanClient(
                         webSocket.send(Proto.buildListSync())
                     }
                     "auth_fail" -> {
+                        clearAudioLink()
                         manuallyClosed = true
                         handshakeJob?.cancel()
                         reconnectJob?.cancel()
@@ -346,6 +386,25 @@ class LanClient(
                         webSocket.close(1000, "auth_fail")
                     }
                     "heartbeat" -> { /* 心跳回执，无需处理 */ }
+                    Proto.MICROPHONE_INVITE_RESULT -> {
+                        val pending = audioRequest
+                        if (pending != null && pending.socket === webSocket && pending.id == data.optString("requestId")) {
+                            if (data.optString("status") == "ready") {
+                                try {
+                                    val payload = org.json.JSONObject().put("kind", data.getString("kind")).put("v", data.getInt("v"))
+                                        .put("ip", s.serverIp).put("port", data.getInt("port")).put("token", data.getString("token")).toString()
+                                    pending.result.complete(com.liuzhuan.app.audio.AudioPairing.microphone(payload)
+                                        ?: throw IOException("电脑没有提供有效的麦克风邀请"))
+                                } catch (_: Exception) { pending.result.completeExceptionally(IOException("麦克风邀请无效，请同时更新两端")) }
+                            } else pending.result.completeExceptionally(IOException(when (data.optString("status")) {
+                                "setup_required" -> "素材已连接，请先在电脑设置里选择虚拟音频设备；之后点左上音波图连接即可，无需重扫"
+                                "busy" -> "已有麦克风会话，请先结束原会话后重试"
+                                "diagnostic_only" -> "电脑当前仅诊断收音，请在电脑关闭诊断模式后连接"
+                                "retry_later" -> "请求太快，请稍候两秒再试"
+                                else -> "素材已连接，电脑音频服务暂不可用，请检查虚拟设备和端口"
+                            }))
+                        }
+                    }
                     "list_data" -> {
                         val seq = Proto.parseSequence(data)
                         val items = Proto.parseListData(data)
@@ -419,6 +478,7 @@ class LanClient(
 
     @Synchronized private fun connectionFailed(socket: WebSocket, message: String) {
         if (socket !== ws) return
+        clearAudioLink()
         ws = null
         handshakeJob?.cancel()
         if (!manuallyClosed) { setState(State.Disconnected); log(message); scheduleReconnect() }

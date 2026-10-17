@@ -1,0 +1,8 @@
+<UserControl x:Class="Liuzhuan.Views.MicrophoneEntry" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" MinWidth="64" Height="44">
+    <Button x:Name="EntryButton" Click="Entry_Click" Style="{StaticResource IconButtonStyle}" Padding="4,3" HorizontalContentAlignment="Center" ToolTip="手机麦克风 · 点击设置" AutomationProperties.Name="手机麦克风设置">
+        <StackPanel IsHitTestVisible="False" VerticalAlignment="Center">
+            <Canvas x:Name="WaveCanvas" Width="60" Height="19" ClipToBounds="True"/>
+            <TextBlock x:Name="StateText" Text="麦克风" FontSize="9" HorizontalAlignment="Center" Foreground="{StaticResource TextDimBrush}" Margin="0,2,0,0"/>
+        </StackPanel>
+    </Button>
+</UserControl>

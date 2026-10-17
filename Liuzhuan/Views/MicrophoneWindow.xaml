@@ -1,0 +1,75 @@
+<Window x:Class="Liuzhuan.Views.MicrophoneWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="手机麦克风" Width="650" Height="780" MinWidth="580" MinHeight="630" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="14">
+    <Window.Resources>
+        <Style TargetType="ComboBox"><Setter Property="Foreground" Value="#132D2D"/><Setter Property="Background" Value="#E5F0EC"/><Setter Property="Padding" Value="10,7"/><Setter Property="FontSize" Value="14"/></Style>
+        <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{StaticResource TextBrush}"/></Style>
+    </Window.Resources>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" Background="{StaticResource PanelBrush}">
+        <StackPanel Margin="26">
+            <TextBlock Text="把手机变成电脑麦克风" FontSize="25" FontWeight="SemiBold"/>
+            <TextBlock Text="局域网实验功能 · 明文音频 · 不保存录音" Margin="0,8,0,22" Foreground="{StaticResource TextDimBrush}"/>
+            <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="18">
+                <StackPanel>
+                    <TextBlock Text="1. 选择虚拟音频设备" FontSize="17" FontWeight="SemiBold"/>
+                    <TextBlock Text="流转写入虚拟播放端（例如 CABLE Input）；Codex 选择对应录音端（例如 CABLE Output）。请勿选择扬声器，避免外放。" TextWrapping="Wrap" Margin="0,8,0,12" Foreground="{StaticResource TextDimBrush}"/>
+                    <TextBlock TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,12">
+                        <Run Text="驱动需另行安装，不包含在流转中。"/><LineBreak/>
+                        <Hyperlink NavigateUri="https://vb-audio.com/Cable/" RequestNavigate="DriverLink_RequestNavigate" Foreground="{StaticResource AccentBrush}">VB-CABLE 官网下载</Hyperlink>
+                        <Run Text=" · "/><Hyperlink NavigateUri="https://vb-audio.com/Services/licensing.htm" RequestNavigate="DriverLink_RequestNavigate" Foreground="{StaticResource AccentBrush}">独立许可说明</Hyperlink>
+                        <LineBreak/><Run Text="VB-CABLE 为 Donationware；职业或公司用途应按官方条款购买许可。"/>
+                    </TextBlock>
+                    <TextBlock x:Name="DeviceHint" TextWrapping="Wrap" Foreground="{StaticResource WarmBrush}" Margin="0,0,0,12"/>
+                    <CheckBox x:Name="DiagnosticChoice" Content="仅诊断收音（不输出到虚拟设备，Codex 暂不可用）" Margin="0,0,0,12"/>
+                    <ComboBox x:Name="OutputChoice" DisplayMemberPath="Name" MinHeight="36"/>
+                    <TextBlock Text="对应的虚拟录音端（用于观察录音会话）" Margin="0,12,0,6"/>
+                    <ComboBox x:Name="CaptureChoice" DisplayMemberPath="Name" MinHeight="36"/>
+                    <WrapPanel Margin="0,12,0,0">
+                        <Button x:Name="RefreshButton" Content="刷新设备" Click="Refresh_Click" Style="{StaticResource ActionButtonStyle}" Padding="12,8" Margin="0,0,10,0"/>
+                        <Button x:Name="EnableButton" Content="开启音频服务" Click="Enable_Click" Style="{StaticResource ActionButtonStyle}" Padding="12,8" Margin="0,0,10,0"/>
+                        <Button x:Name="DisableButton" Content="关闭服务" Click="Disable_Click" IsEnabled="False" Style="{StaticResource ActionButtonStyle}" Padding="12,8"/>
+                    </WrapPanel>
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="18" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="2. 扫一个码，连接素材与麦克风" FontSize="17" FontWeight="SemiBold"/>
+                    <ComboBox x:Name="NetworkChoice" DisplayMemberPath="Label" MinHeight="34" Margin="0,12,0,8" SelectionChanged="Network_Changed"/>
+                    <Button x:Name="QrButton" Content="显示流转连接二维码" Click="Qr_Click" IsEnabled="False" Style="{StaticResource ActionButtonStyle}" Padding="12,8" HorizontalAlignment="Left"/>
+                    <Image x:Name="QrImage" Width="220" Height="220" Margin="0,12,0,0" Visibility="Collapsed" RenderOptions.BitmapScalingMode="NearestNeighbor"/>
+                    <TextBlock x:Name="PairingText" Text="手机连接页扫码一次，素材握手后自动接通麦克风。首次允许系统录音权限；已连接时点左上音波图可直接重开，无需再扫。" TextWrapping="Wrap" Margin="0,10,0,0" Foreground="{StaticResource TextDimBrush}"/>
+                </StackPanel>
+            </Border>
+            <Border Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="18" Margin="0,12,0,0">
+                <StackPanel>
+                    <TextBlock Text="3. 转发到 Codex 原听写" FontSize="17" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="StatusText" Text="音频服务已关闭" TextWrapping="Wrap" Margin="0,12,0,8" FontWeight="SemiBold"/>
+                    <TextBlock x:Name="StatsText" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+                    <ProgressBar x:Name="ReceiveLevel" Height="8" Minimum="0" Maximum="100" Foreground="{StaticResource AccentBrush}" Background="{StaticResource PanelBrush}" Margin="0,12,0,6"/>
+                    <TextBlock x:Name="LevelText" Text="等待手机音频" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+                    <TextBlock x:Name="OutputText" TextWrapping="Wrap" Foreground="{StaticResource WarmBrush}" Margin="0,8,0,0"/>
+                    <WrapPanel Margin="0,12,0,0">
+                        <Button x:Name="StartButton" Content="开始转发" Click="Start_Click" IsEnabled="False" Style="{StaticResource ActionButtonStyle}" Padding="12,8" Margin="0,0,10,8"/>
+                        <Button x:Name="StopButton" Content="停止转发" Click="Stop_Click" IsEnabled="False" Style="{StaticResource ActionButtonStyle}" Padding="12,8" Margin="0,0,10,8"/>
+                        <Button x:Name="EndButton" Content="结束手机会话" Click="End_Click" IsEnabled="False" Style="{StaticResource ActionButtonStyle}" Padding="12,8" Margin="0,0,10,8"/>
+                    </WrapPanel>
+                    <TextBlock Text="扫码握手后会自动转发，可直接点 Codex 听写。安静时只留心跳，说话后恢复。手动停止后可点“开始转发”；若在手机暂停，先在手机允许再次请求。停止转发仍会采音，“结束手机会话”才释放麦克风。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+                    <Expander Header="链路诊断 · 不含录音与设备标识" Foreground="{StaticResource TextBrush}" Margin="0,14,0,0">
+                        <StackPanel Margin="0,12,0,0">
+                            <TextBlock x:Name="DiagnosticText" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+                            <Button x:Name="CopyDiagnosticsButton" Content="复制脱敏诊断" Click="CopyDiagnostics_Click" Style="{StaticResource ActionButtonStyle}" Padding="12,8" HorizontalAlignment="Left" Margin="0,10,0,6"/>
+                            <TextBlock x:Name="DiagnosticHint" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+                        </StackPanel>
+                    </Expander>
+                    <CheckBox x:Name="ObserveChoice" Content="观察 Codex 录音会话（实验，不自动开麦）" Margin="0,16,0,6" Checked="Observe_Changed" Unchecked="Observe_Changed" IsEnabled="False"/>
+                    <TextBlock x:Name="ObserverText" Text="自动跟随需先验证当前 Codex 的录音会话行为。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+                    <Button x:Name="CalibrateButton" Content="校准原听写：开启一次后结束" Click="Calibrate_Click" IsEnabled="False" Style="{StaticResource ActionButtonStyle}" Padding="12,8" HorizontalAlignment="Left" Margin="0,12,0,8"/>
+                    <CheckBox x:Name="AutomaticChoice" Content="自动跟随 Codex 录音（实验，仅限本次手机会话）" Checked="Automatic_Changed" Unchecked="Automatic_Changed" IsEnabled="False" Margin="0,4,0,8"/>
+                    <TextBlock x:Name="FollowText" TextWrapping="Wrap" Foreground="{StaticResource WarmBrush}"/>
+                    <TextBlock Text="仅支持可验证的官方 Codex 录音会话。先校准，再启用；不监听鼠标点击，不读取识别内容。手动停止、手机暂停或连接变化会关闭自动跟随。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="0,8,0,0"/>
+                </StackPanel>
+            </Border>
+            <TextBlock x:Name="ErrorText" TextWrapping="Wrap" Foreground="{StaticResource WarmBrush}" Margin="0,14,0,0"/>
+            <TextBlock Text="仅用于同一局域网或手机热点，音频端口 8902。关闭本窗口不会关闭音频服务；请用“关闭服务”结束。未安装虚拟音频驱动时需先自行安装。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" FontSize="12" Margin="0,18,0,0"/>
+            <Button Content="返回素材栏" Click="Close_Click" Style="{StaticResource ActionButtonStyle}" Padding="14,9" HorizontalAlignment="Right" Margin="0,16,0,0"/>
+        </StackPanel>
+    </ScrollViewer>
+</Window>
