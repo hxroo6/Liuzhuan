@@ -54,10 +54,11 @@ jobs:
   android:
     needs: windows-pc
     runs-on: ubuntu-latest
-    env:
-      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
     steps:
       - uses: actions/checkout@v4
+
+      - name: Configure isolated Gradle cache
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-home" >> "$GITHUB_ENV"
 
       - uses: actions/setup-java@v4
         with:
