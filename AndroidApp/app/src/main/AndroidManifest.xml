@@ -29,6 +29,13 @@
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.Liuzhuan">
 
+        <provider android:name=".OfflineOriginalProvider"
+            android:authorities="${applicationId}.offline-originals"
+            android:exported="false" android:grantUriPermissions="true" />
+
+        <activity android:name=".PairingScanActivity" android:exported="false"
+            android:screenOrientation="portrait" />
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

@@ -8,23 +8,24 @@
 
 ## 一、项目速览
 
-「流转」= 纯局域网跨设备素材中转站。PC 端（WPF/.NET 7，位于 `Liuzhuan/`）是服务器；Android 端（Kotlin + Compose，minSdk 36，位于 `AndroidApp/`）是客户端。两条核心链路必须同时可用：手机复制自动推电脑（**后台复制秒达靠 LSPosed hook 剪贴板写入路径**，前台靠无障碍）；电脑素材实时同步手机接收页（WS 快照+增量）。
+「流转」= 纯局域网跨设备素材中转站。PC 端（WPF/.NET 10，位于 `Liuzhuan/`）是服务器；Android 端（Kotlin + Compose，minSdk 36，位于 `AndroidApp/`）是客户端。两条核心链路必须同时可用：手机复制自动推电脑（**后台复制秒达靠 LSPosed hook 剪贴板写入路径**，前台靠无障碍）；电脑素材实时同步手机接收页（WS 快照+增量）。
 
-## 二、环境（全部已装于 F 盘，勿重复安装，详见 ENV.md）
+## 二、构建环境
 
-| 项 | 值 |
+| 项 | 要求 |
 |---|---|
-| JDK | `F:/jdk-21.0.12+8`（必须 JDK 21） |
-| Android SDK | `F:/Android-SDK` |
-| Gradle | `F:/gradle-8.11.1`，GRADLE_USER_HOME=`F:/gradle-home` |
-| 编译副本 | `F:/LiuzhuanApp`（工程路径含中文无法编译，**改完 `AndroidApp/` 后必须 cp 同步过去再编译**） |
-| keystore | `AndroidApp/keystore/`（`liuzhuan.jks` + `keystore.properties`，gitignore 不入库，本地存在） |
+| .NET SDK | .NET 10，基线及回退规则见 `global.json` |
+| JDK | JDK 21，设置 `JAVA_HOME` |
+| Android SDK | API 36，设置 `ANDROID_HOME` 或本地 `local.properties` |
+| Gradle | 使用 AndroidApp 中的 Gradle Wrapper；缓存目录可由 `GRADLE_USER_HOME` 指定 |
+| 工程路径 | 如遇 Android 非 ASCII 路径检查，使用独立的纯英文路径编译副本并核对源码同步 |
+| 签名 | 私有 keystore 不入库；未提供正式密钥时 CI 使用测试签名，不能保证覆盖正式安装 |
 
 ## 三、开发流程铁律
 
 1. **改码前先备份**：`cp -r` 目标目录到 `backup/<MMdd-HHmm>-主题/`（沿用既有惯例）。
 2. **先读代码再动手**：理解调用方后再修改；不许凭现象直接下结论改代码。
-3. **改完必编译**：Android 改动 → 同步到 `F:/LiuzhuanApp` 后 `assembleDebug` 通过才算完成；PC 改动 → publish 前**先停掉运行中的 Liuzhuan.exe**（锁 dll），发布后检查残留 dotnet 进程（锁 obj 会报 MSB4018）。
+3. **改完必编译**：Android 改动 → 同步到独立的纯英文路径编译副本后 `assembleDebug` 通过才算完成；PC 改动 → publish 前**先停掉运行中的 Liuzhuan.exe**（锁 dll），发布后检查残留 dotnet 进程（锁 obj 会报 MSB4018）。
 4. **不许凭现象宣布修好**：后台复制类问题先用诊断日志定位断点（ACC→DETECT→CAPTURE→DISPATCH→ACTION→WS）或做 A-B 对照（后台复制多条切前台：全发=队列积压，只发末条=平台焦点限制），再动手。
 5. **后台复制秒达的唯一可靠方案 = LSPosed hook 剪贴板写入路径**（`ClipHook` hook `ClipboardManager.setPrimaryClip`，事件驱动、不读剪贴板、绕开 ColorOS 的 checkPackage/焦点/READ_CLIPBOARD_IN_BACKGROUND 读取豁免链）。禁止引入：Shizuku / 默认输入法方案；剪贴板轮询（2s 定时读取已被 M6 移除，勿恢复）；**Root 读剪贴板方案**（root daemon 已被 ColorOS 的 `checkPackage` 拒死——`SecurityException: Package android does not belong to 2000`，勿重蹈）。
 
@@ -46,7 +47,7 @@
 
 ## 五、Git 与交付
 
-- **本地 commit，不 push**（用户明确要求，远程停在 GitHub v1.0.0）。commit message 用「做了什么 + 为什么」格式，每个可交付阶段一条。
+- **默认仅本地 commit；用户明确授权后才推送**。发布应沿当前公开分支提交经过脱敏的源码快照，不附带私有现场历史，不强推或改写公开历史。commit message 用「做了什么 + 为什么」格式，每个可交付阶段一条。
 - 版本演进史见 git log（M2~M13 对应提交哈希记录在 `logs/项目迁移交接文档_20260827.md` §3）。
 - 交付物命名惯例：`AndroidApp/Liuzhuan-M{n}-signed.apk`（release 签名，apksigner 验签）；PC 产物 `app/Liuzhuan.exe`。历史版本保留可回退。
 - 每次交付给用户的信息必须含：APK/exe **完整绝对路径 + 生成时间**，以及「覆盖安装后需到无障碍设置关闭→重新开启」提醒。
@@ -54,5 +55,5 @@
 ## 六、沟通约定
 
 - 回复使用简体中文，简洁结构化。
-- 用户的软件/工具一律安装到 F 盘。
+- 遵守本地用户指定的工具安装位置，不重复安装已有工具。
 - 不确定的事实标注【待确认】，不臆断。

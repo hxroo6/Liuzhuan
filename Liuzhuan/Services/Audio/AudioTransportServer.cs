@@ -17,7 +17,8 @@ public sealed record MicSnapshot(string Status, string Phone = "", bool Ready = 
     bool Receiving = false, long Frames = 0, int BufferedMs = 0, long Dropped = 0,
     float Peak = 0, float Dbfs = -96, bool DiagnosticOnly = false,
     long ConnectionId = 0, long StopRevision = 0, bool Quiet = false,
-    long TotalFrames = 0, long? ReadPcmBytes = null, long SessionSeconds = 0, long HeartbeatAgeMs = 0);
+    long TotalFrames = 0, long? ReadPcmBytes = null, long SessionSeconds = 0, long HeartbeatAgeMs = 0,
+    MicrophoneIssue Issue = MicrophoneIssue.None);
 
 /// <summary>Independent plaintext LAN service. All transitions are serialized; audio is never persisted.</summary>
 public sealed class AudioTransportServer : IAsyncDisposable
@@ -51,11 +52,15 @@ public sealed class AudioTransportServer : IAsyncDisposable
     private bool _inviteStartWhenReady;
     private MicSnapshot _snapshot = new("音频服务已关闭");
     private long _lastPcmAt;
+    private MicrophoneIssue _issue;
     public AudioLevel LiveLevel => Interlocked.Read(ref _lastPcmAt) is var at && at != 0 && Stopwatch.GetElapsedTime(at).TotalMilliseconds < 200
         ? _sink.Level : new(0, 0, -96);
     public MicSnapshot Snapshot => Volatile.Read(ref _snapshot);
     private MicSnapshot? _lastSession;
     public MicSnapshot? LastSession => Volatile.Read(ref _lastSession);
+    // Sparse evidence notification, at most once per connection. Handlers only enqueue background work.
+    public event Action<MicSnapshot>? SignalVerified;
+    private long _verifiedConnection;
     private readonly Action<string>? _diagnostic;
     public int Port { get; private set; }
     public AudioTransportServer(IAudioSink sink, Action<string>? diagnostic = null)
@@ -135,6 +140,7 @@ public sealed class AudioTransportServer : IAsyncDisposable
                 if (_peer != null || _invite.Length == 0 || Stopwatch.GetElapsedTime(_inviteAt).TotalMinutes >= 2 ||
                     !CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(token), Encoding.UTF8.GetBytes(_invite))) return;
                 _invite = "";
+                _issue = MicrophoneIssue.None;
                 peer = new Peer(socket) { Name = (json.GetProperty("device").GetString() ?? "手机")[..Math.Min(64, (json.GetProperty("device").GetString() ?? "手机").Length)] };
                 _peer = peer;
                 peer.ReadPcmBaseline = _sink.ReadPcmBytes ?? 0;
@@ -175,8 +181,14 @@ public sealed class AudioTransportServer : IAsyncDisposable
             }
             finally { linked.Cancel(); socket.Abort(); peer.Commands.Writer.TryComplete(); await sender; }
         }
-        catch (Exception ex) when (ex is OperationCanceledException or WebSocketException or JsonException or InvalidOperationException or InvalidDataException or KeyNotFoundException or FormatException)
-        { /* Failure is isolated to this audio session; credentials and payloads are not logged. */ }
+        catch (Exception ex)
+        {
+            // Keep native endpoint/COM failures isolated too. Never log payloads or exception text.
+            if (!_life.IsCancellationRequested && peer != null)
+                _issue = ex is JsonException or InvalidDataException or KeyNotFoundException or FormatException
+                    ? MicrophoneIssue.Protocol : ex is WebSocketException or OperationCanceledException
+                    ? MicrophoneIssue.Network : MicrophoneIssue.Driver;
+        }
         finally
         {
             socket.Abort();
@@ -185,7 +197,7 @@ public sealed class AudioTransportServer : IAsyncDisposable
             {
                 if (peer != null && _peer == peer)
                 {
-                    _sink.SetForwarding(false);
+                    try { _sink.SetForwarding(false); } catch { _issue = MicrophoneIssue.Driver; }
                     Publish("手机会话已结束");
                     Volatile.Write(ref _lastSession, Snapshot);
                     Diagnose("session_end");
@@ -286,12 +298,23 @@ public sealed class AudioTransportServer : IAsyncDisposable
     }
     private static void Queue(Peer peer, string message)
     { if (!peer.Commands.Writer.TryWrite(message)) peer.Socket.Abort(); }
-    private void Publish(string status) => Volatile.Write(ref _snapshot, new(status, _peer?.Name ?? "", _peer?.Ready ?? false,
+    private void Publish(string status)
+    {
+        var snapshot = new MicSnapshot(status, _peer?.Name ?? "", _peer?.Ready ?? false,
         _peer?.Requested ?? false, _peer?.Receiving == true && !_peer.Quiet && _peer.Frames > 0, _peer?.Frames ?? 0, _sink.BufferedMilliseconds, _sink.DroppedFrames,
         _sink.Level.Peak, _sink.Level.Dbfs, _sink.DiagnosticOnly, _peer?.Id ?? 0, _peer?.StopRevision ?? 0, _peer?.Quiet ?? false,
         _peer?.TotalFrames ?? 0, _peer != null && _sink.ReadPcmBytes is long read ? Math.Max(0, read - _peer.ReadPcmBaseline) : null,
         _peer != null ? (long)Stopwatch.GetElapsedTime(_peer.ConnectedAt).TotalSeconds : 0,
-        _peer != null ? (long)Stopwatch.GetElapsedTime(_peer.LastStatus).TotalMilliseconds : 0));
+        _peer != null ? (long)Stopwatch.GetElapsedTime(_peer.LastStatus).TotalMilliseconds : 0, _issue);
+        Volatile.Write(ref _snapshot, snapshot);
+        if (snapshot.ConnectionId > 0 && snapshot.ConnectionId != _verifiedConnection && !snapshot.DiagnosticOnly &&
+            snapshot.Requested && snapshot.Receiving && snapshot.TotalFrames >= 25 && snapshot.ReadPcmBytes >= 16000 &&
+            snapshot.Issue == MicrophoneIssue.None && snapshot.Peak > 0 && float.IsFinite(snapshot.Peak))
+        {
+            _verifiedConnection = snapshot.ConnectionId;
+            try { SignalVerified?.Invoke(snapshot); } catch { /* Configuration protection cannot interrupt audio. */ }
+        }
+    }
 
     private void Diagnose(string phase)
     {
@@ -314,7 +337,7 @@ public sealed class AudioTransportServer : IAsyncDisposable
                     if (Stopwatch.GetElapsedTime(peer.LastStatus).TotalSeconds > 6 ||
                         peer.Requested && !peer.Receiving && Stopwatch.GetElapsedTime(peer.Started).TotalSeconds > 3 ||
                         peer.Receiving && !peer.Quiet && Stopwatch.GetElapsedTime(peer.LastFrame).TotalSeconds > 2)
-                    { StopLocked(peer); peer.Socket.Abort(); Publish("手机未及时响应，已停止输出"); continue; }
+                    { _issue = MicrophoneIssue.Network; StopLocked(peer); peer.Socket.Abort(); Publish("手机未及时响应，已停止输出"); continue; }
                     Queue(peer, AudioProtocol.Message("lease", peer.Generation, new { forwarding = peer.Requested }));
                     Publish(Snapshot.Status);
                 }

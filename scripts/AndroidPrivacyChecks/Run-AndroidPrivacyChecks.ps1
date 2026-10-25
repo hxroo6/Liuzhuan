@@ -1,4 +1,4 @@
-param(
+﻿param(
     [string]$OutputDirectory = 'F:/appdata/Temp/liuzhuan-android-privacy-checks'
 )
 $ErrorActionPreference = 'Stop'
@@ -22,10 +22,14 @@ $privacyCompilerClasspath = @(
     $privacyAnnotations,
     $privacyCoroutines
 ) -join ';'
-$privacyRuntimeClasspath = @($privacyStdlib, $privacyCoroutines, $privacyAnnotations) -join ';'
+$privacyRuntimeClasspath = @($privacyStdlib, $privacyCoroutines, $privacyAnnotations,'F:/gradle-8.11.1/lib/groovy-3.0.22.jar','F:/gradle-8.11.1/lib/groovy-json-3.0.22.jar') -join ';'
 $privacySources = @(
+    (Join-Path $privacyRepoRoot 'scripts/AutoReceiptChecks/JsonApiAdapter.kt'),
+    (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/TransferTasks.kt'),
+    (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/TransferTaskStates.kt'),
     (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/LanHub.kt'),
     (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/ClipReceiver.kt')
+    (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/HookSenderIdentity.kt')
     (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/core/RecentFileEvents.kt')
     (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/core/Hex.kt')
 ) + @((Get-ChildItem -LiteralPath (Join-Path $privacyRepoRoot 'AndroidApp/app/src/main/java/com/liuzhuan/app/clipboard') -Filter '*.kt' |
@@ -46,4 +50,16 @@ foreach ($privacyFixture in @('physical-empty', 'backup-empty', 'missing-marker'
         Tee-Object -FilePath (Join-Path $OutputDirectory 'checks.log') -Append
     if ($LASTEXITCODE -ne 0) { throw "Android privacy $privacyFixture checks failed: $LASTEXITCODE" }
 }
+# Compile the real hook against Android 36, not the JVM receiver stubs. This
+# catches platform method/signature mistakes but is not an LSPosed device test.
+$privacyHookClasspath = @($privacyStdlib, $privacyAnnotations,
+    'F:/Android-SDK/platforms/android-36/android.jar',
+    (Join-Path $privacyRepoRoot 'AndroidApp/app/libs/xposed-api-stub.jar')) -join ';'
+$privacyHookSources = @('xposed/ClipHook.kt', 'core/BoundedRead.kt') | ForEach-Object {
+    Join-Path $privacyRepoRoot ('AndroidApp/app/src/main/java/com/liuzhuan/app/' + $_)
+}
+& $privacyJava -cp $privacyCompilerClasspath org.jetbrains.kotlin.cli.jvm.K2JVMCompiler -no-stdlib -no-reflect `
+    -classpath $privacyHookClasspath -d (Join-Path $OutputDirectory 'hook-sdk36-check.jar') @privacyHookSources 2>&1 |
+    Tee-Object -FilePath (Join-Path $OutputDirectory 'hook-compile.log')
+if ($LASTEXITCODE -ne 0) { throw "Production hook SDK 36 compilation failed: $LASTEXITCODE" }
 Write-Output "Evidence saved to $OutputDirectory"

@@ -2,13 +2,13 @@
 
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net7.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWPF>true</UseWPF>
     <UseWindowsForms>false</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>1.9.0</Version>
+    <Version>1.20.0</Version>
     <AssemblyName>Liuzhuan</AssemblyName>
     <RootNamespace>Liuzhuan</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
@@ -20,6 +20,7 @@
     <PackageReference Include="NAudio" Version="2.2.1" />
     <PackageReference Include="H.NotifyIcon.Wpf" Version="2.1.3" />
     <PackageReference Include="Fleck" Version="1.2.0" />
+    <PackageReference Include="VirtualizingWrapPanel" Version="2.5.4" />
     <PackageReference Include="ZXing.Net" Version="0.16.9" />
   </ItemGroup>
 
@@ -27,6 +28,7 @@
     <Resource Include="app.ico" />
     <Resource Include="app.png" />
     <Content Include="licenses/NAudio.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="licenses/VirtualizingWrapPanel.txt" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

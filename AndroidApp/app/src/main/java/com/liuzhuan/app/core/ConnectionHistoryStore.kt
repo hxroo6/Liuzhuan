@@ -39,7 +39,7 @@ class ConnectionHistoryStore(context: Context) {
     }.catch { emit(State(unavailable = true)) }
 
     suspend fun remember(settings: SettingsStore.Settings) = withContext(Dispatchers.IO) {
-        val profile = ConnectionProfile(settings.serverIp.trim(), settings.serverPort.toInt(), System.currentTimeMillis(), cipher.seal(settings.password))
+        val profile = ConnectionProfile(settings.serverIp.trim(), settings.serverPort.toInt(), System.currentTimeMillis(), cipher.seal(settings.password),settings.expectedDeviceId,settings.serverName)
         app.connectionHistoryDataStore.edit { prefs ->
             prefs[key] = ConnectionProfiles.encode(ConnectionProfiles.remember(ConnectionProfiles.decode(prefs[key].orEmpty()), profile))
         }
@@ -49,7 +49,17 @@ class ConnectionHistoryStore(context: Context) {
         val entries = ConnectionProfiles.decode(app.connectionHistoryDataStore.data.first()[key].orEmpty())
         val profile = entries.firstOrNull { it.id == id } ?: error("History entry no longer exists")
         val password = cipher.open(profile.sealedPassword)
-        SettingsStore(app).settings.first().copy(serverIp = profile.host, serverPort = profile.port.toString(), password = password)
+        val found=if(profile.deviceId.isNotBlank())runCatching {com.liuzhuan.app.net.LanDiscovery.discover().firstOrNull {
+            it.deviceId==profile.deviceId && it.verified(com.liuzhuan.app.net.Proto.sha256Hex(password))}}.getOrNull() else null
+        SettingsStore(app).settings.first().copy(serverIp = found?.ip?:profile.host, serverPort = (found?.port?:profile.port).toString(), password = password,
+            expectedDeviceId=profile.deviceId,serverName=profile.name)
+    }
+
+    suspend fun rename(id:String,alias:String)=withContext(Dispatchers.IO) {
+        require(alias.trim().length<=64 && !alias.any {it.isISOControl()})
+        app.connectionHistoryDataStore.edit { prefs ->
+            prefs[key]=ConnectionProfiles.encode(ConnectionProfiles.decode(prefs[key].orEmpty()).map {if(it.id==id)it.copy(alias=alias.trim()) else it})
+        }
     }
 
     suspend fun remove(id: String) = withContext(Dispatchers.IO) {

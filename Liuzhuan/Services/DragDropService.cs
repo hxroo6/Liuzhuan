@@ -145,10 +145,10 @@ public static class DragDropService
             {
                 try
                 {
-                    item.TextContent = File.ReadAllText(path, System.Text.Encoding.UTF8);
-                    // 如果内容过长，截断显示
-                    if (item.TextContent.Length > 5000)
-                        item.TextContent = item.TextContent[..5000] + "\n…（内容已截断）";
+                    using var reader=new StreamReader(path,System.Text.Encoding.UTF8,true);
+                    var preview=new char[5001];
+                    var count=reader.ReadBlock(preview,0,preview.Length);
+                    item.TextContent=new string(preview,0,Math.Min(count,5000))+(count>5000?"\n…（内容已截断）":"");
                 }
                 catch { }
             }

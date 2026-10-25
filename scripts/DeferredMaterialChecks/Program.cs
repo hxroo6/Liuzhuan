@@ -115,6 +115,17 @@ internal static class Program
         var skipCount = 0;
         var skipped = DeferredMaterialLoader.LoadAsync(pathFirst, _ => { skipCount++; return Task.FromResult(new DeferredMaterialProperties("wrong", 1)); }, () => skipCount++, scheduler);
         Check(skipped.IsCompleted && skipCount == 0, "inline text skips source loading without running the loader or callback");
+        var release=new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        int running=0,maximum=0,entered=0;
+        var bounded=Enumerable.Range(0,12).Select(i=>DeferredMaterialLoader.LoadAsync(new MaterialItem {Type=MaterialType.Image,FilePath=Path.Combine(root,$"bounded-{i}.png")}, async _=>{
+            var active=Interlocked.Increment(ref running);Interlocked.Increment(ref entered);
+            int seen;do{seen=Volatile.Read(ref maximum);if(active<=seen)break;}while(Interlocked.CompareExchange(ref maximum,active,seen)!=seen);
+            try{await release.Task;return new DeferredMaterialProperties(null,0);}finally{Interlocked.Decrement(ref running);}
+        },completionScheduler:scheduler)).ToArray();
+        var deadline=Stopwatch.StartNew();while(Volatile.Read(ref entered)<2&&deadline.Elapsed<TimeSpan.FromSeconds(5))Thread.Sleep(1);
+        Check(Volatile.Read(ref entered)==2 && Volatile.Read(ref maximum)==2,"Shell and media preparation share a two-worker concurrency budget");
+        release.SetResult(true);foreach(var task in bounded)Complete(task,scheduler);
+        Check(entered==12 && maximum==2,"all queued source loads eventually run without exceeding the work budget");
         Console.WriteLine($"PASS {_checks} deferred-source checks; isolated artifacts: {root}");
     }
 

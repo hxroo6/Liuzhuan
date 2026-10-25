@@ -8,6 +8,8 @@ using Liuzhuan.Utils;
 
 namespace Liuzhuan.Services;
 
+public sealed record ProjectImportBatchResult(int Added, int AlreadyImported, int DuplicateText);
+
 /// <summary>
 /// 数据持久化层 — JSON 文件本地存储
 /// 数据目录：项目目录/data/
@@ -15,8 +17,11 @@ namespace Liuzhuan.Services;
 /// </summary>
 public class DataStore : IDisposable
 {
-    private static string GetDataDir() => ConfigService.GetEffectiveDataDir();
-    private static string DataFile => Path.Combine(GetDataDir(), "data.json");
+    public AutomationStore Automation { get; }
+    public bool LoadFailed {get;private set;}
+    public string DataRoot { get; }
+    private string GetDataDir() => DataRoot;
+    private string DataFile => Path.Combine(DataRoot, "data.json");
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -25,7 +30,9 @@ public class DataStore : IDisposable
         Converters = { new JsonStringEnumConverter() }
     };
 
-    private readonly ObservableCollection<MaterialItem> _items = new();
+    private readonly ResettableCollection<MaterialItem> _items = new();
+    private MaterialItem[]? _orderedItems;
+    private HashSet<MaterialItem>? _liveItems;
     private readonly object _saveLock = new();
     private Timer? _saveTimer;
     private bool _disposed;
@@ -38,9 +45,12 @@ public class DataStore : IDisposable
 
     // 变更序号（用于 LAN 增量同步的 gap 检测；内存计数，重启归零）
     private long _sequence;
+    private long _queryRevision;
 
     /// <summary>当前变更序号</summary>
     public long CurrentSequence => _sequence;
+    /// <summary>Only fields used for ordering/filtering/search invalidate immutable desktop query snapshots.</summary>
+    public long QueryRevision => Interlocked.Read(ref _queryRevision);
 
     private long NextSequence() => System.Threading.Interlocked.Increment(ref _sequence);
 
@@ -48,26 +58,27 @@ public class DataStore : IDisposable
     public ObservableCollection<MaterialItem> Items => _items;
 
     /// <summary>最近 N 条素材摘要（LAN 列表同步用，轻量不传内容）</summary>
-    public List<Services.Lan.LanItemSummary> GetRecentSummaries(int count)
-    {
-        var seq = _sequence;
-        return _items
-            .Take(count)
-            .Select(x => new Services.Lan.LanItemSummary
-            {
-                Id = x.Id,
-                Type = x.Type.ToString(),
-                Name = x.DisplayName,
-                Size = x.Size,
-                AddedTime = new DateTimeOffset(x.AddedTime).ToUnixTimeSeconds(),
-                Sequence = seq
-            })
-            .ToList();
+    public List<Services.Lan.LanItemSummary> GetRecentSummaries(int count) => _items.Take(count).Select(GetSummary).ToList();
+    public Services.Lan.LanItemSummary GetSummary(MaterialItem x) => new() {
+        Id=x.Id,Type=x.Type.ToString(),Name=x.DisplayName,Size=x.Size,
+        AddedTime=new DateTimeOffset(x.AddedTime).ToUnixTimeSeconds(),Sequence=_sequence,
+        Group=x.GroupName,Tags=x.Tags.ToArray(),Note=x.Note,HasFile=x.HasFileSource,
+        Favorite=x.IsFavorite,Revision=x.MetadataRevision,SourceMissing=x.IsSourceMissing,
+        Source=x.CollectionSource,SourceDevice=x.CollectionDevice,SearchText=x.TextContent,SourceRevision=x.SourceRevision
+    };
+    public event Action<MaterialItem>? ItemUpdated;
+    private void MetadataChanged(MaterialItem item, bool queryChanged = true) {
+        item.MetadataRevision=checked(item.MetadataRevision+1);
+        if(queryChanged)Interlocked.Increment(ref _queryRevision);
+        NextSequence();ItemUpdated?.Invoke(item);ScheduleSave();
     }
 
-    public DataStore()
+    public DataStore(string? dataRoot = null)
     {
+        DataRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(dataRoot ?? ConfigService.GetEffectiveDataDir()));
+        _items.CollectionChanged+=(_,_)=>{_orderedItems=null;_liveItems=null;Interlocked.Increment(ref _queryRevision);};
         Directory.CreateDirectory(GetDataDir());
+        Automation = new AutomationStore(GetDataDir());
         Load();
     }
 
@@ -86,12 +97,18 @@ public class DataStore : IDisposable
         item.RefreshSourceStatus();
         NextSequence(); // 每次变更递增序号（去重置顶也算一次变更）
         // 去重检查
-        if (item.IsFile)
+        if (item.HasFileSource)
         {
-            var existing = _items.FirstOrDefault(x => x.IsFile &&
+            var existing = _items.FirstOrDefault(x => x.HasFileSource &&
                 string.Equals(x.FilePath, item.FilePath, StringComparison.OrdinalIgnoreCase));
             if (existing != null)
             {
+                existing.RegistrationKeys=existing.RegistrationKeys.Concat(item.RegistrationKeys).Distinct().ToArray();
+                existing.Size = item.Size;
+                existing.Type = item.Type;
+                existing.TextContent = item.TextContent;
+                existing.InvalidateSourceContent();
+                existing.RefreshSourceStatus();
                 // 已存在则更新时间，移到最前
                 _items.Remove(existing);
                 existing.AddedTime = DateTime.Now;
@@ -104,9 +121,10 @@ public class DataStore : IDisposable
         }
         else
         {
-            var existing = _items.FirstOrDefault(x => !x.IsFile && x.TextContent == item.TextContent);
+            var existing = _items.FirstOrDefault(x => !x.HasFileSource && x.TextContent == item.TextContent);
             if (existing != null)
             {
+                existing.RegistrationKeys=existing.RegistrationKeys.Concat(item.RegistrationKeys).Distinct().ToArray();
                 _items.Remove(existing);
                 existing.AddedTime = DateTime.Now;
                 _items.Insert(0, existing);
@@ -117,9 +135,10 @@ public class DataStore : IDisposable
             }
         }
 
+        Automation.Apply(item);
         _items.Insert(0, item);
         ScheduleSave();
-        Logger.Run("DataStore: added item Type={0} Name={1}", item.Type, item.DisplayName);
+        Logger.Run("DataStore: added item Type={0} Name={1}", item.Type, item.Type==MaterialType.Text && !item.HasFileSource?"文字素材":item.DisplayName);
         ItemAdded?.Invoke(item);
         return item;
     }
@@ -158,6 +177,29 @@ public class DataStore : IDisposable
 
         var liveIds = _items.Select(x => x.Id).ToHashSet(StringComparer.Ordinal);
         var restoredCount = 0;
+        if(step.Removed.Count>32)
+        {
+            var order=new LinkedList<MaterialItem>(_items);
+            var nodes=new Dictionary<string,LinkedListNode<MaterialItem>>(StringComparer.Ordinal);
+            for(var node=order.First;node!=null;node=node.Next)nodes[node.Value.Id]=node;
+            var restored=new List<MaterialItem>();
+            foreach(var removed in step.Removed.AsEnumerable().Reverse())
+            {
+                if(nodes.ContainsKey(removed.Item.Id))continue;
+                LinkedListNode<MaterialItem>? anchor=null;
+                for(int i=removed.OriginalIndex+1;i<step.OriginalOrder.Length;i++)if(nodes.TryGetValue(step.OriginalOrder[i],out anchor))break;
+                LinkedListNode<MaterialItem> added;
+                if(anchor!=null)added=order.AddBefore(anchor,removed.Item);
+                else {
+                    for(int i=removed.OriginalIndex-1;i>=0;i--)if(nodes.TryGetValue(step.OriginalOrder[i],out anchor))break;
+                    added=anchor!=null?order.AddAfter(anchor,removed.Item):order.AddLast(removed.Item);
+                }
+                nodes[removed.Item.Id]=added;restored.Add(removed.Item);
+            }
+            _items.Replace(order.ToArray());
+            foreach(var item in restored){NextSequence();ItemAdded?.Invoke(item);}
+            if(restored.Count>0)ScheduleSave();return restored.Count>0;
+        }
         // Older entries first keeps both insertion anchors and incremental broadcast order stable.
         foreach (var removed in step.Removed.AsEnumerable().Reverse())
         {
@@ -180,6 +222,7 @@ public class DataStore : IDisposable
 
     /// <summary>获取可撤回的步数</summary>
     public int UndoCount => _undoStack.Count;
+    public IEnumerable<MaterialItem> RetainedForUndo => _undoStack.SelectMany(x=>x.Removed.Select(r=>r.Item)).DistinctBy(x=>x.Id);
 
     private void PushUndo(List<MaterialItem> removedItems)
     {
@@ -210,7 +253,8 @@ public class DataStore : IDisposable
     private void RemoveItems(List<MaterialItem> removed, bool allowGlobalClear = false)
     {
         PushUndo(removed);
-        foreach (var item in removed) _items.Remove(item);
+        if(removed.Count>32){var ids=removed.Select(x=>x.Id).ToHashSet();_items.Replace(_items.Where(x=>!ids.Contains(x.Id)).ToArray());}
+        else foreach (var item in removed) _items.Remove(item);
         ScheduleSave();
 
         if (allowGlobalClear && _items.Count == 0)
@@ -254,9 +298,10 @@ public class DataStore : IDisposable
     public void SetFavorite(string id, bool favorite)
     {
         var item = _items.FirstOrDefault(x => x.Id == id);
-        if (item != null)
+        if (item != null && item.IsFavorite != favorite)
         {
             item.IsFavorite = favorite;
+            MetadataChanged(item);
             ScheduleSave();
             Logger.Run("DataStore: set favorite={0} for {1}", favorite, item.DisplayName);
         }
@@ -265,13 +310,97 @@ public class DataStore : IDisposable
     /// <summary>批量收藏/取消收藏</summary>
     public void SetFavoriteMultiple(List<string> ids, bool favorite)
     {
-        foreach (var id in ids)
+        ArgumentNullException.ThrowIfNull(ids);
+        var selected = ids.ToHashSet(StringComparer.Ordinal);
+        var changed = 0;
+        foreach (var item in _items)
         {
-            var item = _items.FirstOrDefault(x => x.Id == id);
-            if (item != null) item.IsFavorite = favorite;
+            if (selected.Contains(item.Id) && item.IsFavorite != favorite)
+            {
+                item.IsFavorite = favorite;
+                MetadataChanged(item);
+                changed++;
+            }
         }
-        ScheduleSave();
-        Logger.Run("DataStore: set favorite={0} for {1} items", favorite, ids.Count);
+        if (changed > 0) ScheduleSave();
+        Logger.Run("DataStore: set favorite={0} for {1} changed items", favorite, changed);
+    }
+
+    /// <summary>Preview and commit use the same whole-batch validation. Caller must subsequently await FlushAsync.</summary>
+    public ProjectImportBatchResult PreviewProjectBatch(IReadOnlyList<MaterialItem> incoming,long expectedSequence,string expectedDataRoot) =>
+        PlanProjectBatch(incoming,expectedSequence,expectedDataRoot).Result;
+
+    public ProjectImportBatchResult ImportProjectBatch(IReadOnlyList<MaterialItem> incoming,long expectedSequence,string expectedDataRoot)
+    {
+        var plan=PlanProjectBatch(incoming,expectedSequence,expectedDataRoot);
+        // No live object is changed until every row, identity and source path has passed validation.
+        foreach(var row in plan.Added) {
+            row.Item.GroupName=row.Metadata.GroupName!;row.Item.Tags=row.Metadata.Tags!;row.Item.Note=row.Metadata.Note!;
+            row.Item.MetadataRevision=0;row.Item.CollectionSource="ProjectPackage";row.Item.CollectionDevice="";
+            row.Item.IntegrityBaseline=null;row.Item.ThumbnailPath="";row.Item.Duration=0;
+        }
+        foreach(var change in plan.Keys)change.Key.RegistrationKeys=change.Value.ToArray();
+        if(plan.Added.Count>0)_items.Replace(plan.Added.Select(x=>x.Item).Concat(_items).ToArray());
+        if(plan.Added.Count>0||plan.Keys.Count>0)ScheduleSave();
+        foreach(var row in plan.Added){NextSequence();ItemAdded?.Invoke(row.Item);}
+        return plan.Result;
+    }
+    private sealed record ProjectRow(MaterialItem Item,MaterialOrganizationPatch Metadata,string Key);
+    private sealed record ProjectPlan(List<ProjectRow> Added,Dictionary<MaterialItem,List<string>> Keys,ProjectImportBatchResult Result);
+    private static bool TryProjectKey(string? value,out string key)
+    {
+        key="";var parts=value?.Split(':');
+        if(parts?.Length!=3||parts[0]!="project"||!Guid.TryParse(parts[1],out var package)||!Guid.TryParse(parts[2],out var entry))return false;
+        key=$"project:{package:N}:{entry:N}";return true;
+    }
+    private ProjectPlan PlanProjectBatch(IReadOnlyList<MaterialItem> incoming,long expectedSequence,string expectedDataRoot)
+    {
+        System.Windows.Application.Current?.Dispatcher.VerifyAccess();
+        if(_disposed)throw new ObjectDisposedException(nameof(DataStore));
+        if(LoadFailed)throw new IOException("素材索引不可读取，不能合入项目包。原文件已保留。");
+        ArgumentNullException.ThrowIfNull(incoming);
+        if(incoming.Count is <1 or >1000)throw new ArgumentException("每次合入1–1000条素材。");
+        var root=Path.TrimEndingDirectorySeparator(Path.GetFullPath(GetDataDir()));
+        if(!string.Equals(root,Path.TrimEndingDirectorySeparator(Path.GetFullPath(expectedDataRoot)),StringComparison.OrdinalIgnoreCase)||CurrentSequence!=expectedSequence)
+            throw new InvalidOperationException("素材库已变化，请重新预览项目包。");
+        var managed=Path.Combine(root,"project-imports")+Path.DirectorySeparatorChar;
+        var live=_items.ToHashSet();var ids=new HashSet<string>(StringComparer.Ordinal);var rowKeys=new HashSet<string>(StringComparer.Ordinal);
+        var rows=new List<ProjectRow>();
+        foreach(var item in incoming) {
+            if(item==null||live.Contains(item)||string.IsNullOrWhiteSpace(item.Id)||item.Id.Length>128||!ids.Add(item.Id)||
+                !Enum.IsDefined(typeof(MaterialType),item.Type)||item.DisplayName==null||item.DisplayName.Length>256||item.TextContent.Length>262144||item.Size<0||
+                item.AddedTime==default||item.RegistrationKeys?.Length!=1||!TryProjectKey(item.RegistrationKeys[0],out var key)||!rowKeys.Add(key))
+                throw new ArgumentException("项目包批次或内部登记标记无效。");
+            if(item.HasFileSource) {
+                var path=Path.GetFullPath(item.FilePath);
+                if(!path.StartsWith(managed,StringComparison.OrdinalIgnoreCase)||path.Length<=managed.Length)
+                    throw new ArgumentException("项目包原件必须位于当前素材库的受控导入目录。");
+            }else if(item.Type!=MaterialType.Text)throw new ArgumentException("项目包缺少原文件。");
+            rows.Add(new(item,MaterialOrganization.Normalize(item.GroupName,item.Tags,item.Note),key));
+        }
+        var registered=new Dictionary<string,MaterialItem>(StringComparer.Ordinal);
+        var text=new Dictionary<string,MaterialItem>(StringComparer.Ordinal);
+        var liveIds=_items.Select(x=>x.Id).ToHashSet(StringComparer.Ordinal);
+        foreach(var item in _items) {
+            foreach(var saved in item.RegistrationKeys??Array.Empty<string>())if(TryProjectKey(saved,out var key))registered.TryAdd(key,item);
+            if(!item.HasFileSource)text.TryAdd(item.TextContent,item);
+        }
+        var added=new List<ProjectRow>();var changes=new Dictionary<MaterialItem,List<string>>();
+        var prior=0;var duplicates=0;
+        void Attach(MaterialItem item,string key) {
+            if(!changes.TryGetValue(item,out var keys))changes[item]=keys=(item.RegistrationKeys??Array.Empty<string>())
+                .Select(value=>TryProjectKey(value,out var canonical)?canonical:value).Distinct(StringComparer.Ordinal).ToList();
+            if(!keys.Contains(key,StringComparer.Ordinal))keys.Add(key);
+            registered[key]=item;
+        }
+        foreach(var row in rows) {
+            if(registered.ContainsKey(row.Key)){prior++;continue;}
+            if(liveIds.Contains(row.Item.Id))throw new ArgumentException("项目包新条目与本机素材编号冲突，请重新预览。");
+            if(!row.Item.HasFileSource&&text.TryGetValue(row.Item.TextContent,out var old)){duplicates++;Attach(old,row.Key);continue;}
+            added.Add(row);Attach(row.Item,row.Key);liveIds.Add(row.Item.Id);
+            if(!row.Item.HasFileSource)text[row.Item.TextContent]=row.Item;
+        }
+        return new(added,changes,new(added.Count,prior,duplicates));
     }
 
     /// <summary>修改电脑端组织信息；先验证整个批次，成功后保存，不产生 LAN 增量或调整顺序。</summary>
@@ -301,6 +430,7 @@ public class DataStore : IDisposable
             item.GroupName = value.GroupName!;
             item.Tags = value.Tags!;
             item.Note = value.Note!;
+            MetadataChanged(item);
         }
         if (updates.Count > 0)
         {
@@ -317,7 +447,7 @@ public class DataStore : IDisposable
         var missing = 0;
         foreach (var item in _items.Where(x => selectedIds == null || selectedIds.Contains(x.Id)))
         {
-            item.RefreshSourceStatus();
+            if(item.RefreshSourceStatus())MetadataChanged(item, queryChanged:false);
             if (item.IsSourceMissing) missing++;
         }
         return missing;
@@ -335,7 +465,7 @@ public class DataStore : IDisposable
             if (result == null) continue;
             var item = live[result.Id].FirstOrDefault();
             if (item == null || item.FilePath != result.OriginalPath || !appliedIds.Add(item.Id)) continue;
-            item.ApplySourceStatus(result.Exists);
+            if(item.ApplySourceStatus(result.Exists))MetadataChanged(item, queryChanged:false);
             if (item.IsSourceMissing) missing++;
         }
         return missing;
@@ -429,6 +559,7 @@ public class DataStore : IDisposable
         }
         if (updates.Count > 0)
         {
+            Interlocked.Increment(ref _queryRevision);
             ScheduleSave();
             foreach (var (item, _) in updates)
             {
@@ -443,16 +574,17 @@ public class DataStore : IDisposable
     /// <summary>获取过滤列表：groupName null 不限、空字符串未分组；tag null/空不限。</summary>
     public IEnumerable<MaterialItem> GetFiltered(string tabKey, string? groupName = null, string? tag = null)
     {
+        // Order changes only on collection mutations; category/metadata filters reuse the same stable ordering.
+        var ordered=_orderedItems??= _items.OrderByDescending(x=>x.AddedTime).ToArray();
         IEnumerable<MaterialItem> filtered = tabKey switch
         {
-            "Recent" => _items.OrderByDescending(x => x.AddedTime),
-            "Favorites" => _items.Where(x => x.IsFavorite).OrderByDescending(x => x.AddedTime),
-            "Video" => _items.Where(x => x.Type == MaterialType.Video).OrderByDescending(x => x.AddedTime),
-            "Text" => _items.Where(x => x.Type == MaterialType.Text).OrderByDescending(x => x.AddedTime),
-            "Image" => _items.Where(x => x.Type == MaterialType.Image).OrderByDescending(x => x.AddedTime),
-            "Audio" => _items.Where(x => x.Type == MaterialType.Audio).OrderByDescending(x => x.AddedTime),
-            "Other" => _items.Where(x => x.Type == MaterialType.Other).OrderByDescending(x => x.AddedTime),
-            _ => _items.OrderByDescending(x => x.AddedTime)
+            "Favorites" => ordered.Where(x => x.IsFavorite),
+            "Video" => ordered.Where(x => x.Type == MaterialType.Video),
+            "Text" => ordered.Where(x => x.Type == MaterialType.Text),
+            "Image" => ordered.Where(x => x.Type == MaterialType.Image),
+            "Audio" => ordered.Where(x => x.Type == MaterialType.Audio),
+            "Other" => ordered.Where(x => x.Type == MaterialType.Other),
+            _ => ordered
         };
         if (groupName != null)
             filtered = filtered.Where(x => string.Equals(x.GroupName, groupName.Trim(), StringComparison.OrdinalIgnoreCase));
@@ -488,28 +620,48 @@ public class DataStore : IDisposable
             }
 
             var json = File.ReadAllText(DataFile);
-            var items = JsonSerializer.Deserialize<List<MaterialItem>>(json, JsonOpts);
-            if (items != null)
-            {
-                // 缺失来源也保留索引，避免收藏、标签、备注因文件移动被静默丢弃。
-                foreach (var item in items)
-                {
-                    item.RefreshSourceStatus();
-                    _items.Add(item);
-                }
-
-                // 按时间排序
-                var sorted = _items.OrderByDescending(x => x.AddedTime).ToList();
-                _items.Clear();
-                foreach (var item in sorted)
-                    _items.Add(item);
-
-                Logger.Run("DataStore: loaded {0} items", _items.Count);
+            var records = JsonSerializer.Deserialize<List<MaterialRecord>>(json, JsonOpts)
+                ?? throw new InvalidDataException("素材索引必须是数组，不能为 null。");
+            var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var record in records) {
+                if (record == null || !ids.Add(record.Id)) throw new InvalidDataException("素材索引包含重复或空条目。");
+                record.Normalize();
             }
+            // Complete pure-data validation before publishing any live model. Source probes run after the first frame.
+            _items.Replace(records.OrderByDescending(x => x.AddedTime).Select(x => x.CreateMaterial()).ToArray());
+            QueueLoadedSourceRefresh();
+            Logger.Run("DataStore: loaded {0} items", _items.Count);
         }
         catch (Exception ex)
         {
+            LoadFailed=true;
             Logger.Error("DataStore.Load failed: {0}", ex.Message);
+        }
+    }
+
+    private void QueueLoadedSourceRefresh()
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        var sources = _items.Where(x => x.HasFileSource).Select(x => (Item:x, Path:x.FilePath, Revision:x.SourceRevision)).ToArray();
+        // Headless callers retain deterministic loaded status; WPF never performs these probes on its first frame.
+        if (dispatcher == null) { foreach (var source in sources) source.Item.ApplySourceStatus(File.Exists(source.Path)); return; }
+        _ = dispatcher.BeginInvoke(new Action(() => _ = RefreshAsync()), System.Windows.Threading.DispatcherPriority.Background);
+        async Task RefreshAsync()
+        {
+            try {
+                for (var offset = 0; offset < sources.Length && !_disposed; offset += 64) {
+                    var batch = sources.Skip(offset).Take(64).ToArray();
+                    var results = await Task.Run(() => batch.Select(x => (Source:x, Exists:File.Exists(x.Path))).ToArray());
+                    if (_disposed || dispatcher.HasShutdownStarted) return;
+                    var live = _liveItems ??= _items.ToHashSet();
+                    foreach (var result in results) {
+                        var source = result.Source;
+                        if (live.Contains(source.Item) && source.Item.SourceRevision == source.Revision && source.Item.FilePath == source.Path && source.Item.ApplySourceStatus(result.Exists)) {
+                            NextSequence(); ItemUpdated?.Invoke(source.Item);
+                        }
+                    }
+                }
+            } catch (Exception ex) { Logger.Error("DataStore source refresh failed: {0}", ex.GetType().Name); }
         }
     }
 
@@ -520,40 +672,70 @@ public class DataStore : IDisposable
         _saveTimer = new Timer(_ => Save(), null, 500, Timeout.Infinite);
     }
 
-    private void Save()
+    // Capture only immutable fields on the owner thread; serialization and fsync run in one worker.
+    // A caller is completed only when a durable generation covers its own snapshot.
+    private sealed record SavedItem(long MetadataRevision, string CollectionSource, string CollectionDevice,
+        string[] RegistrationKeys, string Id, MaterialType Type, string FilePath,
+        MaterialIntegrityBaseline? IntegrityBaseline, string DisplayName, string TextContent,
+        DateTime AddedTime, long Size, string ThumbnailPath, double Duration, bool IsFavorite,
+        string GroupName, string[] Tags, string Note, bool IsFile)
     {
+        public static SavedItem Capture(MaterialItem x) => new(x.MetadataRevision, x.CollectionSource, x.CollectionDevice,
+            (x.RegistrationKeys??Array.Empty<string>()).ToArray(), x.Id, x.Type, x.FilePath, x.IntegrityBaseline, x.DisplayName,
+            x.TextContent, x.AddedTime, x.Size, x.ThumbnailPath, x.Duration, x.IsFavorite, x.GroupName, x.Tags, x.Note, x.IsFile);
+    }
+    private sealed record SaveSnapshot(long Version, string Path, SavedItem[] Items);
+    private long _snapshotGeneration, _savedGeneration;
+    private SaveSnapshot? _pendingSave;
+    private bool _saving;
+    private readonly List<(long Version, TaskCompletionSource<bool> Completion)> _saveWaiters = new();
+    public Task FlushAsync()
+    {
+        if(LoadFailed)throw new IOException("素材索引无法读取，原文件已保留，不能确认登记。请恢复备份后重启。");
+        SaveSnapshot Capture() => new(Interlocked.Increment(ref _snapshotGeneration), DataFile, _items.Select(SavedItem.Capture).ToArray());
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        var snapshot = dispatcher == null || dispatcher.CheckAccess() ? Capture() : dispatcher.Invoke(Capture);
         lock (_saveLock)
         {
-            // 系统临时文件锁（杀毒扫描等）可能瞬时占用 → 重试 3 次，防数据丢失
-            for (int attempt = 1; attempt <= 3; attempt++)
+            if (snapshot.Version <= _savedGeneration) return Task.CompletedTask;
+            var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _saveWaiters.Add((snapshot.Version, completion));
+            if (_pendingSave == null || snapshot.Version > _pendingSave.Version) _pendingSave = snapshot;
+            if (!_saving) { _saving = true; _ = Task.Run(SavePending); }
+            return completion.Task;
+        }
+    }
+    private void SavePending()
+    {
+        while (true)
+        {
+            SaveSnapshot snapshot;
+            lock (_saveLock)
             {
-                try
+                if (_pendingSave == null) { _saving = false; return; }
+                snapshot = _pendingSave;
+                _pendingSave = null;
+            }
+            Exception? failure = null;
+            try { LibraryRecoveryService.TryPreservePreviousIndex(DataRoot); DurableJson.WriteText(snapshot.Path, JsonSerializer.Serialize(snapshot.Items, JsonOpts)); }
+            catch (Exception ex) { failure = ex; }
+            lock (_saveLock)
+            {
+                if (failure == null) _savedGeneration = snapshot.Version;
+                if (_pendingSave != null && _pendingSave.Version <= _savedGeneration) _pendingSave = null;
+                foreach (var waiter in _saveWaiters.Where(x => x.Version <= snapshot.Version).ToArray())
                 {
-                    var json = JsonSerializer.Serialize(_items.ToList(), JsonOpts);
-                    // 先写临时文件再替换，防止写入中断损坏数据
-                    var tempFile = DataFile + ".tmp";
-                    File.WriteAllText(tempFile, json);
-                    if (File.Exists(DataFile))
-                        File.Replace(tempFile, DataFile, null);
-                    else
-                        File.Move(tempFile, DataFile);
-
-                    Logger.Run("DataStore: saved {0} items to {1}", _items.Count, DataFile);
-                    return;
-                }
-                catch (Exception ex)
-                {
-                    if (attempt >= 3)
-                    {
-                        Logger.Error("DataStore.Save failed after {0} attempts: {1}", attempt, ex.Message);
-                    }
-                    else
-                    {
-                        System.Threading.Thread.Sleep(800);
-                    }
+                    if (failure == null) waiter.Completion.TrySetResult(true);
+                    else waiter.Completion.TrySetException(failure);
+                    _saveWaiters.Remove(waiter);
                 }
             }
         }
+    }
+    private void Save()
+    {
+        try { FlushAsync().GetAwaiter().GetResult(); }
+        catch(Exception ex) { Logger.Error("DataStore.Save failed: {0}",ex.GetType().Name); }
     }
 
     public void Dispose()

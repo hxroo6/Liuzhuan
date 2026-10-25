@@ -24,6 +24,7 @@ class JSONArray {
     constructor() { values=mutableListOf() }
     constructor(raw:List<*>) { values=raw.toMutableList() }
     fun put(value:Any?)=apply { values.add(if(value is JSONObject) value.values else value) }
+    fun optString(index:Int)=values.getOrNull(index)?.toString()?:""
     fun length()=values.size
     fun optJSONObject(index:Int)=(values.getOrNull(index) as? Map<*,*>)?.let { JSONObject(it) }
 }

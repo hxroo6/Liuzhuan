@@ -1,4 +1,4 @@
-package com.liuzhuan.app
+﻿package com.liuzhuan.app
 
 import android.content.BroadcastReceiver
 import android.content.Context
@@ -25,17 +25,29 @@ import com.liuzhuan.app.core.hexString
  * - 文本（kind=text）：构造 ClipboardEvent 复用 Dispatcher→PushToPcAction（去重/队列/回环防护全继承）
  * - 文件/图片（kind=file）：字节（兼容旧 Base64）→ 有界异步 / 去重 / 缓存 → HTTP 上传
  *
- * 硬编码 action/token 与 ClipHook 保持一致，避免引用 ClipHook 类导致
+ * action/协议标记与 ClipHook 保持一致，避免引用 ClipHook 类导致
  * 无 LSPosed 环境加载 Xposed API 类报 ClassNotFound。
  */
 class ClipReceiver : BroadcastReceiver() {
 
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != ACTION_CLIP) return
-        // 握手 token 校验：非 ClipHook 发来的广播（伪造）直接丢弃
+        // 固定标记只用于协议筛选，不能证明来源。内容提取前必须验证平台发送身份。
         if (intent.getStringExtra(EXTRA_TOKEN) != TOKEN) return
-        ClipboardPrivacy.init(context.applicationContext)
         val pkg = intent.getStringExtra(EXTRA_PKG)
+        val identity = runCatching {
+            HookSenderIdentity.verify(pkg, sentFromPackage, sentFromUid) { uid ->
+                context.packageManager.getPackagesForUid(uid)?.toSet().orEmpty()
+            }
+        }.getOrDefault(HookSenderIdentity.Result.UNKNOWN)
+        if (identity != HookSenderIdentity.Result.VERIFIED) {
+            val reason = if (identity == HookSenderIdentity.Result.UNKNOWN)
+                "系统未提供复制来源身份，后台自动发送已跳过；请更新并重启 LSPosed 作用域 App，或使用前台/手动发送。"
+            else "复制广播来源校验失败，已阻止自动发送。"
+            com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic(reason)
+            return
+        }
+        ClipboardPrivacy.init(context.applicationContext)
         val metadata = ClipboardEvent(null,
             intent.getLongExtra(EXTRA_TS, System.currentTimeMillis()), pkg,
             ClipboardCaptureSource.XPOSED_HOOK, emptyList(), "",
@@ -46,6 +58,7 @@ class ClipReceiver : BroadcastReceiver() {
             com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.setDiagnostic("已忽略（${ClipboardPrivacy.describe(blocked)}）")
             return
         }
+        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.init(context.applicationContext)
         val kind = intent.getStringExtra(EXTRA_KIND) ?: KIND_TEXT
 
         if (kind == KIND_FILE) {
@@ -152,7 +165,7 @@ class ClipReceiver : BroadcastReceiver() {
         const val EXTRA_PKG = "pkg"
         const val EXTRA_TS = "ts"
         const val EXTRA_TOKEN = "token"
-        /** 握手 token：与 ClipHook 一致（硬编码，不引用 ClipHook 类避免标准版 ClassNotFound） */
+        /** 协议标记，不是身份凭据；来源以平台分享的 UID/包名为准。 */
         const val TOKEN = "liuzhuan-cliphook-2026-v1-9f3a7c2e"
         private val idCounter = AtomicLong(0)
         private const val MAX_FILE_BYTES = 512 * 1024

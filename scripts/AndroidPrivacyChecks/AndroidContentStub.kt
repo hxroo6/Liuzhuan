@@ -3,6 +3,7 @@ package android.content
 open class Context {
     open val applicationContext: Context get() = this
     val packageName = "com.liuzhuan.app"
+    val packageManager = PackageManager()
     val applicationInfo = ApplicationInfo()
     val cacheDir = java.io.File(applicationInfo.dataDir, "cache").apply { mkdirs() }
     val preferenceFiles = mutableMapOf<String, MemoryPreferences>()
@@ -51,12 +52,18 @@ class MemoryPreferences {
 }
 
 abstract class BroadcastReceiver {
+    var sentFromUid: Int = 10001
+    var sentFromPackage: String? = "com.allowed.app"
     abstract fun onReceive(context: Context, intent: Intent)
     fun goAsync() = PendingResult().also { PendingResult.active.incrementAndGet() }
     class PendingResult {
         fun finish() { active.decrementAndGet() }
         companion object { val active=java.util.concurrent.atomic.AtomicInteger() }
     }
+}
+class PackageManager {
+    var packages = mutableMapOf(10001 to arrayOf("com.allowed.app"), 10002 to arrayOf("com.secret.app"))
+    fun getPackagesForUid(uid: Int): Array<String>? = packages[uid]
 }
 class Intent(var action: String? = null) {
     private val extras = mutableMapOf<String, Any>()

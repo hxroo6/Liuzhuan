@@ -11,10 +11,16 @@ void Check(bool ok,string label){if(!ok)throw new Exception(label);checks++;Cons
 var reservation=new TcpListener(IPAddress.Loopback,0);reservation.Start();var port=((IPEndPoint)reservation.LocalEndpoint).Port;reservation.Stop();
 LanConfig.PasswordHash=AuthService.HashPassword("isolated-only");
 if (args.Contains("--microphone-pairing")) { await MicrophonePairingChecks.Run(); return; }
+if (args.Contains("--microphone-configuration")) { await MicrophoneConfigurationChecks.Run(); return; }
 var stored=0;var contents=new List<string>();
 var hub=new WsHub();
 hub.TextReceived+=(content,_)=>{ if(content=="fail-registration")throw new IOException("injected registration error"); Interlocked.Increment(ref stored);lock(contents)contents.Add(content); };
-hub.ItemLookup=id=>id=="registered-count"?new MaterialItem{Id=id,DisplayName="count",TextContent=Volatile.Read(ref stored).ToString()}:null;
+hub.ItemLookup=id=>{
+    if(id=="enable-stable-identity") {hub.DeviceId="11111111-1111-4111-8111-111111111111";hub.ServerId="22222222-2222-4222-8222-222222222222";return new MaterialItem{Id=id,DisplayName="fixture",TextContent="identity-enabled"};}
+    if(id=="private-file")return new MaterialItem{Id=id,DisplayName="private-file",IsFile=true,FilePath="isolated-fixture.bin",Size=3};
+    if(id=="private-text")return new MaterialItem{Id=id,DisplayName="private-text",TextContent="isolated-private-content"};
+    return id=="registered-count"?new MaterialItem{Id=id,DisplayName="count",TextContent=Volatile.Read(ref stored).ToString()}:null;
+};
 hub.Start(port,LanConfig.PasswordHash);
 try {
     if(args.Length>0&&args[0]=="--serve"){
@@ -33,7 +39,36 @@ try {
         await Send(socket,"hello","hello",device:device);using var welcome=await Read(socket);
         Check(welcome.RootElement.GetProperty("type").GetString()=="welcome"&&welcome.RootElement.GetProperty("data").GetProperty("features").EnumerateArray().Any(x=>x.GetString()==LanMessage.ClipboardReceiptsFeature),"real welcome negotiates idempotent clipboard receipts");return socket;}
     bool Ack(JsonDocument frame,string id,string status)=>frame.RootElement.GetProperty("type").GetString()=="ack"&&frame.RootElement.GetProperty("data").GetProperty("requestId").GetString()==id&&frame.RootElement.GetProperty("data").GetProperty("status").GetString()==status;
+    async Task SendData(ClientWebSocket socket,string type,object data)=>await socket.SendAsync(
+        Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new{v=1,type,id=Guid.NewGuid().ToString("D"),data})),WebSocketMessageType.Text,true,CancellationToken.None);
+    using(var anonymous=new ClientWebSocket()) {
+        await anonymous.ConnectAsync(new Uri($"ws://127.0.0.1:{port}"),CancellationToken.None);
+        foreach(var id in new[]{"private-text","private-file"}) {
+            await SendData(anonymous,"get_item",new{id});
+            await SendData(anonymous,"heartbeat",new{});
+            using var frame=await Read(anonymous);
+            Check(frame.RootElement.GetProperty("type").GetString()=="heartbeat",
+                "unauthenticated get_item cannot read "+id+" or its download credentials");
+        }
+        var featureCalls=0;
+        hub.LibraryProvider=_=>{Interlocked.Increment(ref featureCalls);return Task.FromResult<object>(new{});};
+        hub.AutomationProvider=_=>{Interlocked.Increment(ref featureCalls);return new{};};
+        hub.MicrophoneInviteProvider=()=>{Interlocked.Increment(ref featureCalls);return Task.FromResult(new Dictionary<string,object?>());};
+        hub.ListProvider=()=>{Interlocked.Increment(ref featureCalls);return new();};
+        foreach(var type in new[]{"library_request","automation_request","microphone_invite","list_sync","clipboard_push","sync_text"})
+            await SendData(anonymous,type,new{content="must-not-store"});
+        await SendData(anonymous,"heartbeat",new{});
+        using(var frame=await Read(anonymous))Check(frame.RootElement.GetProperty("type").GetString()=="heartbeat"&&featureCalls==0&&stored==0,
+            "unauthenticated feature messages are rejected before any provider or registration");
+        hub.LibraryProvider=null;hub.AutomationProvider=null;hub.MicrophoneInviteProvider=null;hub.ListProvider=null;
+    }
     using var phone=await Connect("isolated-phone");
+    await SendData(phone,"get_item",new{id="private-text"});
+    using(var detail=await Read(phone))Check(detail.RootElement.GetProperty("data").GetProperty("content").GetString()=="isolated-private-content",
+        "authenticated get_item still returns full text");
+    await SendData(phone,"get_item",new{id="private-file"});
+    using(var detail=await Read(phone))Check(detail.RootElement.GetProperty("data").GetProperty("downloadUrl").GetString()!.Contains("/file/private-file?auth="),
+        "authenticated get_item keeps the existing file-download contract");
     await Send(phone,"clipboard_push","stable-1","copied-once");
     // 模拟客户端未能利用首个回执，再使用相同请求重发；两帧回执均读取以核对关联。
     await Send(phone,"clipboard_push","stable-1","copied-once");

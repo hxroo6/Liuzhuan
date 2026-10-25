@@ -57,13 +57,77 @@ class Program
     }
     private sealed class Sink : IAudioSink
     {
+        public bool FailAccept;
         public bool Enabled;
         public int Count;
         public long DroppedFrames => 0;
         public int BufferedMilliseconds => 0;
-        public void Accept(byte[] frame, int offset, int count) { if (Enabled) Interlocked.Increment(ref Count); }
+        public void Accept(byte[] frame, int offset, int count) { if (FailAccept) throw new System.Runtime.InteropServices.COMException("fixture endpoint lost"); if (Enabled) Interlocked.Increment(ref Count); }
         public void SetForwarding(bool value) => Enabled = value;
         public void Dispose() => Enabled = false;
+    }
+    private sealed class EvidenceSink : IAudioSink
+    {
+        public bool Enabled, Consuming, Diagnostic;
+        public long Bytes;
+        private readonly PcmSignalMeter _meter = new();
+        public bool DiagnosticOnly => Diagnostic;
+        public AudioLevel Level => _meter.Level;
+        public void ClearLevel() => _meter.Reset();
+        public long? ReadPcmBytes => Consuming ? Interlocked.Read(ref Bytes) : null;
+        public long DroppedFrames => 0;
+        public int BufferedMilliseconds => 0;
+        public void SetForwarding(bool value) { Enabled = value; if (!value) _meter.Reset(); }
+        public void Accept(byte[] bytes, int offset, int count)
+        { if (Enabled) { _meter.Measure(bytes.AsSpan(offset, count)); Interlocked.Add(ref Bytes, count); } }
+        public void Dispose() => Enabled = false;
+    }
+    private static async Task SignalProtectionChecks()
+    {
+        foreach (bool diagnostic in new[] { false, true })
+        {
+            var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); int port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
+            var sink = new EvidenceSink { Diagnostic = diagnostic };
+            await using var server = new AudioTransportServer(sink); await server.StartAsync(port);
+            int notifications = 0;
+            server.SignalVerified += state => { Interlocked.Increment(ref notifications); throw new InvalidOperationException("fixture advisory subscriber failure"); };
+            using var phone = await Connect(server, port, await server.RotateInvitationAsync(startWhenReady: true));
+            await Read(phone, "welcome"); await Send(phone, "status", ready: true);
+            var demand = await Read(phone, "start_forward"); var generation = demand.GetProperty("generation").GetInt64();
+            await Send(phone, "forward_started", generation);
+            long sequence = 0;
+            for (int i = 0; i < 30; i++) await phone.SendAsync(Frame(generation, sequence++), WebSocketMessageType.Binary, true, CancellationToken.None);
+            await Wait(() => server.Snapshot.TotalFrames == 30);
+            Check(notifications == 0, $"audio route proof requires real render-read evidence (diagnostic={diagnostic})");
+            sink.ClearLevel(); sink.Consuming = true;
+            var silence = Frame(generation, sequence++); Array.Clear(silence, AudioProtocol.HeaderSize, AudioProtocol.PayloadSize);
+            await phone.SendAsync(silence, WebSocketMessageType.Binary, true, CancellationToken.None);
+            await Wait(() => server.Snapshot.TotalFrames == 31);
+            Check(notifications == 0, $"silent PCM cannot establish a verified audible route (diagnostic={diagnostic})");
+            for (int i = 0; i < 5; i++) await phone.SendAsync(Frame(generation, sequence++), WebSocketMessageType.Binary, true, CancellationToken.None);
+            await Wait(() => server.Snapshot.TotalFrames == 36);
+            if (!diagnostic) await Wait(() => Volatile.Read(ref notifications) == 1);
+            Check(notifications == (diagnostic ? 0 : 1), "only a non-diagnostic consumed signal emits one sparse verification notification");
+            Check(server.Snapshot.Issue == MicrophoneIssue.None && server.Snapshot.Requested && sink.Enabled,
+                "throwing configuration observer cannot interrupt forwarding or change audio state");
+        }
+    }
+    private static async Task EndpointRecoveryChecks()
+    {
+        var listener = new TcpListener(IPAddress.Loopback, 0); listener.Start(); int port = ((IPEndPoint)listener.LocalEndpoint).Port; listener.Stop();
+        var sink = new Sink { FailAccept = true }; await using var server = new AudioTransportServer(sink); await server.StartAsync(port);
+        using (var ws = await Connect(server, port))
+        {
+            await Read(ws, "welcome"); await Send(ws, "status", ready: true); await Wait(() => server.Snapshot.Ready);
+            await server.SetForwardingAsync(true); var start = await Read(ws, "start_forward"); var gen = start.GetProperty("generation").GetInt64();
+            await Send(ws, "forward_started", gen); await ws.SendAsync(Frame(gen, 0), WebSocketMessageType.Binary, true, CancellationToken.None);
+            await Wait(() => server.Snapshot.ConnectionId == 0);
+            Check(server.Snapshot.Issue == MicrophoneIssue.Driver && !sink.Enabled, "native driver failure stops output and has a stable driver recovery category");
+        }
+        sink.FailAccept = false;
+        using var next = await Connect(server, port); await Read(next, "welcome");
+        Check(server.Snapshot.Issue == MicrophoneIssue.None && !server.Snapshot.Requested,
+            "fresh authenticated session clears old failure without inheriting forwarding authorization");
     }
     private static async Task SilenceChecks()
     {
@@ -129,6 +193,16 @@ class Program
     }
     static async Task Main(string[] args)
     {
+        if (args.Contains("--recovery-check")) { await EndpointRecoveryChecks(); Console.WriteLine($"Recovery checks: {_passed} passed."); return; }
+        if (args.Contains("--route-health")) { AudioRouteHealthChecks.Run(Check); Console.WriteLine($"Audio route checks: {_passed} passed."); return; }
+        if (args.Contains("--route-health-live"))
+        {
+            var inventory = await Task.Run(AudioRouteScanner.Scan);
+            var output = inventory.Endpoints.FirstOrDefault(x => x.Active && x.Flow == DataFlow.Render && AudioRouteHealth.StandardOutput(x.Name));
+            var capture = inventory.Endpoints.FirstOrDefault(x => x.Active && x.Flow == DataFlow.Capture && AudioRouteHealth.StandardCapture(x.Name));
+            Console.WriteLine(AudioRouteHealth.Review(inventory, output?.Id ?? "", capture?.Id ?? "", false).SanitizedText);
+            return;
+        }
         if (args.Contains("--host-check"))
         {
             var render = VirtualAudioOutput.List(DataFlow.Render).First(x => x.Name.StartsWith("CABLE Input"));
@@ -140,6 +214,12 @@ class Program
                 await host.StartObservingAsync(); await host.StartObservingAsync();
                 await Task.Delay(500);
                 Check(host.Server != null && host.Observing && !host.Automatic, "host starts one observer without enabling automatic demand");
+                var previousServer = host.Server;
+                await host.RetrySavedDevicesAsync();
+                Check(host.Server != null && host.Server != previousServer && host.OutputId == render.Id && host.CaptureId == capture.Id &&
+                    !host.Observing && !host.Automatic && !host.Server.Snapshot.Requested,
+                    "explicit recovery reopens the exact endpoint pair and revokes old follow/invitation state");
+                await host.StartObservingAsync();
                 await host.BeginCalibrationAsync();
                 await Task.WhenAll(host.StopObservingAsync(), host.StopAsync()).WaitAsync(TimeSpan.FromSeconds(5));
                 Check(host.Server == null && !host.Observing && !host.Automatic && !host.Calibrated,
@@ -210,6 +290,7 @@ class Program
             return;
         }
         await IntegratedAudioChecks();
+        await SignalProtectionChecks();
         {
             var listenerForLevel = new TcpListener(IPAddress.Loopback, 0); listenerForLevel.Start();
             int levelPort = ((IPEndPoint)listenerForLevel.LocalEndpoint).Port; listenerForLevel.Stop();

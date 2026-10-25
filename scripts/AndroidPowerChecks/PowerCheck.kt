@@ -203,5 +203,19 @@ fun main() = runBlocking {
     verify(!TransferTasks.tasks.value.first().paused && TransferTasks.tasks.value.first().state=="stored","actual confirmed completion wins a concurrent pause request")
     TransferTasks.savedTo("completion-race","Pictures/Liuzhuan")
     verify(TransferTasks.tasks.value.first().savedFolder=="Pictures/Liuzhuan","saved directory remains attached to the completed task")
+    val historyNow=System.currentTimeMillis()
+    TransferTasks.loadHistory(listOf(
+        com.liuzhuan.app.TransferTask("history-ended","ended","download",state="已完成",running=false,started=historyNow-90L*86400000),
+        com.liuzhuan.app.TransferTask("history-paused","paused","download",state="已暂停",running=false,paused=true,started=0),
+        com.liuzhuan.app.TransferTask("history-pending","pending","upload",running=false,pending=true,started=0)))
+    val candidates=TransferTasks.historyCandidates(30,historyNow)
+    verify(candidates.any {it.id=="history-ended"}&&candidates.none {it.id=="history-paused"||it.id=="history-pending"},"history retention protects paused, pending and retryable work")
+    verify(TransferTasks.clearHistory(setOf("history-ended","history-paused","history-pending"))==1&&TransferTasks.tasks.value.any {it.id=="history-paused"},"confirmation only removes still-terminal display history")
+    TransferTasks.restoreDurable("history-ended","old success","download",100,100,"stored",{}, {})
+    verify(TransferTasks.tasks.value.none {it.id=="history-ended"},"terminal recovery descriptors do not resurrect explicitly hidden history")
+    TransferTasks.restoreDurable("history-ended","active again","download",50,100,"paused",{}, {})
+    verify(TransferTasks.tasks.value.any {it.id=="history-ended"&&it.paused},"history tombstones can never hide an active or paused recovery task")
+    val budget=com.liuzhuan.app.core.LibraryBudget.retain((0 until 50000).toList())
+    verify(budget.first.size==1000&&budget.second==49000&&budget.first.first()==49000,"50000 mobile summaries retain a bounded 1000-row window with correct offset")
     println("All $checks Android power and transfer checks passed.")
 }

@@ -1,0 +1,40 @@
+<Window x:Class="Liuzhuan.Views.ProjectPackageWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="项目素材包" Width="860" Height="740" MinWidth="680" MinHeight="590" WindowStartupLocation="CenterOwner"
+        Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}">
+    <Window.Resources>
+        <Style TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}"><Setter Property="Padding" Value="14,9"/><Setter Property="MinHeight" Value="36"/><Setter Property="Margin" Value="0,0,8,0"/></Style>
+    </Window.Resources>
+    <Grid Margin="24" Background="{StaticResource PanelBrush}">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,16">
+            <TextBlock Text="把这组素材，带到另一个项目里" FontSize="23" FontWeight="SemiBold"/>
+            <TextBlock Text="选中素材打包，预览后合入当前库。包含正文、原件、收藏及分组／标签／备注；每包最多1000项、64GiB原件。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,0"/>
+        </StackPanel>
+        <Border Grid.Row="1" Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="16" Margin="0,0,0,12">
+            <DockPanel>
+                <Button x:Name="ExportButton" Content="导出选中素材…" DockPanel.Dock="Right" Click="Export_Click" Margin="16,0,0,0"/>
+                <StackPanel><TextBlock Text="导出项目包" FontSize="15" FontWeight="SemiBold"/><TextBlock x:Name="SelectionText" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,7,0,0"/></StackPanel>
+            </DockPanel>
+        </Border>
+        <Border Grid.Row="2" Background="{StaticResource PanelLightBrush}" CornerRadius="12" Padding="16" Margin="0,0,0,12">
+            <StackPanel><TextBlock Text="合入已有项目包" FontSize="15" FontWeight="SemiBold"/>
+                <DockPanel Margin="0,10,0,0">
+                    <Button x:Name="ChooseButton" Content="选择项目包…" DockPanel.Dock="Right" Click="Choose_Click" Margin="10,0,0,0"/>
+                    <TextBox x:Name="PackagePath" IsReadOnly="True" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" BorderBrush="{StaticResource BorderBrush}" Padding="9,8" AutomationProperties.Name="项目包路径"/>
+                </DockPanel>
+                <WrapPanel Margin="0,10,0,0"><Button x:Name="PreviewButton" Content="校验并预览" Click="Preview_Click"/><Button x:Name="ImportButton" Content="合入当前库" IsEnabled="False" Click="Import_Click"/></WrapPanel>
+                <TextBlock x:Name="PreviewSummary" Text="先选择项目包，再校验全部内容。预览会将原件准备到当前库并占用空间；取消后保留供重试。" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,0"/>
+            </StackPanel>
+        </Border>
+        <ListBox x:Name="PreviewList" Grid.Row="3" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" BorderThickness="0" HorizontalContentAlignment="Stretch" ScrollViewer.HorizontalScrollBarVisibility="Disabled" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+            <ListBox.ItemTemplate><DataTemplate><StackPanel Margin="10,8"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding GroupName, StringFormat=分组：{0}}" Foreground="{StaticResource TextDimBrush}" Margin="0,5,0,0"/><TextBlock Text="{Binding Note}" Foreground="{StaticResource TextDimBrush}" MaxHeight="38" TextTrimming="CharacterEllipsis" TextWrapping="Wrap"/></StackPanel></DataTemplate></ListBox.ItemTemplate>
+        </ListBox>
+        <StackPanel Grid.Row="4" Margin="0,14,0,0">
+            <ProgressBar x:Name="Progress" Height="5" Foreground="{StaticResource AccentBrush}" Visibility="Collapsed"/>
+            <TextBlock x:Name="Status" Text="同一包可重试；相同文字保留本机整理信息。项目包不携带电脑配置、口令或源文件路径。" Foreground="{StaticResource TextDimBrush}" TextWrapping="Wrap" Margin="0,9,0,10" MaxHeight="85"/>
+            <DockPanel><TextBlock Text="合入前可取消。开始保存后请等待结果；项目包原件保存在当前库。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" FontSize="11" MaxWidth="510" HorizontalAlignment="Left"/>
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right"><Button x:Name="CancelButton" Content="取消操作" Visibility="Collapsed" Click="Cancel_Click"/><Button Content="关闭" Click="Close_Click" Margin="0"/></StackPanel>
+            </DockPanel>
+        </StackPanel>
+    </Grid>
+</Window>

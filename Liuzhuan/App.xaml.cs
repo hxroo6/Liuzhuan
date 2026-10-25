@@ -44,6 +44,8 @@ public partial class App : Application
         // 在创建 MainWindow/DataStore 和读取静态配置之前应用迁移；运行中的保存仍留在旧库。
         try
         {
+            var recovery = Services.LibraryRecoveryService.ApplyPending(DataDir);
+            if(recovery!=null)Logger.Run("Library recovery applied at startup");
             var imported = Services.MigrationService.ApplyPending(DataDir);
             if (imported != null)
             {

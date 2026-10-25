@@ -1,0 +1,51 @@
+<Window x:Class="Liuzhuan.Views.AutomationWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="自动整理与快捷收集" Width="740" Height="760" MinWidth="620" MinHeight="560" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="13">
+    <Window.Resources>
+        <Style x:Key="CollectionAction" TargetType="Button" BasedOn="{StaticResource ActionButtonStyle}"><Setter Property="Padding" Value="14,10"/><Setter Property="MinHeight" Value="38"/></Style>
+        <Style x:Key="CollectionIcon" TargetType="Button" BasedOn="{StaticResource IconButtonStyle}"><Setter Property="Padding" Value="10,10"/><Setter Property="MinHeight" Value="38"/></Style>
+        <Style TargetType="TextBox"><Setter Property="Background" Value="{StaticResource PanelLightBrush}"/><Setter Property="Foreground" Value="{StaticResource TextBrush}"/><Setter Property="CaretBrush" Value="{StaticResource AccentBrush}"/><Setter Property="BorderBrush" Value="{StaticResource BorderBrush}"/><Setter Property="Padding" Value="10,8"/><Setter Property="Margin" Value="0,5,0,12"/></Style>
+        <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{StaticResource TextBrush}"/><Setter Property="Margin" Value="0,6"/></Style>
+        <Style TargetType="ComboBoxItem"><Setter Property="Foreground" Value="{StaticResource TextBrush}"/><Setter Property="Padding" Value="12,9"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBoxItem"><Border x:Name="ItemSurface" Background="{StaticResource PanelLightBrush}" Padding="{TemplateBinding Padding}"><TextBlock Text="{Binding Label}"/></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="ItemSurface" Property="Background" Value="{StaticResource BorderBrush}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+        <Style TargetType="ComboBox"><Setter Property="Foreground" Value="{StaticResource TextBrush}"/><Setter Property="Margin" Value="0,5,0,12"/><Setter Property="MinHeight" Value="38"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ComboBox"><Grid>
+            <ToggleButton IsChecked="{Binding IsDropDownOpen,RelativeSource={RelativeSource TemplatedParent},Mode=TwoWay}" Focusable="False"><ToggleButton.Template><ControlTemplate TargetType="ToggleButton"><Border Background="{StaticResource PanelLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10"><DockPanel><TextBlock Text="⌄" Foreground="{StaticResource AccentBrush}" DockPanel.Dock="Right" Margin="12,0,0,0"/><TextBlock Text="{Binding SelectedItem.Label,RelativeSource={RelativeSource AncestorType=ComboBox}}" Foreground="{StaticResource TextBrush}"/></DockPanel></Border></ControlTemplate></ToggleButton.Template></ToggleButton>
+            <Popup IsOpen="{TemplateBinding IsDropDownOpen}" Placement="Bottom" AllowsTransparency="True" Focusable="False"><Border Background="{StaticResource PanelLightBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" MinWidth="240" Padding="4"><ScrollViewer MaxHeight="300"><StackPanel IsItemsHost="True"/></ScrollViewer></Border></Popup>
+        </Grid><ControlTemplate.Triggers><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+        <Style TargetType="TabItem"><Setter Property="Foreground" Value="{StaticResource TextDimBrush}"/><Setter Property="Padding" Value="14,10"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="TabItem"><Border x:Name="TabSurface" Background="{StaticResource PanelBrush}" CornerRadius="8,8,0,0" Padding="{TemplateBinding Padding}"><ContentPresenter ContentSource="Header"/></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/><Setter TargetName="TabSurface" Property="Background" Value="{StaticResource PanelLightBrush}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+        <Style TargetType="ListBoxItem"><Setter Property="Padding" Value="10,10"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ListBoxItem"><Border x:Name="ListSurface" Padding="{TemplateBinding Padding}" Background="Transparent" CornerRadius="7"><ContentPresenter/></Border><ControlTemplate.Triggers><Trigger Property="IsSelected" Value="True"><Setter TargetName="ListSurface" Property="Background" Value="{StaticResource BorderBrush}"/><Setter Property="Foreground" Value="{StaticResource AccentBrush}"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter></Style>
+    </Window.Resources>
+    <Grid Margin="24" Background="{StaticResource PanelBrush}"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+        <StackPanel Margin="0,0,0,20"><TextBlock Text="收进来，自然有序" FontSize="25" FontWeight="SemiBold"/><TextBlock Text="规则两端共用 · 来源目录各自授权 · 原文件保持原位" Foreground="{StaticResource TextDimBrush}" Margin="0,8,0,0"/></StackPanel>
+        <TabControl Grid.Row="1" Background="{StaticResource PanelBrush}" BorderBrush="{StaticResource BorderBrush}">
+            <TabItem Header="自动整理"><Grid Margin="14"><Grid.ColumnDefinitions><ColumnDefinition Width="170"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <DockPanel Margin="0,0,16,0"><StackPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"><Button Content="＋ 新规则" Click="NewRule_Click" Style="{StaticResource CollectionAction}"/><Button Content="移除选中规则" Click="RemoveRule_Click" Style="{StaticResource CollectionIcon}" Margin="0,8,0,0"/></StackPanel><ListBox x:Name="RuleList" SelectionChanged="RuleList_SelectionChanged" DisplayMemberPath="Name" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" BorderThickness="0"/></DockPanel>
+                <DockPanel Grid.Column="1"><WrapPanel DockPanel.Dock="Bottom" Margin="0,12,0,0"><Button Content="预览最近 50 条" Click="Preview_Click" Style="{StaticResource CollectionAction}" Margin="0,0,8,8"/><Button Content="保存全部规则" Click="Save_Click" Style="{StaticResource CollectionAction}" Margin="0,0,8,8"/><Button Content="重新加载" Click="Reload_Click" Style="{StaticResource CollectionIcon}"/></WrapPanel><ScrollViewer VerticalScrollBarVisibility="Auto"><StackPanel>
+                    <TextBlock Text="规则名称"/><TextBox x:Name="NameInput" MaxLength="48"/>
+                    <CheckBox x:Name="EnabledInput" Content="启用这条规则"/>
+                    <TextBlock Text="素材类型"/><ComboBox x:Name="TypeInput" DisplayMemberPath="Label" SelectedValuePath="Value"/>
+                    <TextBlock Text="收集来源"/><ComboBox x:Name="SourceInput" DisplayMemberPath="Label" SelectedValuePath="Value"/>
+                    <TextBlock Text="来源设备名称包含（留空为全部）"/><TextBox x:Name="DeviceInput" MaxLength="64"/>
+                    <TextBlock Text="名称包含（留空匹配所有名称）"/><TextBox x:Name="ContainsInput" MaxLength="120"/>
+                    <TextBlock Text="分组（仅填入未分组的素材）"/><TextBox x:Name="GroupInput" MaxLength="48"/>
+                    <TextBlock Text="追加标签（逗号分隔）"/><TextBox x:Name="TagsInput"/>
+                    <TextBlock Text="按列表顺序处理；不改原文件，不覆盖已有分组。保存只影响之后新收集的素材。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,0,0,12"/>
+
+                    <TextBlock x:Name="PreviewText" TextWrapping="Wrap" Foreground="{StaticResource AccentBrush}" Margin="0,10,0,0"/>
+                </StackPanel></ScrollViewer></DockPanel>
+            </Grid></TabItem>
+            <TabItem Header="目录订阅"><StackPanel Margin="18">
+                <TextBlock Text="将指定文件夹变成收集入口" FontSize="18" FontWeight="SemiBold"/>
+                <TextBlock Text="只检查直接子文件；首次跳过现有文件。之后新增或修改的文件自动收集。最多 10 个目录，每个最多 5000 个文件。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,16"/>
+                <ListBox x:Name="FoldersList" Height="210" DisplayMemberPath="Path" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" BorderThickness="0"/>
+                <WrapPanel Margin="0,16,0,0"><Button Content="＋ 订阅来源文件夹" Click="AddFolder_Click" Style="{StaticResource CollectionAction}" Margin="0,0,8,8"/><Button Content="检查新文件" Click="ScanFolder_Click" Style="{StaticResource CollectionAction}" Margin="0,0,8,8"/><Button Content="停止选中订阅" Click="RemoveFolder_Click" Style="{StaticResource CollectionIcon}"/></WrapPanel>
+                <TextBlock Text="停止订阅不会删除已收集素材或源文件。来源路径仅保存在本机，不随迁移包带走。目录通知遗漏或复制未完成时，可点检查新文件。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,12,0,0"/>
+            </StackPanel></TabItem>
+            <TabItem Header="快捷收集"><StackPanel Margin="18">
+                <TextBlock Text="灵感到来，随手收下" FontSize="20" FontWeight="SemiBold"/>
+                <TextBlock Text="复制文字、图片或文件后，一键收进流转；自动整理规则随即生效。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}" Margin="0,12,0,18"/>
+                <Button Content="收集当前剪贴板" Click="Collect_Click" Style="{StaticResource CollectionAction}" HorizontalAlignment="Left" Padding="20,12"/>
+                <CheckBox x:Name="QuickHotkey" Content="启用全局快捷收集 Ctrl + Alt + V" Click="QuickHotkey_Click" Margin="0,24,0,12"/>
+                <TextBlock Text="默认关闭，开启后可从其他应用快速收集。手机可使用应用内收集入口、系统分享或文本选择菜单。无需新增右键菜单。" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+            </StackPanel></TabItem>
+        </TabControl>
+        <TextBlock Grid.Row="2" x:Name="Status" TextWrapping="Wrap" Margin="0,16,0,0" Foreground="{StaticResource TextDimBrush}" MaxHeight="85"/>
+    </Grid>
+</Window>

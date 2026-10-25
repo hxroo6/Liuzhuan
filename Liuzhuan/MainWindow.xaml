@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:models="clr-namespace:Liuzhuan.Models"
         xmlns:views="clr-namespace:Liuzhuan.Views"
+        xmlns:vwp="clr-namespace:WpfToolkit.Controls;assembly=VirtualizingWrapPanel"
         Title="流转"
         Width="380"
         Height="680"
@@ -43,7 +44,7 @@
                     MouseEnter="Card_MouseEnter"
                     MouseLeave="Card_MouseLeave"
                     Cursor="Hand"
-                    Width="154">
+                    Width="154" Height="218" Loaded="ThumbnailCard_Loaded" Unloaded="ThumbnailCard_Unloaded">
                 <Grid>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="132"/>
@@ -147,8 +148,19 @@
                     MouseLeave="Card_MouseLeave"
                     Cursor="Hand"
                     MinHeight="132"
-                    MaxHeight="164"
                     HorizontalAlignment="Stretch">
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Setter Property="MaxHeight" Value="164"/>
+                        <Style.Triggers>
+                            <DataTrigger Binding="{Binding Name, RelativeSource={RelativeSource AncestorType=ListView}}" Value="GridView">
+                                <Setter Property="Width" Value="154"/>
+                                <Setter Property="Height" Value="218"/>
+                                <Setter Property="MaxHeight" Value="218"/>
+                            </DataTrigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <Grid>                    <TextBlock Text="灵感摘录" Foreground="{StaticResource WarmBrush}" FontSize="10" Margin="10,10,0,0" VerticalAlignment="Top"/>
                     <StackPanel Margin="10,0,30,10" VerticalAlignment="Bottom"><TextBlock Text="{Binding DetailLabel}" Foreground="{StaticResource TextDimBrush}" FontSize="10"/>
                         <TextBlock Text="{Binding MetadataLabel}" Style="{StaticResource MaterialMetadataStyle}"><TextBlock.ToolTip><ToolTip><TextBlock Text="{Binding MetadataSummary}" TextWrapping="Wrap" MaxWidth="320" MaxHeight="180" TextTrimming="CharacterEllipsis"/></ToolTip></TextBlock.ToolTip></TextBlock>
@@ -332,6 +344,9 @@
                 <Grid x:Name="ContentArea" Grid.Row="2" Background="{StaticResource PanelBrush}" ClipToBounds="True">
                     <!-- 网格视图（图片/视频/其他文件/最近） -->
                     <ListView x:Name="GridView"
+                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                              VirtualizingPanel.CacheLength="0.5,0.5" VirtualizingPanel.CacheLengthUnit="Page"
+                              ScrollViewer.CanContentScroll="True"
                               Visibility="Visible"
                               Background="Transparent"
                               BorderThickness="0"
@@ -342,13 +357,15 @@
                               Margin="8,2">
                         <ListView.ItemsPanel>
                             <ItemsPanelTemplate>
-                                <WrapPanel Orientation="Horizontal" ItemWidth="164"/>
+                                <vwp:VirtualizingWrapPanel Orientation="Horizontal" ItemSize="164,228" SpacingMode="None"/>
                             </ItemsPanelTemplate>
                         </ListView.ItemsPanel>
                     </ListView>
 
                     <!-- 文字视图（自动换行卡片） -->
                     <ListView x:Name="TextView"
+                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.CanContentScroll="True"
                               Visibility="Collapsed"
                               Background="Transparent"
                               BorderThickness="0"
@@ -367,6 +384,8 @@
 
                     <!-- 列表视图（音频） -->
                     <ListView x:Name="ListView"
+                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
+                              ScrollViewer.CanContentScroll="True"
                               Visibility="Collapsed"
                               Background="Transparent"
                               BorderThickness="0"

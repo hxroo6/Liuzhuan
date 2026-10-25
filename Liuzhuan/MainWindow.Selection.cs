@@ -9,10 +9,10 @@ namespace Liuzhuan;
 public partial class MainWindow
 {
     private bool _changingSelection;
-    private void UpdateSelectionBar()
+    private void UpdateSelectionBar(List<MaterialItem>? selection = null)
     {
         if (SelectionBar == null) return;
-        var selected = GetSelectedItems();
+        var selected = selection ?? GetSelectedItems();
         SelectionBar.Visibility = selected.Count > 0 ? Visibility.Visible : Visibility.Collapsed;
         SelectionCountText.Text = $"已选 {selected.Count} 项";
         SelectionFavoriteButton.Content = selected.Count > 0 && selected.All(x => x.IsFavorite) ? "取消收藏" : "收藏";

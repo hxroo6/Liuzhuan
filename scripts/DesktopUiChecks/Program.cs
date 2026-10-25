@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Reflection;
 using System.Xml.Linq;
 using System.Windows;
@@ -60,8 +60,14 @@ internal static class Program
         Liuzhuan.Utils.Logger.Init(output);
         var app = new OffscreenApp { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         app.Resources = ReadProductionResources();
+        if(args.Length>1 && args[1]=="--performance-only") {PerformanceUiChecks.Run(output,args.Length>2?int.Parse(args[2]):10000,args.Length>3?double.Parse(args[3],System.Globalization.CultureInfo.InvariantCulture):1);return;}
+        if(args.Length>1 && args[1]=="--automation-only") {AutomationUiChecks.Run(output);return;}
         if(args.Length>1 && args[1]=="--microphone-only") {MicrophoneUiChecks.Run(output);return;}
         if(args.Length>1 && args[1]=="--transfer-only") {TransferUiChecks.Run(output);return;}
+        if(args.Length>1 && args[1]=="--duplicate-only") {DuplicateUiChecks.Run(output);return;}
+        if(args.Length>1 && args[1]=="--project-only") {ProjectPackageUiChecks.Run(output);return;}
+        if(args.Length>1 && args[1]=="--storage-only") {StorageUiChecks.Run(output);return;}
+        if(args.Length>1 && args[1]=="--recovery-only") {RecoveryUiChecks.Run(output);return;}
         var window = new MainWindow(); // 离屏渲染，不启动服务，不访问用户素材库。
         var loadedHandler = typeof(MainWindow).GetMethod("Window_Loaded", BindingFlags.Instance | BindingFlags.NonPublic)!;
         window.Loaded -= (RoutedEventHandler)loadedHandler.CreateDelegate(typeof(RoutedEventHandler), window);
@@ -78,9 +84,11 @@ internal static class Program
         Check(ReferenceEquals(grid.SelectedItem,selected),"refresh preserves selection");
         Check(selector != null && ReferenceEquals(grid.ItemTemplateSelector, selector), "refresh reuses material template selector");
         var root=(FrameworkElement)window.Content;
+        using var offscreen=new System.Windows.Interop.HwndSource(new System.Windows.Interop.HwndSourceParameters("Liuzhuan UI fixture") {Width=380,Height=680,PositionX=-32000,PositionY=-32000,WindowStyle=unchecked((int)0x80000000)});
+        offscreen.RootVisual=root;
         void Render(string name,double scale=1)
         {
-            root.Measure(new Size(380,680)); root.Arrange(new Rect(0,0,380,680)); root.UpdateLayout();
+            root.Measure(new Size(380,680)); root.Arrange(new Rect(0,0,380,680)); root.UpdateLayout();Pump(25);
             var bmp=new RenderTargetBitmap((int)(380*scale),(int)(680*scale),96*scale,96*scale,PixelFormats.Pbgra32);
             bmp.Render(root); var encoder=new PngBitmapEncoder(); encoder.Frames.Add(BitmapFrame.Create(bmp));
             using var stream=File.Create(Path.Combine(output,name)); encoder.Save(stream);
@@ -148,11 +156,15 @@ internal static class Program
         }
         store.RemoveMultiple(missingCards.Select(x=>x.Id).ToList()); Invoke("RefreshView");
         var filterBox = (TextBox)window.FindName("SearchBox");
-        filterBox.Text = "灵感笔记 2"; SelectionAction("SelectAll_Click");
+        filterBox.Text = "灵感笔记 2";
+        Check(grid.Items.Count > 1, "search typing waits for the production debounce rather than synchronously replacing results");
+        DesktopQueryWait.UntilApplied(window, () => grid.Items.Count == 1, "filtered selection search");
+        SelectionAction("SelectAll_Click");
         Check(grid.SelectedItems.Count == 1 && grid.Items.Count == 1, "select all respects the current search results");
         SelectionAction("InvertSelection_Click");
         Check(grid.SelectedItems.Count == 0, "invert cannot select hidden search results");
         filterBox.Clear();
+        DesktopQueryWait.UntilApplied(window, () => grid.Items.Count == store.Items.Count, "clear search before organization");
         OrganizationUiChecks.Run(window, store, output);
         SavedViewUiChecks.Run(window, store, output);
         V17UiChecks.Run(window, store, output);
@@ -167,6 +179,8 @@ internal static class Program
         if (args.Length > 1)
         {
             var imageItem = grid.Items.Cast<MaterialItem>().First(x => x.Type == MaterialType.Image);
+            grid.ScrollIntoView(imageItem);root.UpdateLayout();
+            for(int i=0;i<50 && imageItem.ThumbnailSource==null;i++)Pump(15);
             var imageContainer = (FrameworkElement)grid.ItemContainerGenerator.ContainerFromItem(imageItem);
             var thumbnail = FindThumbnail(imageContainer) ?? throw new Exception("Image card has no thumbnail element.");
             var originalSource = imageItem.ThumbnailSource!;
@@ -193,10 +207,13 @@ internal static class Program
         Check((bool)typeof(MainWindow).GetField("_isExpanded",BindingFlags.NonPublic|BindingFlags.Instance)!.GetValue(window)!,"pin prevents collapse");
         ((Button)window.FindName("PinBtn")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); Render("desktop-150-percent.png",1.5);
         var search=(TextBox)window.FindName("SearchBox"); search.Text="不会匹配的关键词";
+        DesktopQueryWait.UntilApplied(window, () => grid.Items.Count == 0, "unmatched search");
         Check(grid.Items.Count==0,"search filters library");
         Check(((TextBlock)window.FindName("EmptyTitle")).Text=="没有找到匹配素材","search empty state");
         Render("desktop-empty-search.png");
-        search.Clear(); Check(grid.Items.Count>=6,"clearing search restores library");
+        search.Clear();
+        DesktopQueryWait.UntilApplied(window, () => grid.Items.Count == store.Items.Count, "clearing unmatched search");
+        Check(grid.Items.Count>=6,"clearing search restores library");
         ((RadioButton)window.FindName("TabFavorites")).IsChecked=true;
         Check(((TextBlock)window.FindName("EmptyTitle")).Text=="还没有收藏","favorites empty state");
         Render("desktop-empty-favorites.png");

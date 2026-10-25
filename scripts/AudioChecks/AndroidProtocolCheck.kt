@@ -2,6 +2,8 @@ import com.liuzhuan.app.audio.AudioProtocol
 import com.liuzhuan.app.audio.PcmLevelMeter
 import com.liuzhuan.app.audio.SilenceGate
 import com.liuzhuan.app.audio.MicrophoneLifetime
+import com.liuzhuan.app.audio.MicrophonePowerPolicy
+import com.liuzhuan.app.audio.MicIssue
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
@@ -55,4 +57,11 @@ fun main(args: Array<String>) {
     val local = MicrophoneLifetime(true, 1234)
     check(!local.expired(1234 + 59_999) && local.expired(1234 + 60_000) && local.secondsLeft(1234) == 60 && !local.shouldRenew(1234 + 60 * 60_000))
     println("PASS: remote standby has no idle/15-minute/day expiry; bounded wake renewal; local test still ends at 60 seconds")
+    check(!MicrophonePowerPolicy.shouldStartOnScan(true) && MicrophonePowerPolicy.shouldStartOnScan(false))
+    check(MicrophonePowerPolicy.batchFrames(true, false, true) == 5 &&
+        MicrophonePowerPolicy.batchFrames(false, false, false) == 5 &&
+        MicrophonePowerPolicy.batchFrames(false, true, true) == 1)
+    check(MicIssue.PERMISSION.action.contains("系统") && MicIssue.NETWORK.action.contains("无需重扫") &&
+        MicIssue.SYSTEM_BLOCKED != MicIssue.CAPTURE)
+    println("PASS: economy scan cannot start capture, 100ms idle batching vs 20ms live input, categorized foreground recovery")
 }

@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -26,11 +26,13 @@ internal static class Program
             new MaterialItem { Id="c", Type=MaterialType.Other, DisplayName="同名素材", FilePath=secondSource },
             new MaterialItem { Id="d", Type=MaterialType.Other, DisplayName="重复引用", FilePath=source }
         };
-        var settings = new MigrationService.Settings { ClipboardMonitorEnabled=true, ExcludedClipboardApps=new[]{"KeePassXC.exe"}, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true,
+        var settings = new MigrationService.Settings { StorageRetention=new(60,800),ClipboardMonitorEnabled=true, ExcludedClipboardApps=new[]{"KeePassXC.exe"}, HeicConversion=HeicConversionMode.Jpeg, LanEnabled=true, Password="test-only", Port=8999, AutoStart=true,
             SavedViews=new(){new SavedMaterialView{Name="收藏参考",Tab="Favorites",GroupName="视觉参考",Tag="封面",Keyword="备注"},new SavedMaterialView{Name="未分组",GroupName=""}},
             ImagePresets=new(){Presets=new(){new ImageProcessingPreset{Name="交付 JPEG",Format=ImageOutputFormat.Jpeg,MaxEdge=1920,JpegQuality=82},new ImageProcessingPreset{Name="透明 PNG",Format=ImageOutputFormat.Png,MaxEdge=null,JpegQuality=90}}} };
         void Check(bool ok,string name){if(!ok)throw new Exception(name);Console.WriteLine("PASS "+name);}
+        items[0].RegistrationKeys=new[]{"local-receipt-fixture"};
         var snapshot=MigrationService.Snapshot(items, settings);
+        Check(snapshot.Items.All(x=>x.RegistrationKeys.Length==0) && items[0].RegistrationKeys.Length==1,"migration excludes receipt correlation keys without changing the live library");
         settings.ExcludedClipboardApps[0]="changed.exe";
         Check(snapshot.Settings.ExcludedClipboardApps!.SequenceEqual(new[]{"KeePassXC.exe"}), "snapshot isolates automatic-capture exclusions");
         settings.SavedViews.Clear();
@@ -69,6 +71,7 @@ internal static class Program
         var importedPresets=new ImageProcessingPresetStore(imported);
         Check(importedPresets.LoadError==null && importedPresets.Presets.Count==2 && importedPresets.Presets[0].Format==ImageOutputFormat.Jpeg && importedPresets.Presets[1].MaxEdge==null, "new PC reloads image presets from its imported library");
         Check(applied.AutoStart && applied.LanEnabled && applied.Port==8999 && applied.Password=="test-only" && applied.HeicConversion==HeicConversionMode.Jpeg,"portable settings restored");
+        Check(StorageRetention.Load(imported)==new StorageRetention(60,800),"history retention parameters migrate without trash, tasks or original source paths");
         var privacyConfig=JsonSerializer.Deserialize<JsonElement>(File.ReadAllText(Path.Combine(imported,"appsettings.json")));
         Check(applied.ExcludedClipboardApps!.SequenceEqual(new[]{"KeePassXC.exe"}) && privacyConfig.GetProperty("ExcludedClipboardApps")[0].GetString()=="KeePassXC.exe" && !privacyConfig.TryGetProperty("ClipboardPausedUntil",out _),"migration carries app exclusions but does not carry a temporary pause");
         Check(Directory.GetFiles(target,"config.before-import-*.json").Any(p=>File.ReadAllText(p)==oldConfig) && File.ReadAllText(Path.Combine(existing,"keep.txt"))=="old library","original config backup and original library retained");
@@ -101,6 +104,10 @@ internal static class Program
             foreach(var item in m["Items"]!.AsArray()) {var obj=item!.AsObject();obj["GroupName"]=null;obj["Tags"]=null;obj["Note"]=null;}
         }));
         Check(MigrationService.ReadManifest(nullPackage).Items.All(i=>i.GroupName=="" && i.Tags.Length==0 && i.Note==""), "explicit null organization values normalize to empty");
+        var nullKeys=Variant("null-registration-keys",z=>EditManifestJson(z,m=>{foreach(var item in m["Items"]!.AsArray())item!["RegistrationKeys"]=null;}));
+        Check(MigrationService.ReadManifest(nullKeys).Items.All(i=>i.RegistrationKeys.Length==0),"portable import strips null receipt correlations before constructing live materials");
+        var foreignKeys=Variant("foreign-registration-keys",z=>EditManifestJson(z,m=>{foreach(var item in m["Items"]!.AsArray())item!["RegistrationKeys"]=new JsonArray("foreign-receipt");}));
+        Check(MigrationService.ReadManifest(foreignKeys).Items.All(i=>i.RegistrationKeys.Length==0),"portable import strips non-null foreign receipt correlations too");
         async Task Reject(string path,string label){var dest=Path.Combine(root,Guid.NewGuid().ToString("N"));bool failed=false;try{await MigrationService.PrepareImportAsync(path,dest,null,default);}catch(Exception e)when(e is InvalidDataException or JsonException){failed=true;}Check(failed && !File.Exists(Path.Combine(dest,"migration-pending.json")) && !File.Exists(Path.Combine(dest,"config.json")),label);}
         await Reject(Variant("group-too-long",z=>EditManifestJson(z,m=>m["Items"]![0]!["GroupName"]=new string('组',49))),"rejects overlong group before activation");
         await Reject(Variant("invalid-saved-rule",z=>EditManifestJson(z,m=>m["Settings"]!["SavedViews"]![0]!["Tab"]="Unknown")),"rejects invalid saved rules before activation");

@@ -86,6 +86,39 @@ static class Program
             bool stopped=false;try{await waiting;}catch(OperationCanceledException){stopped=true;}
             Check(stopped,"stopping LAN service also cancels a paused transfer gate");
         }
+        async Task<string> ReadConnection(TcpClient peer) {
+            try {var b=new byte[1024];int n=await peer.GetStream().ReadAsync(b).AsTask().WaitAsync(TimeSpan.FromSeconds(3));return Encoding.ASCII.GetString(b,0,n);}
+            catch(IOException){return "";}
+        }
+        using(var bounded=new FileHttpServer(TimeSpan.FromMilliseconds(250),maxConnections:2)) {
+            int boundedPort=FreePort();bounded.Start(boundedPort);
+            using(var slow=new TcpClient()) {
+                await slow.ConnectAsync(IPAddress.Loopback,boundedPort);await slow.GetStream().WriteAsync(Encoding.ASCII.GetBytes("GET /"));
+                Check(await ReadConnection(slow)=="","incomplete request headers expire and close the socket");
+            }
+            foreach(var malformed in new[]{"GET /x HTTP/1.1\r\nX: "+new string('a',9000)+"\r\n\r\n",
+                "GET /x HTTP/1.1\r\n"+string.Concat(Enumerable.Range(0,101).Select(i=>$"X-{i}: 1\r\n"))+"\r\n",
+                "GET /x HTTP/1.1\r\n"+string.Concat(Enumerable.Range(0,70).Select(i=>$"X-{i}: {new string('a',1000)}\r\n"))+"\r\n",
+                "POST /upload HTTP/1.1\r\nContent-Length: 1\r\nContent-Length: 2\r\n\r\n"}) {
+                using var bad=new TcpClient();await bad.ConnectAsync(IPAddress.Loopback,boundedPort);
+                try {await bad.GetStream().WriteAsync(Encoding.ASCII.GetBytes(malformed));}catch(IOException) { }
+                var rejectedHeader=await ReadConnection(bad);Check(rejectedHeader.Length==0 || rejectedHeader.StartsWith("HTTP/1.1 400"),"request header line, count, total, and conflicting-length budgets reject malformed input");
+            }
+            using(var body=new TcpClient()) {
+                await body.ConnectAsync(IPAddress.Loopback,boundedPort);
+                await body.GetStream().WriteAsync(Encoding.ASCII.GetBytes($"POST /upload?name=slow-body.bin&auth={auth} HTTP/1.1\r\nContent-Length: 2\r\n\r\na"));
+                await Task.Delay(450);await body.GetStream().WriteAsync(new byte[]{(byte)'b'});
+                Check((await ReadConnection(body)).StartsWith("HTTP/1.1 200"),"header timeout is removed before a legitimate slow upload body");
+            }
+            using var idleOne=new TcpClient();using var idleTwo=new TcpClient();
+            await idleOne.ConnectAsync(IPAddress.Loopback,boundedPort);await idleTwo.ConnectAsync(IPAddress.Loopback,boundedPort);
+            await idleOne.GetStream().WriteAsync(Encoding.ASCII.GetBytes("GET /"));await idleTwo.GetStream().WriteAsync(Encoding.ASCII.GetBytes("GET /"));await Task.Delay(50);
+            using(var excess=new TcpClient()) {await excess.ConnectAsync(IPAddress.Loopback,boundedPort);Check(await ReadConnection(excess)=="","accepted handlers have a hard concurrent connection limit");}
+            bounded.Stop();Check(await ReadConnection(idleOne)=="" && await ReadConnection(idleTwo)=="","stopping HTTP service closes accepted clients still waiting for request headers");
+            bounded.Start(boundedPort);
+            using var afterRestart=new TcpClient();await afterRestart.ConnectAsync(IPAddress.Loopback,boundedPort);await afterRestart.GetStream().WriteAsync(Encoding.ASCII.GetBytes("GET /missing HTTP/1.1\r\n\r\n"));
+            Check((await ReadConnection(afterRestart)).StartsWith("HTTP/1.1 404"),"HTTP service can restart after cancelling half-open clients");
+        }
         var hub=new WsHub();int wsPort=FreePort(); bool stored=false;hub.TextReceived+=(_,_)=>stored=true;hub.Start(wsPort,auth);
         try
         {

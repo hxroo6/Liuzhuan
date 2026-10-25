@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
         if (hasFocus) {
+            FolderSubscriptions.requestScan()
             try {
                 com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator
                     .captureManager.captureOnForeground()
@@ -149,7 +150,7 @@ class MainActivity : ComponentActivity() {
             store = store,
             onProgress = { _, _ -> /* 分享路径无进度 UI，完成/失败以 Toast 提示 */ },
             onResult = { ok, msg ->
-                if (ok) toast(app, "✅ 已上传到电脑")
+                if (ok) toast(app, if(msg==DurableTransfers.QUEUED_RESULT) "已加入收发任务，等待电脑确认" else "✅ 已上传到电脑")
                 else toast(app, "❌ 上传失败: $msg")
             }
         )
@@ -203,7 +204,9 @@ fun MainScreen(
     var password by remember { mutableStateOf("") }
     var textInput by rememberSaveable { mutableStateOf("") }
     var showTransfers by remember { mutableStateOf(false) }
+    var showCollection by rememberSaveable { mutableStateOf(false) }
     var showMicrophone by rememberSaveable { mutableStateOf(false) }
+    var microphonePanelGeneration by remember { mutableIntStateOf(0) }
     var microphoneInvitation by remember { mutableStateOf("") } // Invitation is memory-only, not saved settings.
     var microphoneConnecting by remember { mutableStateOf(false) }
     var microphoneCandidate by remember { mutableStateOf<LanClient.MicrophoneInvitation?>(null) }
@@ -217,8 +220,16 @@ fun MainScreen(
     var receiveType by rememberSaveable { mutableStateOf("All") }
     var sendStatus by remember { mutableStateOf("") }
     val pageScrollStates = List(3) { rememberLazyListState() }
-    val visibleMaterials = remember(materials, receiveType, receiveSearch) {
-        materials.asSequence().filter { (receiveType == "All" || it.type == receiveType) && it.name.contains(receiveSearch, ignoreCase = true) }.take(50).toList()
+    val library by MaterialLibrary.state.collectAsStateWithLifecycle()
+    var editingMaterial by remember {mutableStateOf<com.liuzhuan.app.data.MaterialItem?>(null)}
+    var selectingLibrary by remember{mutableStateOf(false)}
+    var librarySelection by remember{mutableStateOf<Map<String,com.liuzhuan.app.data.MaterialItem>>(emptyMap())}
+    var batchLibrary by remember{mutableStateOf<List<com.liuzhuan.app.data.MaterialItem>?>(null)}
+    LaunchedEffect(library.epoch,library.query){librarySelection=emptyMap();batchLibrary=null;selectingLibrary=false}
+    LaunchedEffect(library.epoch) {editingMaterial=null}
+    val visibleMaterials = remember(materials, receiveType, receiveSearch,library.enabled) {
+        if(library.enabled)materials else
+        materials.asSequence().filter { (receiveType == "All" || it.type == receiveType) && listOf(it.name,it.group,it.tags.joinToString(" "),it.note).any { text -> text.contains(receiveSearch, ignoreCase = true) } }.take(50).toList()
     }
     var settings by remember { mutableStateOf<SettingsStore.Settings?>(null) }
 
@@ -258,8 +269,9 @@ fun MainScreen(
             onResult = { ok, msg ->
                 uploading = false
                 if (ok) {
-                    uploadStatus = "✅ $msg 已上传到电脑"
-                    toast(context, "✅ 已上传到电脑")
+                    val queued=msg==DurableTransfers.QUEUED_RESULT
+                    uploadStatus = if(queued) "已加入收发任务，等待电脑确认" else "✅ $msg 已上传到电脑"
+                    toast(context, if(queued) "已加入收发任务，等待电脑确认" else "✅ 已上传到电脑")
                 } else if(msg.startsWith("已暂停") || msg.startsWith("已取消")) {
                     uploadStatus=msg
                     toast(context,msg)
@@ -294,7 +306,9 @@ fun MainScreen(
             serverPort = port.trim().ifBlank { "8899" },
             password = password.trim(),
             autoSendClipboard = com.liuzhuan.app.clipboard.ClipboardPrivacy.state.value.automaticEnabled,
-            deviceName = android.os.Build.MODEL,
+            deviceName = settings?.deviceName?:android.os.Build.MODEL,
+            expectedDeviceId=if(settings?.serverIp==ip.trim() && settings?.serverPort==port.trim() && settings?.password==password.trim())settings?.expectedDeviceId.orEmpty() else "",
+            serverName=settings?.serverName.orEmpty(),serverLibraryId=settings?.serverLibraryId.orEmpty(),
             balancedPower = settings?.balancedPower ?: false
         )
         settings = newSettings
@@ -322,16 +336,27 @@ fun MainScreen(
         if (granted && candidate != null) scope.launch { startIntegratedMicrophone(candidate) }
         else toast(context, "素材连接可继续使用；麦克风未授权，稍后可点左上音波图开启")
     }
-    fun connectIntegratedMicrophone(host: String = ip.trim(), serverPort: String = port.trim()) {
+    fun connectIntegratedMicrophone(host: String = ip.trim(), serverPort: String = port.trim(), fromScan: Boolean = false,
+        requireMicrophonePanel: Boolean = false) {
         if (microphoneConnecting) return
         if (com.liuzhuan.app.audio.MicrophoneState.status.value.active) {
             toast(context, "麦克风会话已开启，点左上音波图查看；切换电脑前请先结束原会话")
             return
         }
         microphoneConnecting = true
+        val requestedPanelGeneration = microphonePanelGeneration
         scope.launch {
             try {
-                val candidate = client.requestMicrophoneInvitation(host, serverPort)
+                if (fromScan && !com.liuzhuan.app.audio.MicrophonePowerPolicy.shouldStartOnScan(
+                        com.liuzhuan.app.audio.MicrophoneOptionsStore(context).current().energySaving)) {
+                    toast(context, "节能连接：素材正常同步，麦克风保持关闭；需要时点左上音波图开启")
+                    return@launch
+                }
+                val requested = client.requestMicrophoneInvitation(host, serverPort)
+                val candidate = if (requireMicrophonePanel) requested.onlyWhile {
+                    showMicrophone && microphonePanelGeneration == requestedPanelGeneration &&
+                        diagnosticOwner.lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+                } else requested
                 kotlinx.coroutines.withTimeout(15_000) {
                     diagnosticOwner.lifecycle.currentStateFlow.first { it.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED) }
                 }
@@ -357,11 +382,12 @@ fun MainScreen(
             val materials = qrIp.isNotBlank() && qrPwd.isNotBlank() && qrPort.toIntOrNull() in 1..65534
             if (materials) {
                 microphoneInvitation = ""
+                settings=settings?.copy(expectedDeviceId="",serverLibraryId="",serverName="")
                 ip = qrIp.trim(); port = qrPort; password = qrPwd; saveAndConnect()
-                connectIntegratedMicrophone(ip, port)
+                connectIntegratedMicrophone(ip, port, fromScan = true)
             } else if (mic != null) { microphoneInvitation = mic; showMicrophone = true }
             toast(context, when {
-                materials -> "扫码成功，正在连接素材与麦克风；首次请允许系统录音权限"
+                materials -> "扫码成功，正在连接电脑；麦克风按已保存偏好开启"
                 mic != null -> "麦克风邀请已读取，请确认开启会话"
                 else -> "二维码内容无效，请在电脑重新生成"
             })
@@ -372,17 +398,22 @@ fun MainScreen(
         com.journeyapps.barcodescanner.ScanContract()
     ) { result ->
         val content = result.contents
-        if (content == null) {
-            toast(context, "未识别到二维码")
-        } else {
+        if (content != null) {
             applyPairing(content)
         }
     }
 
     if (showMicrophone) com.liuzhuan.app.audio.MicrophoneDialog(initialPayload = microphoneInvitation,
         onConnectCurrentComputer = { if (isConnected) connectIntegratedMicrophone() else toast(context, "请先在连接页扫码连接电脑") },
-        connecting = microphoneConnecting) { showMicrophone = false; selectPage(0) }
+        connecting = microphoneConnecting, computerConnected = isConnected,
+        computerAudioSupported = client.audioConfigurationSupported,
+        onComputerAudioConfiguration = { repair -> client.requestAudioConfiguration(repair) },
+        onConnectAfterAudioRepair = { if (isConnected && showMicrophone) connectIntegratedMicrophone(requireMicrophonePanel = true) }
+    ) { microphonePanelGeneration++; showMicrophone = false; selectPage(0) }
     if (showTransfers) TransferTaskDialog { showTransfers = false }
+    if (showCollection) CollectionPanel(store, { selectPage(1); showCollection=false }, { showCollection=false })
+    editingMaterial?.let {item->MaterialEditor(item,library.epoch){editingMaterial=null}}
+    batchLibrary?.let {chosen->LibraryBatchEditor(chosen,library.epoch){batchLibrary=null;librarySelection=emptyMap();selectingLibrary=false}}
     if (showHistory) ConnectionHistoryDialog(history, recallingHistory, onDismiss = { showHistory = false },
         onConnect = { profile ->
             if (!recallingHistory) {
@@ -390,6 +421,7 @@ fun MainScreen(
                 scope.launch {
                     try {
                         val recalled = historyStore.recall(profile.id)
+                        settings=recalled
                         ip = recalled.serverIp; port = recalled.serverPort; password = recalled.password
                         showHistory = false
                         saveAndConnect()
@@ -398,7 +430,7 @@ fun MainScreen(
                     finally { recallingHistory = false }
                 }
             }
-        }, onDelete = { profile -> scope.launch {
+        }, onRename = {profile,alias -> scope.launch {try{historyStore.rename(profile.id,alias)}catch(_:Exception){toast(context,"备注名未能保存")}}}, onDelete = { profile -> scope.launch {
             try { historyStore.remove(profile.id) }
             catch (ex: CancellationException) { throw ex }
             catch (_: Exception) { toast(context, "历史记录未能删除，请稍后重试") }
@@ -419,6 +451,7 @@ fun MainScreen(
                     }
                 },
                 actions = {
+                    TextButton(onClick = { showCollection = true }) { Text("收集") }
                     TextButton(onClick = { showTransfers = true }) { Text("收发 $runningTransfers") }
                 },
                 colors = TopAppBarDefaults.centerAlignedTopAppBarColors(
@@ -496,7 +529,9 @@ fun MainScreen(
                                 onClick = {
                                     val options = com.journeyapps.barcodescanner.ScanOptions().apply {
                                         setDesiredBarcodeFormats(com.journeyapps.barcodescanner.ScanOptions.QR_CODE)
-                                        setPrompt("扫码连接素材与麦克风 · 首次请允许录音")
+                                        setCaptureActivity(PairingScanActivity::class.java)
+                                        setOrientationLocked(true)
+                                        setPrompt("扫码连接电脑 · 收音遵循麦克风偏好")
                                         setBeepEnabled(false)
                                     }
                                     scanLauncher.launch(options)
@@ -505,9 +540,9 @@ fun MainScreen(
                                 modifier = Modifier.weight(1f)
                             ) { Text("扫码连接全部功能") }
                         }
-                        Text("扫一次码即可连接素材与手机麦克风，首次需允许录音；可随时点左上音波图查看或关闭。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Text("扫码连接素材；即时待命会在授权后开启麦克风，节能连接保持关闭。点左上音波图可查看或切换。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                         TextButton(onClick = { showHistory = true }, modifier = Modifier.fillMaxWidth()) {
-                            Text(if (history.unavailable) "历史连接 · 暂不可读取" else "历史连接 · ${history.entries.size} 个地址")
+                            Text(if (history.unavailable) "历史连接 · 暂不可读取" else "历史连接 · ${history.entries.size} 台电脑")
                         }
                         if (discoveryError.isNotEmpty()) Text(discoveryError, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
                         if (discoveredServers.isNotEmpty()) {
@@ -819,13 +854,26 @@ fun MainScreen(
             } else {
                 // ===== 接收页（单一事实源：Repository → StateFlow，WS 推送增量）=====
                 Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
-                    Column(Modifier.padding(16.dp)) {
+                    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                        LibrarySavedWorkspacesButton(library)
+                        LibraryOfflineOriginalsButton(library)
+                        LibraryProjectPackageControls(librarySelection.values.toList(),library.epoch,library.connected)
+                        if(library.enabled){
+                            LibraryFilters(library)
+                            if(library.canEditOffline)Row(Modifier.horizontalScroll(rememberScrollState())) {
+                                TextButton(onClick={selectingLibrary=!selectingLibrary;librarySelection=emptyMap()}){Text(if(selectingLibrary)"结束多选" else "批量整理")}
+                                if(selectingLibrary) {
+                                    TextButton(onClick={librarySelection=visibleMaterials.take(100).associateBy{it.id}}){Text("选本页（最多100项）")}
+                                    TextButton(enabled=librarySelection.isNotEmpty()&&!library.workBusy,onClick={batchLibrary=librarySelection.values.toList()}){Text("整理 ${librarySelection.size} 项")}
+                                }
+                            }
+                        } else {
                         Row(
                             Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("电脑端素材", style = MaterialTheme.typography.titleSmall)
+                        Text("电脑端素材", style = MaterialTheme.typography.titleSmall)
                             Text(
                                 "${materials.size} 条",
                                 style = MaterialTheme.typography.bodySmall,
@@ -869,6 +917,7 @@ fun MainScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        }
                     }
                 }
             }
@@ -878,20 +927,42 @@ fun MainScreen(
                 items(visibleMaterials, key = { it.id }, contentType = { it.type }) { item ->
                     Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                         Row(Modifier.fillMaxWidth()
-                            .clickable(enabled = isConnected) {
-                                client.requestItem(item.id)
-                                toast(context, if (item.type == "Text") "正在获取文字…" else "正在获取文件…")
+                            .clickable(enabled = selectingLibrary||isConnected||(!item.hasFile&&item.textComplete)) {
+                                if(selectingLibrary) {
+                                    librarySelection=if(item.id in librarySelection)librarySelection-item.id else if(librarySelection.size<100)librarySelection+(item.id to item)else librarySelection
+                                }else if(isConnected) {
+                                    client.requestItem(item.id)
+                                    toast(context, if (!item.hasFile) "正在获取文字…" else "正在获取文件…")
+                                }else {copyToClipboard(context,item.offlineText);toast(context,"已复制离线保存的文字")}
                             }.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-                            if (item.type == "Image") PhotoThumbnail(if (isConnected) client.thumbnailUrl(item.id) else null, item.name)
+                            if(selectingLibrary)Checkbox(checked=item.id in librarySelection,onCheckedChange={checked->
+                                librarySelection=if(!checked)librarySelection-item.id else if(librarySelection.size<100)librarySelection+(item.id to item)else librarySelection
+                            })
+                            if (item.type == "Image") PhotoThumbnail(if (isConnected) client.thumbnailUrl(item.id,item.sourceRevision,library.epoch) else null, item.name)
                             else Text(typeIcon(item.type), style = MaterialTheme.typography.titleMedium)
                             Spacer(Modifier.width(10.dp))
                             Column(Modifier.weight(1f)) {
                                 Text(item.name.ifBlank { "(无标题)" }, style = MaterialTheme.typography.bodyMedium,
                                     maxLines = 1, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                                Text("${typeName(item.type)} · ${formatTime(item.time)} · 点击${if (item.type == "Text") "复制" else "保存"}",
+                                val local=library.drafts.firstOrNull{it.id==item.id}
+                                val shown=local?.overlay(item)?:item
+                                if(shown.group.isNotBlank() || shown.tags.isNotEmpty()) Text((listOf(shown.group).filter { it.isNotBlank() }+shown.tags.map { "#$it" }).joinToString(" · "),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary,maxLines=1,overflow=androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                                if(local!=null)Text(if(local.issue.isBlank())"待同步整理" else "整理冲突 · 草稿已保留",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.tertiary)
+                                Text("${typeName(item.type)} · ${formatTime(item.time)} · ${if(item.sourceMissing) "原文件失效" else if(!isConnected&&!item.textComplete)"需连接电脑获取" else "点击"+if(!item.hasFile) "复制" else "保存"}",
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             }
+                            if(library.enabled&&!selectingLibrary)Column {
+                                TextButton(enabled=library.connected||library.canEditOffline,onClick={editingMaterial=library.drafts.firstOrNull{it.id==item.id}?.overlay(item)?:item}){Text(if(item.favorite)"★ 整理" else "整理")}
+                                LibraryOfflineOriginalAction(item,library.epoch,library.connected)
+                            }
                         }
+                    }
+                }
+                if(library.enabled) item(key="library-more") {
+                    Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally) {
+                        if(library.loading)LinearProgressIndicator(Modifier.fillMaxWidth())
+                        if(library.hasMore)OutlinedButton(enabled=(library.connected||library.canEditOffline)&&!library.loading,onClick={MaterialLibrary.loadMore()}){Text("加载更多素材")}
+                        else if(!library.loading && visibleMaterials.isNotEmpty())Text("已显示当前筛选的全部素材",style=MaterialTheme.typography.bodySmall,color=MaterialTheme.colorScheme.onSurfaceVariant)
                     }
                 }
             }
@@ -949,21 +1020,26 @@ internal fun copyToClipboard(context: Context, text: String) {
  *
  * 不经剪贴板/广播（M23 ClipHook 广播路径的 512KB Binder 限制与本路径无关），任意格式任意大小。
  */
-private fun uploadFileStreaming(
+internal fun uploadFileStreaming(
     context: Context,
     uri: android.net.Uri,
     store: SettingsStore,
     onProgress: (sent: Long, total: Long) -> Unit,
     onResult: (ok: Boolean, msg: String) -> Unit,
-    taskId:String = java.util.UUID.randomUUID().toString()
+    taskId:String = java.util.UUID.randomUUID().toString(),
+    origin: String = "android",
+    expectedTarget: String? = null,
+    allowed: () -> Boolean = { true }
 ) {
+    if(DurableTransfers.upload(context,uri,taskId,origin,expectedTarget,allowed,onResult))return
     val appContext=context.applicationContext
     TransferTasks.start("准备文件", "手机 → 电脑",taskId,cancel={TransferWork.cancel(taskId)}) {
-        uploadFileStreaming(appContext,uri,SettingsStore(appContext),{_,_->},{ok,msg->toast(appContext,msg)},taskId)
+        uploadFileStreaming(appContext,uri,SettingsStore(appContext),{_,_->},{ok,msg->toast(appContext,msg)},taskId,origin,expectedTarget,allowed)
     }
     val scheduled = TransferWork.launch(taskId) {
         var tmp: java.io.File? = null
         try {
+            if(!allowed() || expectedTarget!=null && LanHub.client?.collectionTarget()!=expectedTarget) throw Exception("来源订阅或电脑连接已变化，请检查后重试")
             val resolver = appContext.contentResolver
             var name = "file_${System.currentTimeMillis()}.bin"
             var size = -1L
@@ -1008,10 +1084,11 @@ private fun uploadFileStreaming(
             if (size <= 0L) throw Exception("空文件")
 
             val settings = store.settings.first()
+            if(!allowed() || expectedTarget!=null && (FolderSubscriptions.target(settings)!=expectedTarget || LanHub.client?.collectionTarget()!=expectedTarget)) throw Exception("接收电脑已变化，已停止自动发送")
             if (settings.serverIp.isBlank()) throw Exception("未配置电脑 IP")
             val auth = Proto.sha256Hex(settings.password)
             val url = "http://${settings.serverIp}:${(settings.serverPort.toIntOrNull() ?: 8899)+1}/upload?name=" +
-                java.net.URLEncoder.encode(name, "UTF-8") + "&auth=$auth"
+                java.net.URLEncoder.encode(name, "UTF-8") + "&auth=$auth&origin=$origin&device="+java.net.URLEncoder.encode(Proto.deviceLabel,"UTF-8")
 
             val body = object : okhttp3.RequestBody() {
                 override fun contentType(): okhttp3.MediaType? =
@@ -1024,6 +1101,7 @@ private fun uploadFileStreaming(
                         var sent = 0L
                         var lastUiAt = 0L
                         while (true) {
+                            if(!allowed() || expectedTarget!=null && LanHub.client?.collectionTarget()!=expectedTarget) throw java.io.IOException("订阅已停止或电脑连接已变化")
                             val n = input.read(buf)
                             if (n <= 0) break
                             sink.write(buf, 0, n)
@@ -1072,6 +1150,7 @@ private fun formatSize(bytes: Long): String = when {
 
 /** 下载采用流式写入与 IS_PENDING，未完成的文件不会出现在相册。 */
 internal fun receiveFile(context:Context,data:Proto.ItemData) {
+    if(DurableTransfers.download(data))return
     val id="download:${data.id}"
     if(TransferTasks.running(id)) return
     val name=data.name.ifBlank { "liuzhuan_${System.currentTimeMillis()}" }

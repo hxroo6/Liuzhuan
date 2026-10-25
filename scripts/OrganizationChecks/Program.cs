@@ -81,7 +81,8 @@ internal static class Program
             var order = store.Items.Select(x => x.Id).ToArray();
             var timestamps = store.Items.Select(x => x.AddedTime).ToArray();
             var sequence = store.CurrentSequence;
-            var events = 0;
+            var events = 0;var metadataEvents=0;
+            store.ItemUpdated+=_=>metadataEvents++;
             store.ItemAdded += _ => events++;
             store.ItemRemoved += _ => events++;
             store.ItemCleared += () => events++;
@@ -92,7 +93,7 @@ internal static class Program
             Check(store.UpdateOrganization(new[] { "a", "b" }, new() { GroupName = "Shared" }) == 0, "no-op edits return zero");
             Check(store.UpdateOrganization(new[] { "missing" }, new() { Note = "ignored" }) == 0, "missing selections create no new material");
             Check(store.UpdateOrganization(new[] { "a", "b" }, new()) == 0, "empty patch never clears organization fields");
-            Check(events == 0 && store.CurrentSequence == sequence, "local organization edits emit no LAN events and consume no sequence");
+            Check(events == 0 && metadataEvents==3 && store.CurrentSequence == sequence+3 && a.MetadataRevision==2 && b.MetadataRevision==1, "organization edits emit revisioned metadata deltas without add/remove events");
             Check(store.Items.Select(x => x.Id).SequenceEqual(order) && store.Items.Select(x => x.AddedTime).SequenceEqual(timestamps), "organization edits preserve library order and timestamps");
             store.UpdateOrganization(new[] { "a" }, new() { Tags = new[] { "two", "Three" }, TagsMode = TagsMode.Add });
             Check(a.Tags.SequenceEqual(new[] { "One", "Two", "Three" }), "adding tags keeps previous labels and deduplicates case-insensitively");

@@ -12,6 +12,8 @@ portable/
 publish/
 Liuzhuan/bin/
 Liuzhuan/obj/
+/scripts/**/bin/
+/scripts/**/obj/
 AndroidApp/.gradle/
 AndroidApp/build/
 AndroidApp/local.properties

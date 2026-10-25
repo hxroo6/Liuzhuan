@@ -1,5 +1,6 @@
 package com.liuzhuan.app.xposed
 
+import android.app.BroadcastOptions
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
@@ -47,7 +48,9 @@ class ClipHook : IXposedHookLoadPackage {
                     override fun afterHookedMethod(param: MethodHookParam) {
                         try {
                             val clip = param.args.getOrNull(0) as? ClipData ?: return
-                            val ctx = currentSystemContext() ?: return
+                            // Use the real application's Context so Android can attribute
+                            // this broadcast to its process UID/package, never "android".
+                            val ctx = currentApplicationContext() ?: return
                             for (i in 0 until clip.itemCount.coerceAtMost(8)) {
                                 val item = clip.getItemAt(i) ?: continue
                                 val uri = item.uri
@@ -103,7 +106,7 @@ class ClipHook : IXposedHookLoadPackage {
                     .putExtra(EXTRA_TS, System.currentTimeMillis())
                     .putExtra(EXTRA_TOKEN, TOKEN)
                     .setPackage(host)
-                ctx.sendBroadcast(intent)
+                sendIdentifiedBroadcast(ctx, intent)
                 Log.d(TAG, "text broadcast to $host len=${text.length}")
             } catch (t: Throwable) {
                 Log.d(TAG, "broadcast failed to $host err=${t.javaClass.simpleName}")
@@ -124,7 +127,7 @@ class ClipHook : IXposedHookLoadPackage {
                     .putExtra(EXTRA_TS, capturedAt)
                     .putExtra(EXTRA_TOKEN, TOKEN)
                     .setPackage(host)
-                ctx.sendBroadcast(intent)
+                sendIdentifiedBroadcast(ctx, intent)
                 Log.d(TAG, "file broadcast to $host size=${bytes.size}")
             } catch (t: Throwable) {
                 Log.d(TAG, "broadcast failed to $host err=${t.javaClass.simpleName}")
@@ -132,12 +135,19 @@ class ClipHook : IXposedHookLoadPackage {
         }
     }
 
-    /** 反射拿当前进程的 system context（微信进程内返回微信进程的 system context） */
-    private fun currentSystemContext(): Context? {
+    private fun sendIdentifiedBroadcast(ctx: Context, intent: Intent) {
+        // API 34+, and this project requires API 36. Never fall back to an anonymous
+        // broadcast: the receiver will fail closed and expose an actionable diagnostic.
+        val options = BroadcastOptions.makeBasic().setShareIdentityEnabled(true).toBundle()
+        ctx.sendBroadcast(intent, null, options)
+    }
+
+    /** 获取当前 App 上下文，避免 system Context 的包归属与进程 UID 不一致。 */
+    private fun currentApplicationContext(): Context? {
         return try {
-            val at = Class.forName("android.app.ActivityThread")
-                .getMethod("currentActivityThread").invoke(null)
-            at.javaClass.getMethod("getSystemContext").invoke(at) as? Context
+            val app = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication").invoke(null) as? Context
+            app?.applicationContext
         } catch (_: Throwable) {
             null
         }
@@ -157,7 +167,7 @@ class ClipHook : IXposedHookLoadPackage {
         const val EXTRA_PKG = "pkg"
         const val EXTRA_TS = "ts"
         const val EXTRA_TOKEN = "token"
-        /** 握手 token：与 ClipReceiver 校验一致，防止其他 App 伪造复制广播 */
+        /** 协议标记；接收端必须独立核对平台发送身份，不能将它视作秘密。 */
         const val TOKEN = "liuzhuan-cliphook-2026-v1-9f3a7c2e"
         /** 文件大小上限：字节广播避免 Base64 字符串膨胀；Binder 仍有总事务预算 */
         private const val MAX_FILE_BYTES = 512 * 1024

@@ -1,4 +1,4 @@
-package com.liuzhuan.app.clipboard
+﻿package com.liuzhuan.app.clipboard
 
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -28,7 +28,7 @@ class ClipboardPrivacyPolicy(
 
     @Synchronized
     fun initialize(loaded: State) {
-        _state.value = loaded.copy(ready = true, excludedPackages = loaded.excludedPackages.toSet(), revision = 0)
+        _state.value = loaded.copy(ready = true, excludedPackages = loaded.excludedPackages.toSet())
     }
 
     @Synchronized

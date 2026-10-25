@@ -15,7 +15,13 @@ data class MaterialItem(
     val size: Long,
     val time: Long,            // Unix 秒
     val sequence: Long = 0,    // 服务器变更序号（去重 / gap 检测），不作为素材创建时间
-    val sourceDeviceId: String = ""
+    val sourceDeviceId: String = "",
+    val group: String = "",
+    val tags: List<String> = emptyList(),
+    val note: String = "",
+    val hasFile: Boolean = type != "Text",
+    val favorite:Boolean=false,val revision:Long=0,val sourceMissing:Boolean=false,
+    val source:String="",val sourceDevice:String="",val offlineText:String="",val textComplete:Boolean=false,val sourceRevision:Long=0
 )
 
 /** 协议摘要 → 统一模型 */
@@ -25,6 +31,7 @@ fun Proto.ItemSummary.toMaterialItem(): MaterialItem = MaterialItem(
     name = name,
     size = size,
     time = time,
-    sequence = sequence
+    sequence = sequence, group = group, tags = tags, note = note, hasFile=hasFile,
+    favorite=favorite,revision=revision,sourceMissing=sourceMissing,source=source,sourceDevice=sourceDevice,offlineText=offlineText,textComplete=textComplete,sourceRevision=sourceRevision
 )
 

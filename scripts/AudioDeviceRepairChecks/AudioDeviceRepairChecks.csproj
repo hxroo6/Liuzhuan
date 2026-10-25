@@ -1,0 +1,8 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup><PackageReference Include="NAudio.Wasapi" Version="2.2.1" /></ItemGroup>
+  <ItemGroup>
+    <Compile Include="../../Liuzhuan/Services/Audio/AudioDeviceRepairService.cs" Link="Production/AudioDeviceRepairService.cs" />
+    <Compile Include="../../Liuzhuan/Services/Audio/MicrophonePreferences.cs" Link="Production/MicrophonePreferences.cs" />
+  </ItemGroup>
+</Project>

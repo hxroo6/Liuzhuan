@@ -2,7 +2,7 @@
 
 ## 电脑端（Liuzhuan/）
 
-**环境要求**：.NET 7 SDK（Windows）
+**环境要求**：.NET 10 SDK（Windows，基线见根目录 global.json）。
 
 ```bash
 cd Liuzhuan
@@ -18,7 +18,7 @@ dotnet publish -c Release -r win-x64 \
 **环境要求**：
 - JDK 21
 - Android SDK：compileSdk 36 / targetSdk 36 / minSdk 36
-- Gradle 8.11+
+- Gradle 8.11.1，Android Gradle Plugin 8.10.1
 
 **关键配置**：
 
@@ -67,6 +67,10 @@ Distribution 与 Debug 共用源码和签名，关闭可调试标记，不启用
 | Release 签名失败 | 确认 keystore.properties 存在且内容正确 |
 
 ## 测试
+
+关键回归可逐个运行，例如 `dotnet run --project scripts/LibraryRecoveryChecks/LibraryRecoveryChecks.csproj`、`ProjectStagingChecks`、`RemoteProjectChecks` 与 `EnhancementChecks`。引用主 WPF 工程的检查须串行构建，避免共用 obj 输出冲突。
+
+Android JVM 状态机检查使用 `scripts/IdentityLibraryChecks/Run-AndroidLibraryChecks.ps1` 与 `scripts/TransferPolicyChecks/Run-TransferPolicyChecks.ps1`，从 JAVA_HOME、GRADLE_USER_HOME 和 Gradle wrapper 缓存定位依赖。先完整构建 Android 准备缓存；前者还需电脑 IdentityLibraryChecks 生成的 identity-fixture.json。CI 会传递该跨语言夹具。替身检查不等于 ROM、KeyStore、麦克风或实际电池验收。
 
 仓库内 `scripts/` 提供 Python 端到端测试（依赖 `websocket-client`）：
 

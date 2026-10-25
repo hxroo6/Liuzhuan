@@ -1,4 +1,4 @@
-package com.liuzhuan.app.clipboard
+﻿package com.liuzhuan.app.clipboard
 
 import android.content.Context
 import com.liuzhuan.app.LanHub
@@ -28,14 +28,14 @@ internal class ClipboardPrivacyPreferences(context: Context) {
         val cutoff = preferences.getLong("discard_before", 0)
         require(paused >= -1 && cutoff >= 0) { "隐私配置中的时间无效" }
         return ClipboardPrivacyPolicy.State(automaticEnabled = preferences.getBoolean("automatic_enabled", false),
-            pausedUntilMs = paused, discardBeforeMs = cutoff,
+            pausedUntilMs = paused, discardBeforeMs = cutoff,revision=preferences.getLong("revision",0),
             excludedPackages = ClipboardPrivacyPolicy.parsePackages(exclusionText()))
     }
     @Synchronized
     fun save(state: ClipboardPrivacyPolicy.State) {
         val previous = preferences.all.toMap()
         val editor = preferences.edit().putInt("schema", 1).putBoolean("automatic_enabled", state.automaticEnabled)
-            .putLong("paused_until", state.pausedUntilMs).putLong("discard_before", state.discardBeforeMs)
+            .putLong("revision",state.revision).putLong("paused_until", state.pausedUntilMs).putLong("discard_before", state.discardBeforeMs)
             .putString("excluded_packages", state.excludedPackages.joinToString("\n"))
         try {
             if (editor.commit()) return
@@ -140,6 +140,7 @@ object ClipboardPrivacy {
 
     private fun discardAutomaticPending() {
         ClipboardMonitorCoordinator.queue.discardAutomatic()
+        com.liuzhuan.app.DurableTransfers.invalidateAutomatic()
     }
 
     fun describe(reason: ClipboardPrivacyPolicy.BlockReason): String = when (reason) {

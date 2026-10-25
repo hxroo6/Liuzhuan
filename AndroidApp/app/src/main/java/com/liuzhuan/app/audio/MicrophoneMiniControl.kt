@@ -7,6 +7,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.platform.LocalContext
+import kotlinx.coroutines.flow.catch
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -18,8 +21,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 @Composable
 fun MicrophoneMiniControl(onOpen: () -> Unit) {
     val status by MicrophoneState.status.collectAsStateWithLifecycle()
+    val context = LocalContext.current
+    val preferences = remember(context) { MicrophoneOptionsStore(context).options.catch { emit(MicrophoneOptions()) } }
+    val options by preferences.collectAsStateWithLifecycle(MicrophoneOptions())
     val levels by MicrophoneLevels.state.collectAsStateWithLifecycle()
     val label = when {
+        !status.active && status.issue != MicIssue.NONE -> "点击恢复"
+        !status.active && options.energySaving -> "节能连接"
         !status.active -> "麦克风"
         status.localOnly -> "本机试音"
         !status.connected -> "连接收音"

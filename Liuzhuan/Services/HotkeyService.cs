@@ -24,7 +24,9 @@ public class HotkeyService : IDisposable
     public const uint MOD_NOREPEAT = 0x4000;
 
     private IntPtr _hwnd;
-    private int _currentId = 9000;
+    private readonly int _currentId;
+    private bool _registered;
+    public HotkeyService(int id = 9000) { _currentId = id; }
     private Action? _callback;
 
     /// <summary>注册全局热键</summary>
@@ -39,7 +41,6 @@ public class HotkeyService : IDisposable
         var helper = new System.Windows.Interop.WindowInteropHelper(window);
         _hwnd = helper.Handle;
         _callback = callback;
-        _currentId = 9000;
 
         uint mod = MOD_NOREPEAT;
         if ((modifiers & ModifierKeys.Alt) != 0) mod |= MOD_ALT;
@@ -52,6 +53,7 @@ public class HotkeyService : IDisposable
 
         if (ok)
         {
+            _registered = true;
             // 安装消息过滤器拦截 WM_HOTKEY
             ComponentDispatcher.ThreadFilterMessage += OnThreadFilterMessage;
             Utils.Logger.Run("HotkeyService: registered {0}+{1} (id={2})", modifiers, key, _currentId);
@@ -76,10 +78,10 @@ public class HotkeyService : IDisposable
 
     public void Unregister()
     {
-        if (_hwnd != IntPtr.Zero && _currentId != 9000)
+        if (_hwnd != IntPtr.Zero && _registered)
         {
             UnregisterHotKey(_hwnd, _currentId);
-            _currentId = 9000;
+            _registered = false;
         }
         ComponentDispatcher.ThreadFilterMessage -= OnThreadFilterMessage;
     }

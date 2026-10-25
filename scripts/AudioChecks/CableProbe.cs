@@ -41,6 +41,9 @@ internal static class CableProbe
         using var device = enumerator.GetDevice(input.Id);
         using var capture = new WasapiCapture(device);
         using var render = new VirtualAudioOutput(output.Id);
+        await Task.Delay(300);
+        if (render.RenderCallbacks != 0) throw new InvalidOperationException("Idle service is still rendering silence.");
+        Console.WriteLine("PASS: idle virtual output has zero render callbacks before forwarding.");
         long received = 0; double peak = 0;
         capture.DataAvailable += (_, e) =>
         {
@@ -57,8 +60,30 @@ internal static class CableProbe
             render.Accept(pcm, 0, pcm.Length); offset += AudioProtocol.Samples; await Task.Delay(20);
         }
         render.SetForwarding(false); capture.StopRecording();
+        await Task.Delay(300);
+        var stoppedCallbacks = render.RenderCallbacks;
+        await Task.Delay(300);
+        if (render.RenderCallbacks != stoppedCallbacks) throw new InvalidOperationException("Stopped output callbacks are still running.");
+        Console.WriteLine("PASS: stopping/silence releases render callbacks instead of repeatedly rendering zeros.");
         Console.WriteLine($"CABLE test: capturedBytes={received}, peak={peak:F4}, format={capture.WaveFormat}");
         if (received == 0 || peak < 0.005) throw new InvalidOperationException("Virtual cable did not deliver the synthetic signal; restart may be required.");
+        peak = 0; long firstSignal = -1;
+        var resumed = Stopwatch.StartNew();
+        capture.DataAvailable += (_, e) => {
+            if (Peak(e.Buffer, e.BytesRecorded, capture.WaveFormat) > 0.005)
+                Interlocked.CompareExchange(ref firstSignal, resumed.ElapsedMilliseconds, -1);
+        };
+        render.SetForwarding(true); capture.StartRecording();
+        for (int f = 0; f < 75; f++)
+        {
+            var pcm = new byte[AudioProtocol.PayloadSize];
+            for (int i = 0; i < AudioProtocol.Samples; i++)
+                BinaryPrimitives.WriteInt16LittleEndian(pcm.AsSpan(i * 2), (short)(Math.Sin(2 * Math.PI * 500 * (offset + i) / AudioProtocol.Rate) * 2600));
+            render.Accept(pcm, 0, pcm.Length); offset += AudioProtocol.Samples; await Task.Delay(20);
+        }
+        render.SetForwarding(false); capture.StopRecording();
+        if (firstSignal < 0) throw new InvalidOperationException("Virtual output did not resume after idle.");
+        Console.WriteLine($"PASS: output resumes after idle; first synthetic signal={firstSignal}ms (local cable only, not phone/ASR latency).");
         Console.WriteLine("PASS: production PCM16 mono16k render path reaches CABLE Output. No physical speaker or phone microphone used.");
     }
 }

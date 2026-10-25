@@ -16,6 +16,12 @@ public partial class MicrophoneEntry : UserControl
     private Window? _owner;
     private long _connection;
     public Func<AudioTransportServer?>? ServerProvider { get; set; }
+    private string _configurationWarning = "";
+    public string ConfigurationWarning
+    {
+        get => _configurationWarning;
+        set { _configurationWarning = value ?? ""; Refresh(); }
+    }
     public event RoutedEventHandler? Click;
     public MicrophoneEntry()
     {
@@ -49,13 +55,14 @@ public partial class MicrophoneEntry : UserControl
         Array.Copy(_history, 1, _history, 0, _history.Length - 1);
         _history[^1] = receiving ? server!.LiveLevel.Peak : 0;
         Draw(receiving);
-        var label = state == null ? "麦克风" : state.ConnectionId == 0 ? "待连接" : state.Quiet ? "安静待命" : receiving ? "正在收音" : state.Ready ? "采音待命" : "未准备";
+        var label = _configurationWarning.Length > 0 ? "检查声音" : state == null ? "麦克风" : state.ConnectionId == 0 ? "待连接" : state.Quiet ? "安静待命" : receiving ? "正在收音" : state.Ready ? "采音待命" : "未准备";
+        StateText.SetResourceReference(TextBlock.ForegroundProperty, _configurationWarning.Length > 0 ? "WarmBrush" : "TextDimBrush");
         if (StateText.Text != label)
         {
             StateText.Text = label;
-            EntryButton.ToolTip = $"手机麦克风 · {label}\n点击打开麦克风设置";
             System.Windows.Automation.AutomationProperties.SetName(EntryButton, $"手机麦克风，{label}，点击打开设置");
         }
+        EntryButton.ToolTip = _configurationWarning.Length > 0 ? $"{_configurationWarning}\n点击核对音频配置或恢复已保存的设备选择" : $"手机麦克风 · {label}\n点击打开麦克风设置";
     }
     private void Draw(bool receiving)
     {

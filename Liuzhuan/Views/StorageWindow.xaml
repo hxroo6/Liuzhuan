@@ -1,0 +1,29 @@
+<Window x:Class="Liuzhuan.Views.StorageWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="容量与清理预览" Width="940" Height="740" MinWidth="720" MinHeight="560" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}" FontSize="14">
+ <Window.Resources><Style TargetType="TextBox"><Setter Property="Foreground" Value="#132D2D"/><Setter Property="Background" Value="#E5F0EC"/><Setter Property="Padding" Value="6,4"/></Style><Style TargetType="ListBox"><Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/></Style></Window.Resources>
+ <Grid Margin="24" Background="{StaticResource PanelBrush}">
+  <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+  <StackPanel><TextBlock Text="让素材库保持轻盈" FontSize="25" FontWeight="SemiBold"/><TextBlock Text="先预览、再选择。收藏始终保护；外部原件不删除；没有定时自动清理。" Margin="0,8,0,16" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/></StackPanel>
+  <WrapPanel Grid.Row="1" VerticalAlignment="Center" Margin="0,0,0,12">
+   <TextBlock Text="保留最近" VerticalAlignment="Center"/><TextBox x:Name="Days" Text="30" Width="58" Margin="8,0"/><TextBlock Text="天，并保护最新" VerticalAlignment="Center"/><TextBox x:Name="Keep" Text="500" Width="75" Margin="8,0"/><TextBlock Text="条" VerticalAlignment="Center"/>
+   <Button x:Name="PreviewButton" Content="扫描与预览" Click="Preview_Click" Style="{StaticResource ActionButtonStyle}" Margin="14,0,8,0" Padding="12,7"/>
+   <Button x:Name="SavePolicyButton" Content="记住保留策略" Click="SavePolicy_Click" Style="{StaticResource ActionButtonStyle}" Padding="12,7"/>
+   <Button Content="项目暂存空间…" Click="ProjectStaging_Click" Style="{StaticResource ActionButtonStyle}" Padding="12,7" Margin="8,0,0,0"/>
+  </WrapPanel>
+  <Border Grid.Row="2" Background="{StaticResource PanelLightBrush}" CornerRadius="10" Padding="16" Margin="0,0,0,12"><TextBlock x:Name="Summary" Text="打开窗口不扫描、不清理。选择保留范围后点预览。" TextWrapping="Wrap"/></Border>
+  <Grid Grid.Row="3"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+   <Grid Margin="0,0,7,0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="历史索引 · 移除后原文件仍保留，可用素材栏撤回" TextWrapping="Wrap" Margin="0,0,0,8"/>
+    <ListBox x:Name="HistoryList" Grid.Row="1" SelectionMode="Extended" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><StackPanel Margin="7"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource TextDimBrush}"/><TextBlock Text="{Binding SourceLabel}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextDimBrush}"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+    <Button x:Name="RemoveButton" Grid.Row="2" Content="移除所选索引…" Click="Remove_Click" IsEnabled="False" Margin="0,8,0,0" Padding="10,8" Style="{StaticResource ActionButtonStyle}"/>
+   </Grid>
+   <Grid Grid.Column="1" Margin="7,0,0,0"><Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <TextBlock Text="未引用文件 · 先移入回收区，不立即释放磁盘" TextWrapping="Wrap" Margin="0,0,0,8"/>
+    <ListBox x:Name="FilesList" Grid.Row="1" SelectionMode="Extended" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"><ListBox.ItemTemplate><DataTemplate><StackPanel Margin="7"><TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/><TextBlock Text="{Binding Detail}" FontSize="12" Foreground="{StaticResource TextDimBrush}"/><TextBlock Text="{Binding Path}" FontSize="11" TextTrimming="CharacterEllipsis" Foreground="{StaticResource TextDimBrush}"/></StackPanel></DataTemplate></ListBox.ItemTemplate></ListBox>
+    <Button x:Name="RecycleButton" Grid.Row="2" Content="回收所选文件…（每批最多200个）" Click="Recycle_Click" IsEnabled="False" Margin="0,8,0,0" Padding="10,8" Style="{StaticResource ActionButtonStyle}"/>
+   </Grid>
+  </Grid>
+  <StackPanel Grid.Row="4" Margin="0,12,0,10"><Expander x:Name="TrashDetails" Header="回收区明细 · 永久清理前请核对" Foreground="{StaticResource TextBrush}"><ListBox x:Name="TrashList" MaxHeight="110" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"/></Expander><TextBlock x:Name="Status" Margin="0,8,0,0" TextWrapping="Wrap" Foreground="{StaticResource WarmBrush}"/></StackPanel>
+  <WrapPanel Grid.Row="5"><Button x:Name="RestoreButton" Content="恢复最近回收批次" Click="Restore_Click" Padding="12,8" Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0"/><Button x:Name="PurgeButton" Content="永久清空回收区…" Click="Purge_Click" Padding="12,8" Style="{StaticResource ActionButtonStyle}" Margin="0,0,8,0"/><Button x:Name="CancelButton" Content="取消扫描 / 返回" Click="Close_Click" Padding="12,8" Style="{StaticResource ActionButtonStyle}"/></WrapPanel>
+ </Grid>
+</Window>

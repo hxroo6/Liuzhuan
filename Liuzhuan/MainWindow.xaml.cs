@@ -2,6 +2,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -14,6 +15,7 @@ using System.Windows.Shell;
 using System.Windows.Threading;
 using Liuzhuan.Models;
 using Liuzhuan.Services;
+using Liuzhuan.Services.Audio;
 using Liuzhuan.Services.Lan;
 using Liuzhuan.Utils;
 
@@ -23,11 +25,55 @@ public partial class MainWindow : Window
 {
     private readonly DataStore _dataStore;
     private readonly SavedViewStore _savedViews;
-    private readonly ObservableCollection<MaterialItem> _currentView = new();
+    private readonly ResettableCollection<MaterialItem> _currentView = new();
+    private string _renderedFilter = "";
+    private string _requestedFilter = "";
+    private long _viewGeneration,_querySequence=-1;
+    private int _queryCount=-1;
+    private DesktopMaterialRow[] _queryRows=Array.Empty<DesktopMaterialRow>();
+    private CancellationTokenSource? _viewQuery;
+    private DispatcherTimer? _searchDebounce;
+    private bool _viewRefreshPending;
+    private void QueueRefreshView()
+    {
+        if (_viewRefreshPending) return;
+        _viewRefreshPending=true;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background,new Action(()=> { _viewRefreshPending=false;RefreshView(); }));
+    }
+    private readonly Dictionary<FrameworkElement, MaterialItem> _visibleThumbnails = new();
+    private void ThumbnailCard_Loaded(object sender,RoutedEventArgs e)
+    {
+        if(sender is not FrameworkElement card)return;
+        card.DataContextChanged-=ThumbnailCard_DataContextChanged;
+        card.DataContextChanged+=ThumbnailCard_DataContextChanged;
+        TrackThumbnail(card);
+    }
+    private void ThumbnailCard_DataContextChanged(object sender,DependencyPropertyChangedEventArgs e) => TrackThumbnail((FrameworkElement)sender);
+    private void TrackThumbnail(FrameworkElement card)
+    {
+        if(_visibleThumbnails.Remove(card,out var old))old.ReleaseThumbnail();
+        if(card.IsLoaded && card.DataContext is MaterialItem item){_visibleThumbnails[card]=item;item.AcquireThumbnail();}
+    }
+    private void ThumbnailCard_Unloaded(object sender,RoutedEventArgs e)
+    {
+        if(sender is not FrameworkElement card)return;
+        card.DataContextChanged-=ThumbnailCard_DataContextChanged;
+        if(_visibleThumbnails.Remove(card,out var old))old.ReleaseThumbnail();
+    }
     private readonly HotkeyService _hotkeyService = new();
+    private readonly HotkeyService _collectionHotkey = new(9001);
+    private FolderCollectionService? _folderCollection;
+    private bool _quickCollectEnabled;
     private readonly LanServer _lanServer = new();
     private readonly Services.Audio.MicrophoneHost _microphone = new();
     private Views.MicrophoneWindow? _microphoneWindow;
+    private AudioConfigurationGuard? _audioConfigurationGuard;
+    private AudioConfigurationMonitor? _audioConfigurationMonitor;
+    private int _audioReviewRunning, _audioReviewDirty;
+    private volatile bool _audioWatchClosed;
+    private string _lastAudioWarning = "";
+    private long _lastAudioNotice;
+    private readonly SemaphoreSlim _audioRepairGate = new(1);
     private readonly ConnectionNoticePolicy _connectionNotice = new();
     private long _connectionNoticeUntil;
     private readonly ClipboardMonitorService _clipMonitor = new();
@@ -68,6 +114,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         HeaderMicrophone.ServerProvider = () => _microphone.Server;
+        TransferPolicyService.AudioActiveProvider=()=>_microphone.Server?.Snapshot.Requested==true;
         _dataStore = new DataStore();
         _savedViews = new SavedViewStore(ConfigService.GetEffectiveDataDir());
         GridView.ItemsSource = _currentView;
@@ -103,8 +150,19 @@ public partial class MainWindow : Window
         UpdateStatusText();
         UpdateUndoButton();
         SetupTrayIcon();
+        SetupAudioConfigurationProtection();
         SetupGlobalHotkey();
         SetupLanServer();
+        _folderCollection = new FolderCollectionService(ConfigService.GetEffectiveDataDir(), async path =>
+        {
+            var item = DragDropService.CreateFromPath(path);
+            if (item == null) throw new IOException("无法读取来源文件。");
+            item.CollectionSource = "Directory";
+            await Dispatcher.InvokeAsync(() => { var registered=_dataStore.Add(item); DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView); QueueRefreshView(); });
+            await _dataStore.FlushAsync();
+        });
+        _folderCollection.Start();
+        try { if (File.ReadAllText(Path.Combine(ConfigService.GetEffectiveDataDir(), "quick-collection.txt")) == "enabled") ConfigureQuickCollection(true); } catch { }
         RestoreClipboardMonitor();
         try
         {
@@ -130,13 +188,38 @@ public partial class MainWindow : Window
                 Logger.Run("LAN: initial password generated");
             }
             _lanServer.TextReceived += OnLanTextReceived;
+            _lanServer.DurableTextReceiver = async (key,content,device) => {
+                await Dispatcher.InvokeAsync(() => {
+                    if(_dataStore.Items.Any(x=>x.RegistrationKeys.Contains(key)))return;
+                    var item=DragDropService.CreateTextItem(content);
+                    item.RegistrationKeys=new[]{key};item.CollectionSource="Android";item.CollectionDevice=device.Length<=64 && !device.Any(char.IsControl)?device:"手机";
+                    _dataStore.Add(item);QueueRefreshView();
+                });
+                await _dataStore.FlushAsync();
+            };
+            _lanServer.DurableFileReceiver = async (key,path,name,source,device) => {
+                if(!await Dispatcher.InvokeAsync(()=>_dataStore.Items.Any(x=>x.RegistrationKeys.Contains(key))))
+                    OnLanFileUploaded(path,name,source,device,key);
+                await _dataStore.FlushAsync();
+            };
+            TransferJournal.Initialize(ConfigService.GetEffectiveDataDir());
             _lanServer.ClientCountChanged += OnLanClientCountChanged;
             _lanServer.ClientAuthenticated += OnLanClientAuthenticated;
-            _lanServer.FileUploaded += OnLanFileUploaded;
+            _lanServer.FileCollected += (path,name,source,device)=>OnLanFileUploaded(path,name,source,device);
+            _lanServer.LibraryProvider = new MaterialLibraryService(_dataStore,action=>Dispatcher.InvokeAsync(action).Task,()=>_lanServer.LibraryId).HandleAsync;
+            _dataStore.ItemUpdated += item=>{_lanServer.BroadcastItemUpdated(_dataStore.GetSummary(item));QueueRefreshView();};
+            _lanServer.AutomationProvider = HandleAutomationRequest;
             _lanServer.SnapshotDispatcher = action => Dispatcher.Invoke(action);
             _lanServer.SnapshotProvider = () => new LanListSnapshot(_dataStore.GetRecentSummaries(50), _dataStore.CurrentSequence);
-            _lanServer.ItemLookup = id => _dataStore.Items.FirstOrDefault(x => x.Id == id);
-            _lanServer.MicrophoneInviteProvider = _microphone.MaterialInvitationAsync;
+            _lanServer.ItemLookup = id => Dispatcher.Invoke(()=>_dataStore.Items.FirstOrDefault(x => x.Id == id));
+            _lanServer.MicrophoneInviteProvider = async () =>
+            {
+                var invitation = await _microphone.MaterialInvitationAsync();
+                _audioConfigurationMonitor?.RequestRefresh();
+                QueueAudioConfigurationReview();
+                return invitation;
+            };
+            _lanServer.MicrophoneConfigurationProvider = ConfigureMicrophoneFromPhoneAsync;
             _dataStore.ItemAdded += OnDataStoreItemAdded;
             _dataStore.ItemRemoved += OnDataStoreItemRemoved;
             _dataStore.ItemCleared += OnDataStoreItemCleared;
@@ -209,15 +292,17 @@ public partial class MainWindow : Window
         Dispatcher.Invoke(() =>
         {
             var item = DragDropService.CreateTextItem(content);
-            _dataStore.Add(item);
-            DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
+            item.CollectionSource = "Android";
+            item.CollectionDevice = device.Length<=64 && !device.Any(char.IsControl)?device:"手机";
+            var registered = _dataStore.Add(item);
+            DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView);
             RefreshView();
             Logger.Run("LAN: text received from {0} ({1} chars) -> added", device, content.Length);
         });
     }
 
     /// <summary>手机上传文件 → 以本地新增方式进入流转</summary>
-    private void OnLanFileUploaded(string filePath, string displayName)
+    private void OnLanFileUploaded(string filePath, string displayName, string source, string device, string registrationKey="")
     {
         // HTTP 工作线程同步完成转换，再登记素材，保证手机同步到的是最终文件。
         // WPF JPEG 白底绘制要求 STA，使用独立线程，不阻塞界面线程。
@@ -241,21 +326,16 @@ public partial class MainWindow : Window
         conversionThread.SetApartmentState(ApartmentState.STA);
         conversionThread.Start();
         conversionThread.Join();
+        var received=DragDropService.CreateFromPath(filePath) ?? throw new IOException("无法读取已接收文件。");
+        received.DisplayName=displayName;received.CollectionSource=source;received.CollectionDevice=device;
+        if(registrationKey.Length>0)received.RegistrationKeys=new[]{registrationKey};
         Dispatcher.Invoke(() =>
         {
             try
             {
-                var type = Utils.FileClassifier.ClassifyByExtension(filePath);
-                var item = new Models.MaterialItem
-                {
-                    Type = type,
-                    FilePath = filePath,
-                    DisplayName = displayName,
-                    Size = new System.IO.FileInfo(filePath).Length,
-                    AddedTime = DateTime.Now
-                };
-                _dataStore.Add(item);
-                DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
+                var item=received;
+                var registered = _dataStore.Add(item);
+                DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView);
                 RefreshView();
                 Logger.Run("LAN: file uploaded from phone -> added: {0}", displayName);
                 if (conversionError != null)
@@ -276,15 +356,7 @@ public partial class MainWindow : Window
     {
         try
         {
-            _lanServer.BroadcastItemAdded(new LanItemSummary
-            {
-                Id = item.Id,
-                Type = item.Type.ToString(),
-                Name = item.DisplayName,
-                Size = item.Size,
-                AddedTime = new DateTimeOffset(item.AddedTime).ToUnixTimeSeconds(),
-                Sequence = _dataStore.CurrentSequence
-            });
+            _lanServer.BroadcastItemAdded(_dataStore.GetSummary(item));
         }
         catch (Exception ex)
         {
@@ -342,6 +414,38 @@ public partial class MainWindow : Window
     }
 
     /// <summary>注册全局热键（默认 Ctrl+` 切换面板）</summary>
+    private object HandleAutomationRequest(System.Text.Json.JsonElement request)
+    {
+        return Dispatcher.Invoke<object>(() =>
+        {
+            if (_dataStore.Automation.LoadError != null) throw new InvalidOperationException(_dataStore.Automation.LoadError);
+            var action=request.GetProperty("action").GetString();
+            if(action=="get") return new { document=_dataStore.Automation.Export() };
+            var draft=AutomationStore.Normalize(request.GetProperty("document").Deserialize<AutomationDocument>(AutomationStore.Json) ?? throw new ArgumentException("规则内容无效。"));
+            if(action=="save") return new { document=_dataStore.Automation.Save(draft) };
+            if(action=="preview")
+            {
+                var rows=_dataStore.Items.Take(50).Select(x => new { name=x.DisplayName,result=AutomationStore.Evaluate(draft,x) }).Where(x=>x.result.Matches.Length>0).ToList();
+                return new { matched=rows.Count, samples=rows.Take(6).Select(x=>new { name=x.name,group=x.result.Group,tags=x.result.Tags }).ToArray() };
+            }
+            throw new ArgumentException("未知的规则操作。");
+        });
+    }
+
+    private bool ConfigureQuickCollection(bool enabled)
+    {
+        _collectionHotkey.Unregister();
+        if(enabled && !_collectionHotkey.Register(this,Key.V,ModifierKeys.Control|ModifierKeys.Alt,()=>Dispatcher.BeginInvoke(new Action(PasteFromClipboard)))) { _quickCollectEnabled=false;return false; }
+        try { File.WriteAllText(Path.Combine(ConfigService.GetEffectiveDataDir(),"quick-collection.txt"),enabled?"enabled":"disabled");_quickCollectEnabled=enabled;return true; }
+        catch { _collectionHotkey.Unregister();_quickCollectEnabled=false;return false; }
+    }
+
+    private void OpenAutomation()
+    {
+        if(_folderCollection==null)return;
+        ShowToolDialog(new Views.AutomationWindow(_dataStore,_folderCollection,PasteFromClipboard,_quickCollectEnabled,ConfigureQuickCollection) { Owner=this });
+    }
+
     private void SetupGlobalHotkey()
     {
         try
@@ -687,9 +791,9 @@ public partial class MainWindow : Window
         {
             foreach (var item in DragDropService.CreateFromPathRecursive(path))
             {
-                _dataStore.Add(item);
+                var registered = _dataStore.Add(item);
                 added++;
-                DragDropService.LoadDeferredPropertiesAsync(item, RefreshView);
+                DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView);
             }
         }
         RefreshView();
@@ -709,6 +813,12 @@ public partial class MainWindow : Window
         var integrity = new MenuItem { Header = "素材内容完整性检查…", IsEnabled = integrityFiles.Count > 0 };
         integrity.Click += (_, _) => CheckMaterialIntegrity(integrityFiles);
         menu.Items.Add(integrity);
+        var duplicates = new MenuItem { Header = "查找内容相同的文件…", IsEnabled = integrityFiles.Count > 1 };
+        duplicates.Click += (_, _) => ShowToolDialog(new Views.DuplicateMaterialWindow(_dataStore, integrityFiles) { Owner=this });
+        menu.Items.Add(duplicates);
+        var projectPackage = new MenuItem { Header = "项目素材包：导出所选 / 合入…" };
+        projectPackage.Click += (_, _) => ShowToolDialog(new Views.ProjectPackageWindow(_dataStore,GetSelectedItems(),()=>{RefreshView();UpdateUndoButton();}) {Owner=this});
+        menu.Items.Add(projectPackage);
         var images = GetSelectedItems();
         var imageAction = new MenuItem { Header = "处理选中图片（缩放 / PNG / JPEG）…", IsEnabled = images.Count > 0 && images.All(x => x.Type == MaterialType.Image) };
         imageAction.Click += (_, _) => ProcessImages(images);
@@ -733,8 +843,9 @@ public partial class MainWindow : Window
     private void MaterialSelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (_changingSelection) return;
-        if (StatusText != null) UpdateStatusText();
-        UpdateSelectionBar();
+        var selected = GetSelectedItems();
+        if (StatusText != null) UpdateStatusText(selected.Count);
+        UpdateSelectionBar(selected);
     }
 
     #endregion
@@ -774,8 +885,13 @@ public partial class MainWindow : Window
         // 有内容时显示清除按钮
         SearchClearBtn.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Collapsed : Visibility.Visible;
         SearchHint.Visibility = string.IsNullOrEmpty(SearchBox.Text) ? Visibility.Visible : Visibility.Collapsed;
-        RefreshView();
+        _searchDebounce??=new DispatcherTimer {Interval=TimeSpan.FromMilliseconds(200)};
+        _searchDebounce.Stop();
+        _searchDebounce.Tick-=SearchDebounce_Tick;
+        _searchDebounce.Tick+=SearchDebounce_Tick;
+        _searchDebounce.Start();
     }
+    private void SearchDebounce_Tick(object? sender,EventArgs e){_searchDebounce?.Stop();RefreshView();}
 
     private void SearchClearBtn_Click(object sender, RoutedEventArgs e)
     {
@@ -799,23 +915,59 @@ public partial class MainWindow : Window
     private void RefreshView()
     {
         if (_dataStore == null || GridView == null || EmptyState == null) return;
-
-        IEnumerable<MaterialItem> items;
-        if (!string.IsNullOrEmpty(_searchKeyword))
-            items = _dataStore.Search(_searchKeyword, _currentTab, _groupFilter, _tagFilter);
-        else
-            items = _dataStore.GetFiltered(_currentTab, _groupFilter, _tagFilter);
-
-        // 原位更新，缩略图完成或新素材到达时不清空列表、打断选中与滚动位置。
-        var desired = items.ToList();
+        var sequence=_dataStore.QueryRevision;
+        var filter=System.Text.Json.JsonSerializer.Serialize(new[]{_currentTab,_searchKeyword,_groupFilter,_tagFilter});
+        if(_querySequence==sequence&&_queryCount==_dataStore.Items.Count&&_requestedFilter==filter){UpdateStatusText();UpdateSelectionBar();return;}
+        _requestedFilter=filter;
+        _searchDebounce?.Stop();_viewQuery?.Cancel();_viewQuery?.Dispose();
+        var version=++_viewGeneration;
+        if(_querySequence!=sequence||_queryCount!=_dataStore.Items.Count){_queryRows=DesktopMaterialQuery.Capture(_dataStore.Items);_querySequence=sequence;_queryCount=_dataStore.Items.Count;}
+        var tab=_currentTab;var search=_searchKeyword;var group=_groupFilter;var tag=_tagFilter;var rows=_queryRows;
+        if(rows.Length<=2000){ApplyMaterialView(DesktopMaterialQuery.Find(rows,tab,search,group,tag).ToList(),filter);return;}
+        if(filter!=_renderedFilter){_currentView.Replace(Array.Empty<MaterialItem>());EmptyState.Visibility=Visibility.Visible;EmptyTitle.Text="正在筛选素材…";EmptyDescription.Text="输入和分类操作仍可继续";UpdateSelectionBar();UpdateStatusText();}
+        _viewQuery=new CancellationTokenSource();var token=_viewQuery.Token;
+        _=QueryAsync();
+        async Task QueryAsync()
+        {
+            try{
+                var result=await Task.Run(()=>DesktopMaterialQuery.Find(rows,tab,search,group,tag,token),token);
+                if(token.IsCancellationRequested||Dispatcher.HasShutdownStarted)return;
+                await Dispatcher.InvokeAsync(()=>{
+                    if(token.IsCancellationRequested||version!=_viewGeneration)return;
+                    if(_dataStore.QueryRevision!=sequence){QueueRefreshView();return;}
+                    ApplyMaterialView(result.ToList(),filter);
+                });
+            }catch(OperationCanceledException){}catch(Exception ex){Logger.Error("Material query failed: {0}",ex.GetType().Name);if(!Dispatcher.HasShutdownStarted)await Dispatcher.InvokeAsync(()=>{if(version==_viewGeneration){_requestedFilter="";EmptyTitle.Text="筛选未完成";EmptyDescription.Text="请重新选择分类或搜索";}});}
+        }
+    }
+    private void ApplyMaterialView(List<MaterialItem> desired,string filter)
+    {
+        // Only the newest immutable query may reconcile the owner-thread collection.
+        if(filter!=_renderedFilter)
+        {
+            _renderedFilter=filter;
+            _currentView.Replace(desired);
+        }
+        else if(!_currentView.SequenceEqual(desired))
+        {
+        if(Math.Abs(_currentView.Count-desired.Count)>64)
+        {
+            var selected=GetSelectedItems().Select(x=>x.Id).ToHashSet();
+            _currentView.Replace(desired);
+            var active=GetActiveListView();if(active!=null)foreach(var item in desired.Where(x=>selected.Contains(x.Id)))active.SelectedItems.Add(item);
+        }
+        else {
         var ids = desired.Select(x => x.Id).ToHashSet();
         for (int i = _currentView.Count - 1; i >= 0; i--)
             if (!ids.Contains(_currentView[i].Id)) _currentView.RemoveAt(i);
         for (int i = 0; i < desired.Count; i++)
         {
+            if(i<_currentView.Count && ReferenceEquals(_currentView[i],desired[i]))continue;
             int oldIndex = _currentView.IndexOf(desired[i]);
             if (oldIndex < 0) _currentView.Insert(i, desired[i]);
             else if (oldIndex != i) _currentView.Move(oldIndex, i);
+        }
+        }
         }
 
         // 决定使用哪个视图
@@ -830,13 +982,14 @@ public partial class MainWindow : Window
         EmptyState.Visibility = _currentView.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         EmptyTitle.Text = _searchKeyword.Length > 0 || HasOrganizationFilter ? "没有找到匹配素材" : _currentTab == "Favorites" ? "还没有收藏" : "把素材放在这里";
         EmptyDescription.Text = HasOrganizationFilter ? "试试其他分组或标签，或清除筛选" : _searchKeyword.Length > 0 ? "试试更短的关键词，或清除搜索" : _currentTab == "Favorites" ? "点击素材上的星标，常用内容随时取用" : "拖入文件，或点击上方「添加文件」";
+        if(_dataStore.LoadFailed){EmptyTitle.Text="素材索引暂不可用";EmptyDescription.Text="原文件已保留，请检查数据目录并恢复备份后重启。";}
         UpdateOrganizationFilters();
         UpdateSavedViewIndicator();
         UpdateStatusText();
         UpdateSelectionBar();
     }
 
-    private void UpdateStatusText()
+    private void UpdateStatusText(int? selectionCount = null)
     {
         var count = _currentView.Count;
         var typeName = _currentTab switch
@@ -851,7 +1004,7 @@ public partial class MainWindow : Window
             _ => ""
         };
         var searchHint = !string.IsNullOrEmpty(_searchKeyword) ? $" 搜索「{_searchKeyword}」" : "";
-        var selected = GetSelectedItems().Count;
+        var selected = selectionCount ?? GetSelectedItems().Count;
         StatusText.Text = selected > 0 ? $"已选 {selected} 项 / 共 {count} 项" : $"{typeName} · {count} 项";
         StatusText.ToolTip = $"{typeName} {count} 项{searchHint}" + (_groupFilter != null ? $" · 分组：{(_groupFilter.Length > 0 ? _groupFilter : "未分组")}" : "") + (_tagFilter != null ? $" · 标签：{_tagFilter}" : "");
         if (ConnectionText != null)
@@ -893,8 +1046,8 @@ public partial class MainWindow : Window
         {
             foreach (var item in items)
             {
-                _dataStore.Add(item);
-                DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
+                var registered = _dataStore.Add(item);
+                DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView);
             }
             RefreshView();
             Logger.Run("Drop: added {0} items", items.Count);
@@ -1230,7 +1383,9 @@ public partial class MainWindow : Window
     {
         var activeList = GetActiveListView();
         // 批量复制、另存和拖出始终遵循当前列表顺序。
-        return activeList == null ? new() : _currentView.Where(x => activeList.SelectedItems.Contains(x)).ToList();
+        if (activeList == null || activeList.SelectedItems.Count == 0) return new();
+        var selected = activeList.SelectedItems.Cast<MaterialItem>().ToHashSet();
+        return _currentView.Where(selected.Contains).ToList();
     }
 
     private ListView? GetActiveListView()
@@ -1350,8 +1505,8 @@ public partial class MainWindow : Window
                 try
                 {
                     item.ThumbnailPath = item.FilePath;
-                    item.TryLoadThumbnailSync();
-                    Logger.Run("Paste: thumbnail set via file, {0}", item.FilePath);
+                    // Visible cards request bounded background decode; paste never decodes a full image on the UI thread.
+                    Logger.Run("Paste: thumbnail scheduled for visible card");
                 }
                 catch (Exception ex)
                 {
@@ -1359,8 +1514,8 @@ public partial class MainWindow : Window
                 }
             }
 
-            _dataStore.Add(item);
-            DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
+            var registered = _dataStore.Add(item);
+            DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView);
             RefreshView();
             Logger.Run("Paste: added item Type={0} Name={1}", item.Type, item.DisplayName);
             ShowFeedback("剪贴板素材已添加");
@@ -1486,12 +1641,123 @@ public partial class MainWindow : Window
 
     #region 设置 + 退出
 
+    private async Task<Dictionary<string,object?>> ConfigureMicrophoneFromPhoneAsync(string action)
+    {
+        static Dictionary<string,object?> Result(string status, string message, bool canRepair = false) =>
+            new() { ["status"] = status, ["message"] = message, ["canRepair"] = canRepair };
+        if (action is not ("check" or "repair")) return Result("failed", "未知配置操作。");
+        if (!await _audioRepairGate.WaitAsync(0)) return Result("busy", "电脑正在检查音频，请稍后再试。");
+        try
+        {
+            var saved = _microphone.Server != null ? new MicrophonePreferences(_microphone.OutputId, _microphone.CaptureId)
+                : await Task.Run(() => MicrophonePreferences.Load(ConfigService.GetEffectiveDataDir()));
+            var inventory = await Task.Run(AudioDeviceRepairService.Scan);
+            var suggestion = AudioDeviceRepairService.Suggest(saved, inventory);
+            if (suggestion.Preferences is not { } preferences)
+                return Result(suggestion.Status == "unavailable" ? "failed" : suggestion.Status == "ambiguous" ? "selection_required" : "driver_missing", suggestion.Message);
+            if (action == "check")
+                return suggestion.Status == "current" ? Result("ready", "电脑的虚拟设备选择有效。此检查不代表已收到声音或完成听写。")
+                    : Result("selection_required", "已找到同一驱动下的安全设备对。点“检查并修复电脑音频”即可让电脑应用，无需操作电脑下拉框。", true);
+            if (!await _microphone.RepairConfigurationAsync(preferences))
+                return Result("busy", "电脑音频正在转发，请先结束当前麦克风会话，再点修复。");
+            _audioConfigurationMonitor?.RequestRefresh();
+            QueueAudioConfigurationReview();
+            if (!Dispatcher.HasShutdownStarted) await Dispatcher.InvokeAsync(() =>
+            {
+                if (_audioWatchClosed) return;
+                _microphoneWindow?.RefreshAfterExternalRepair();
+                ShowFeedback("已响应手机请求 · 麦克风设备配置已就绪");
+            });
+            return Result("repaired", "电脑已应用虚拟播放端与录音端配置，保留原扬声器和系统默认设置。正在为本手机重新连接麦克风。");
+        }
+        catch { return Result("failed", "电脑未能应用音频配置，请稍后重试；没有更改扬声器或系统默认设置。"); }
+        finally { _audioRepairGate.Release(); }
+    }
+
+    private void SetupAudioConfigurationProtection()
+    {
+        // Machine-local protection stays outside movable library roots. No capture, periodic polling or system writes.
+        _audioConfigurationGuard = new AudioConfigurationGuard(App.DataDir);
+        _microphone.SignalVerified += AudioSignalVerified;
+        _audioConfigurationMonitor = new AudioConfigurationMonitor(QueueAudioConfigurationReview, () =>
+            _microphone.Server != null ? new MicrophonePreferences(_microphone.OutputId, _microphone.CaptureId)
+                : MicrophonePreferences.Load(ConfigService.GetEffectiveDataDir()));
+        _audioConfigurationMonitor.Start();
+        QueueAudioConfigurationReview();
+    }
+    private void AudioSignalVerified(AudioSignalEvidence evidence)
+    {
+        // Called while the audio server holds its state gate: queue work and return immediately.
+        _ = Task.Run(() =>
+        {
+            try
+            {
+                if (_audioWatchClosed || _audioConfigurationGuard == null || _microphone.Server == null ||
+                    _microphone.OutputId != evidence.OutputId || _microphone.CaptureId != evidence.CaptureId ||
+                    _microphone.Server.Snapshot.ConnectionId != evidence.ConnectionId) return;
+                _audioConfigurationGuard.Observe(AudioRouteScanner.Scan(), new(evidence.OutputId, evidence.CaptureId), evidence);
+                QueueAudioConfigurationReview();
+            }
+            catch { /* Protection failure must not change the audio session. */ }
+        });
+    }
+    private void QueueAudioConfigurationReview()
+    {
+        if (_audioWatchClosed || _audioConfigurationGuard == null) return;
+        Interlocked.Exchange(ref _audioReviewDirty, 1);
+        if (Interlocked.CompareExchange(ref _audioReviewRunning, 1, 0) != 0) return;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                do
+                {
+                    Interlocked.Exchange(ref _audioReviewDirty, 0);
+                    if (_audioWatchClosed) return;
+                    var inventory = AudioRouteScanner.Scan();
+                    var preferences = _microphone.Server != null ? new MicrophonePreferences(_microphone.OutputId, _microphone.CaptureId)
+                        : MicrophonePreferences.Load(ConfigService.GetEffectiveDataDir());
+                    var assessment = _audioConfigurationGuard.Evaluate(inventory, preferences, _microphone.DiagnosticOnly);
+                    if (_audioWatchClosed || Dispatcher.HasShutdownStarted) return;
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        if (_audioWatchClosed) return;
+                        var warnings = assessment.Notices.Where(x => x.Severity != AudioRouteSeverity.Information).ToArray();
+                        string fingerprint = string.Join("|", warnings.Select(x => x.Code));
+                        HeaderMicrophone.ConfigurationWarning = warnings.FirstOrDefault()?.Title ?? "";
+                        if (fingerprint.Length > 0 && fingerprint != _lastAudioWarning &&
+                            (_lastAudioNotice == 0 || Environment.TickCount64 - _lastAudioNotice >= 60000))
+                        {
+                            _lastAudioNotice = Environment.TickCount64;
+                            ShowFeedback("声音配置需检查 · 点击标题音波图");
+                        }
+                        _lastAudioWarning = fingerprint;
+                    });
+                } while (Volatile.Read(ref _audioReviewDirty) != 0);
+            }
+            catch { /* Read-only monitoring is optional; keep material and audio services running. */ }
+            finally
+            {
+                Interlocked.Exchange(ref _audioReviewRunning, 0);
+                if (Volatile.Read(ref _audioReviewDirty) != 0 && !_audioWatchClosed) QueueAudioConfigurationReview();
+            }
+        });
+    }
+    private void StopAudioConfigurationProtection()
+    {
+        _audioWatchClosed = true;
+        _microphone.SignalVerified -= AudioSignalVerified;
+        _audioConfigurationMonitor?.Dispose();
+        _audioConfigurationMonitor = null;
+    }
+
     private void MicrophoneEntry_Click(object sender, RoutedEventArgs e)
     {
         e.Handled = true;
         if (_microphoneWindow != null) { _microphoneWindow.Activate(); return; }
-        _microphoneWindow = new Views.MicrophoneWindow(_microphone) { Owner = this };
-        _microphoneWindow.Closed += (_, _) => _microphoneWindow = null;
+        _microphoneWindow = new Views.MicrophoneWindow(_microphone, _audioConfigurationGuard, () =>
+        { _audioConfigurationMonitor?.RequestRefresh(); QueueAudioConfigurationReview(); }) { Owner = this };
+        _microphoneWindow.Closed += (_, _) => { _microphoneWindow = null; QueueAudioConfigurationReview(); };
         _microphoneWindow.Show();
     }
 
@@ -1515,6 +1781,12 @@ public partial class MainWindow : Window
         var microphoneItem = new MenuItem { Header = "手机麦克风（局域网实验功能）…" };
         microphoneItem.Click += MicrophoneEntry_Click;
         menu.Items.Add(microphoneItem);
+        var automationItem = new MenuItem { Header="自动整理、目录订阅与快捷收集…" };
+        automationItem.Click += (_,_) => OpenAutomation();
+        menu.Items.Add(automationItem);
+        var storageItem=new MenuItem{Header="容量、历史保留与清理预览…"};
+        storageItem.Click+=(_,_)=>{var window=new Views.StorageWindow(_dataStore,()=>{RefreshView();UpdateUndoButton();}){Owner=this};ShowToolDialog(window);};
+        menu.Items.Add(storageItem);
 
         // 剪贴板监控：电脑上任意复制 → 自动加载进流转（可选开关）
         var clipMonitorItem = new MenuItem
@@ -1534,8 +1806,8 @@ public partial class MainWindow : Window
                 _clipMonitor.Start(hwnd, text =>
                 {
                     var item = DragDropService.CreateTextItem(text);
-                    _dataStore.Add(item);
-                    DragDropService.LoadDeferredPropertiesAsync(item, () => RefreshView());
+                    var registered = _dataStore.Add(item);
+                    DragDropService.LoadDeferredPropertiesAsync(registered, QueueRefreshView);
                     RefreshView();
                     Logger.Run("ClipboardMonitor: auto-added ({0} chars)", text.Length);
                 });
@@ -1585,7 +1857,9 @@ public partial class MainWindow : Window
                 HeicConversion = AppSettings.HeicConversion,
                 LanEnabled = LanConfig.Enabled, Port = LanConfig.Port, Password = LanConfig.Password,
                 AutoStart = StartupService.IsEnabled(), SavedViews = _savedViews.Views.ToList(),
-                ImagePresets = new ImageProcessingPresetStore(ConfigService.GetEffectiveDataDir()).ExportDocument()
+                ImagePresets = new ImageProcessingPresetStore(ConfigService.GetEffectiveDataDir()).ExportDocument(),
+                Automation = _dataStore.Automation.LoadError == null ? _dataStore.Automation.Export() : null,
+                StorageRetention=StorageRetention.Load(ConfigService.GetEffectiveDataDir())
             }), QuickExit) { Owner = this };
             ShowToolDialog(window);
         };
@@ -1595,7 +1869,7 @@ public partial class MainWindow : Window
         // 缓存路径
         var dataDirItem = new MenuItem
         {
-            Header = $"缓存路径: {ConfigService.GetEffectiveDataDir()}",
+            Header = $"当前素材库: {_dataStore.DataRoot}",
             Foreground = (Brush)FindResource("TextBrush"),
             FontSize = 13,
         };
@@ -1603,19 +1877,21 @@ public partial class MainWindow : Window
 
         var resetDataDirItem = new MenuItem
         {
-            Header = "重置缓存路径为默认",
+            Header = "素材库恢复与切换…",
             Foreground = (Brush)FindResource("TextDimBrush"),
             FontSize = 13,
         };
         resetDataDirItem.Click += (s, ee) =>
         {
-            ConfigService.SetDataDir("");
-            Logger.Run("Settings: data dir reset to default: {0}", ConfigService.GetEffectiveDataDir());
+            ShowToolDialog(new Views.LibraryHealthWindow(_dataStore){Owner=this});
         };
         menu.Items.Add(resetDataDirItem);
 
         menu.Items.Add(new Separator());
 
+        var deviceNameItem=new MenuItem{Header="电脑名称与设备身份…"};
+        deviceNameItem.Click+=(_,_)=>{try{new Views.DeviceNameWindow{Owner=this}.ShowDialog();}catch{ShowFeedback("设备身份无法读取，请检查本机存储");}};
+        menu.Items.Add(deviceNameItem);
         // ========== 局域网服务器 ==========
         var lanToggleItem = new MenuItem
         {
@@ -1848,6 +2124,8 @@ public partial class MainWindow : Window
 
     private void Window_Closing(object sender, CancelEventArgs e)
     {
+        StopAudioConfigurationProtection();
+        _searchDebounce?.Stop();_viewQuery?.Cancel();++_viewGeneration;
         _privacyDeadlineTimer?.Stop();
         ++_panelTransition;
         _panelTranslate.BeginAnimation(TranslateTransform.XProperty, null);
@@ -1856,9 +2134,12 @@ public partial class MainWindow : Window
         _hoverPreviewTimer?.Stop();
         _collapseTimer?.Stop();
         _hotkeyService.Dispose();
+        _collectionHotkey.Dispose();
+        _folderCollection?.Dispose();
         _ = _microphone.StopAsync();
-        _lanServer.Dispose();
+        TransferJournal.Flush();
         _dataStore.Dispose();
+        _lanServer.Dispose();
         _trayIcon?.Dispose();
         Logger.Run("MainWindow closing, data saved");
         Application.Current.Shutdown();
@@ -1870,6 +2151,9 @@ public partial class MainWindow : Window
     /// </summary>
     private void QuickExit()
     {
+        StopAudioConfigurationProtection();
+        _collectionHotkey.Dispose();
+        _folderCollection?.Dispose();
         var watchdog = new System.Threading.Thread(() =>
         {
             System.Threading.Thread.Sleep(1500);
@@ -1878,8 +2162,9 @@ public partial class MainWindow : Window
         watchdog.Start();
 
         _ = _microphone.StopAsync();
-        try { _lanServer.Stop(); } catch (Exception ex) { Logger.Error("QuickExit: lan stop {0}", ex.Message); }
+        try { TransferJournal.Flush(); } catch { }
         try { _dataStore.Dispose(); } catch (Exception ex) { Logger.Error("QuickExit: datastore {0}", ex.Message); }
+        try { _lanServer.Stop(); } catch (Exception ex) { Logger.Error("QuickExit: lan stop {0}", ex.Message); }
         try { _trayIcon?.Dispose(); } catch (Exception ex) { Logger.Error("QuickExit: tray {0}", ex.Message); }
         Application.Current.Shutdown();
     }

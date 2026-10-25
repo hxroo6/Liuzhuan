@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text.Json;
@@ -22,6 +22,8 @@ public static class MigrationService
         public bool AutoStart { get; set; }
         public List<SavedMaterialView>? SavedViews { get; set; } = new();
         public ImageProcessingPresetDocument? ImagePresets { get; set; }
+        public AutomationDocument? Automation { get; set; }
+        public StorageRetention? StorageRetention {get;set;}
     }
     public sealed class Payload
     {
@@ -38,6 +40,16 @@ public static class MigrationService
         [JsonRequired] public List<MaterialItem> Items { get; set; } = new();
         [JsonRequired] public List<Payload> Files { get; set; } = new();
     }
+    // No MaterialItem setters may run while parsing an untrusted package.
+    private sealed class ManifestRecord
+    {
+        [JsonRequired] public string Format { get; set; } = "LiuzhuanMigration";
+        [JsonRequired] public int Version { get; set; } = 1;
+        public DateTime CreatedUtc { get; set; } = DateTime.UtcNow;
+        [JsonRequired] public Settings Settings { get; set; } = new();
+        [JsonRequired] public List<MaterialRecord> Items { get; set; } = new();
+        [JsonRequired] public List<Payload> Files { get; set; } = new();
+    }
     public static readonly JsonSerializerOptions Json = new()
     {
         WriteIndented = true, Converters = { new JsonStringEnumConverter() }
@@ -46,18 +58,18 @@ public static class MigrationService
     private const string PendingName = "migration-pending.json";
 
     // 在界面线程生成快照，后台导出不枚举实时 ObservableCollection。
-    public static Manifest Snapshot(IEnumerable<MaterialItem> items, Settings settings) => new()
+    public static Manifest Snapshot(IEnumerable<MaterialItem> items, Settings settings)
     {
-        Items = JsonSerializer.Deserialize<List<MaterialItem>>(JsonSerializer.Serialize(items.ToList(), Json), Json)!,
-        Settings = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings, Json), Json)!
-    };
+        var copied=items.Select(item=>MaterialRecord.Capture(item,true).CreateMaterial()).ToList();
+        return new(){Items=copied,Settings=JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings,Json),Json)!};
+    }
 
     public static async Task ExportAsync(string destination, Manifest snapshot, IProgress<string>? progress, CancellationToken ct)
     {
         destination = System.IO.Path.GetFullPath(destination);
         var temp = destination + "." + Guid.NewGuid().ToString("N") + ".partial";
-        var manifest = JsonSerializer.Deserialize<Manifest>(JsonSerializer.Serialize(snapshot, Json), Json)!;
-        manifest.Files.Clear();
+        var manifest = Snapshot(snapshot.Items, snapshot.Settings);
+        manifest.Format = snapshot.Format; manifest.Version = snapshot.Version; manifest.CreatedUtc = snapshot.CreatedUtc;
         var copied = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         try
         {
@@ -127,10 +139,14 @@ public static class MigrationService
         if (!entries.TryGetValue("manifest.json", out var metadata) || metadata.Length > 32 * 1024 * 1024)
             throw new InvalidDataException("不是有效的流转迁移包，或索引过大。");
         using var input = metadata.Open();
-        var manifest = JsonSerializer.Deserialize<Manifest>(input, Json) ?? throw new InvalidDataException("迁移包索引为空。");
+        var manifest = JsonSerializer.Deserialize<ManifestRecord>(input, Json) ?? throw new InvalidDataException("迁移包索引为空。");
         if (manifest.Format != "LiuzhuanMigration" || manifest.Version != 1 || manifest.Settings == null || manifest.Items == null || manifest.Files == null)
             throw new InvalidDataException("迁移包版本不支持，请使用匹配版本的流转。");
         var cfg = manifest.Settings;
+        try { if (cfg.Automation != null) cfg.Automation = AutomationStore.Normalize(cfg.Automation); }
+        catch (ArgumentException ex) { throw new InvalidDataException("自动整理规则无效。", ex); }
+        try {if(cfg.StorageRetention!=null)cfg.StorageRetention=StorageRetention.Validate(cfg.StorageRetention);}
+        catch(ArgumentException ex){throw new InvalidDataException("历史保留策略无效。",ex);}
         try { cfg.SavedViews = SavedViewStore.NormalizeAll(cfg.SavedViews); }
         catch (ArgumentException ex) { throw new InvalidDataException("常用筛选无效。", ex); }
         try { if (cfg.ImagePresets != null) cfg.ImagePresets = ImageProcessingPresetStore.NormalizeDocument(cfg.ImagePresets); }
@@ -158,10 +174,7 @@ public static class MigrationService
             // old packages with missing/null values. Reject invalid limits before staging.
             try
             {
-                var organization = MaterialOrganization.Normalize(item.GroupName, item.Tags, item.Note);
-                item.GroupName = organization.GroupName!;
-                item.Tags = organization.Tags!;
-                item.Note = organization.Note!;
+                item.Normalize(portable: true);
             }
             catch (ArgumentException ex)
             {
@@ -177,7 +190,8 @@ public static class MigrationService
             if ((item.HasFileSource && !paths.Contains(item.FilePath)) || (item.ThumbnailPath != "" && !paths.Contains(item.ThumbnailPath)))
                 throw new InvalidDataException("素材引用了包外文件。");
         }
-        return manifest;
+        return new Manifest { Format=manifest.Format, Version=manifest.Version, CreatedUtc=manifest.CreatedUtc,
+            Settings=manifest.Settings, Files=manifest.Files, Items=manifest.Items.Select(x=>x.CreateMaterial()).ToList() };
     }
 
     public static async Task<string> PrepareImportAsync(string package, string appData, IProgress<string>? progress, CancellationToken ct, Manifest? expected = null)
@@ -220,6 +234,10 @@ public static class MigrationService
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "savedviews.json"), JsonSerializer.Serialize(manifest.Settings.SavedViews, Json), ct);
             if (manifest.Settings.ImagePresets != null)
                 await File.WriteAllTextAsync(System.IO.Path.Combine(root, ImageProcessingPresetStore.FileName), JsonSerializer.Serialize(manifest.Settings.ImagePresets, Json), ct);
+            if (manifest.Settings.Automation != null)
+                await File.WriteAllTextAsync(System.IO.Path.Combine(root, "automation.json"), JsonSerializer.Serialize(manifest.Settings.Automation, AutomationStore.Json), ct);
+            if(manifest.Settings.StorageRetention!=null)
+                await File.WriteAllTextAsync(System.IO.Path.Combine(root,"storage-retention.json"),JsonSerializer.Serialize(manifest.Settings.StorageRetention,Json),ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "appsettings.json"), JsonSerializer.Serialize(new { manifest.Settings.ClipboardMonitorEnabled, manifest.Settings.ExcludedClipboardApps, HeicConversion = manifest.Settings.HeicConversion.ToString() }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "lan.json"), JsonSerializer.Serialize(new { Enabled = manifest.Settings.LanEnabled, manifest.Settings.Port, manifest.Settings.Password }, Json), ct);
             await File.WriteAllTextAsync(System.IO.Path.Combine(root, "migration-settings.json"), JsonSerializer.Serialize(manifest.Settings, Json), ct);

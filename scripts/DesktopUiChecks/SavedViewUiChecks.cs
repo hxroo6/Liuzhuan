@@ -41,6 +41,7 @@ internal static class SavedViewUiChecks
             Check(list.Items.Count==2 && list.Items.Contains(added), "new matching materials appear without resaving the rule");
             store.Remove(added.Id);Refresh();
             search.Text="different";
+            DesktopQueryWait.UntilApplied(window, () => list.Items.Count == 0, "manual saved-view keyword change");
             Check(((TextBlock)window.FindName("SavedViewText")).Text=="常用" && list.Items.Count==0, "manual criteria changes clear the saved-view highlight");
             Apply(rule);rules.Remove(rule.Name);Refresh();
             Check(list.Items.Count==1 && store.Items.Contains(text), "removing a saved rule leaves filters and materials intact");

@@ -15,7 +15,32 @@ jobs:
 
       - uses: actions/setup-dotnet@v4
         with:
-          dotnet-version: '7.0.x'
+          dotnet-version: '10.0.x'
+
+      - name: Run core regression checks with isolated fixtures
+        shell: pwsh
+        run: |
+          foreach ($check in @('DataStoreChecks', 'DeferredMaterialChecks', 'OrganizationChecks', 'AutoReceiptChecks', 'InboxBudgetChecks', 'TransferAdmissionChecks', 'TaskCenterChecks', 'DuplicateMaterialChecks', 'ProjectImportChecks', 'ProjectPackageChecks')) {
+            dotnet run --project "scripts/$check/$check.csproj" -c Release --no-launch-profile
+            if ($LASTEXITCODE -ne 0) { throw "$check failed" }
+          }
+          foreach ($check in @('LibraryRecoveryChecks', 'ProjectStagingChecks', 'RemoteProjectChecks', 'EnhancementChecks', 'IdentityLibraryChecks', 'AudioProfileChecks', 'AudioDeviceRepairChecks')) {
+            dotnet run --project "scripts/$check/$check.csproj" -c Release --no-launch-profile -- "$env:RUNNER_TEMP/$check"
+            if ($LASTEXITCODE -ne 0) { throw "$check failed" }
+          }
+          foreach ($check in @('AudioChecks', 'AudioMonitorChecks', 'AudioHostChecks')) {
+            dotnet run --project "scripts/$check/$check.csproj" -c Release --no-launch-profile
+            if ($LASTEXITCODE -ne 0) { throw "$check failed" }
+          }
+          dotnet run --project scripts/AudioChecks/AudioChecks.csproj -c Release --no-launch-profile -- --route-health
+          if ($LASTEXITCODE -ne 0) { throw 'Audio route health checks failed' }
+          dotnet run --project scripts/AutoReceiptChecks/AutoReceiptChecks.csproj -c Release --no-launch-profile -- --microphone-configuration
+          if ($LASTEXITCODE -ne 0) { throw 'Authenticated microphone configuration checks failed' }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: identity-fixture
+          path: ${{ runner.temp }}/IdentityLibraryChecks/**/identity-fixture.json
 
       - name: Publish (self-contained x64)
         run: dotnet publish Liuzhuan/Liuzhuan.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -o dist
@@ -27,7 +52,10 @@ jobs:
 
   # ===== 安卓端交付 APK（同 Debug 代码，关闭可调试标记）=====
   android:
+    needs: windows-pc
     runs-on: ubuntu-latest
+    env:
+      GRADLE_USER_HOME: ${{ runner.temp }}/gradle-home
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +81,19 @@ jobs:
       - name: Verify distribution is not debuggable
         working-directory: AndroidApp
         run: python3 ../scripts/check_android_distribution.py app/build/outputs/apk/distribution/app-distribution.apk --aapt "$ANDROID_HOME/build-tools/36.0.0/aapt"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: identity-fixture
+          path: fixtures
+
+      - name: Verify production library state machines and encrypted-record boundaries
+        shell: pwsh
+        run: |
+          $proof = Get-ChildItem fixtures -Recurse -Filter identity-fixture.json | Select-Object -First 1
+          if (-not $proof) { throw 'Cross-language identity fixture is missing' }
+          ./scripts/IdentityLibraryChecks/Run-AndroidLibraryChecks.ps1 -OutputDirectory "$env:RUNNER_TEMP/library-checks" -ProofFixture $proof.FullName
+          ./scripts/TransferPolicyChecks/Run-TransferPolicyChecks.ps1 -OutputDirectory "$env:RUNNER_TEMP/transfer-policy-checks"
 
       - uses: actions/upload-artifact@v4
         with:

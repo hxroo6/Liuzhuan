@@ -16,7 +16,12 @@ data class MicStatus(
     val quiet: Boolean = false,
     val suppressedFrames: Long = 0,
     val paused: Boolean = false,
-    val thresholdDb: Int = -42
+    val thresholdDb: Int = -42,
+    val issue: MicIssue = MicIssue.NONE,
+    val readCalls: Long = 0,
+    val captureMs: Long = 0,
+    val wakeHeld: Boolean = false,
+    val energySaving: Boolean = false
 )
 
 object MicrophoneState {

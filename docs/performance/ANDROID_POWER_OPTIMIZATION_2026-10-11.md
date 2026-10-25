@@ -37,10 +37,10 @@
 
 | 检查 | 结果 | 证据 |
 | --- | --- | --- |
-| 功耗策略、硬读取上限、退避、去重、进度、缓存及真实 HTTP 取消 | 30 项通过 | `scripts/AndroidPowerChecks/Run-AndroidPowerChecks.ps1`，日志 `F:/appdata/Temp/liuzhuan-m34-power-checks/` |
+| 功耗策略、硬读取上限、退避、去重、进度、缓存及真实 HTTP 取消 | 30 项通过 | `scripts/AndroidPowerChecks/Run-AndroidPowerChecks.ps1`，日志 `<local-temp>/liuzhuan-m34-power-checks/` |
 | 真实 MaterialRepository 快照、序号、增量与同秒撤回排序 | 28 项通过 | 同上 `sync-checks.log` |
-| 自动复制隐私与 5 类损坏配置失效关闭 | 57 + 25 项通过 | `scripts/AndroidPrivacyChecks/Run-AndroidPrivacyChecks.ps1`，日志 `F:/appdata/Temp/liuzhuan-m34-privacy-checks/` |
-| 自动回执、实际 HTTP 隐私边界、缓存重试、真实失败 socket 与恢复 | 44 项通过 | `scripts/AutoReceiptChecks/Run-AutoReceiptChecks.ps1`，日志 `F:/appdata/Temp/liuzhuan-m34-receipt-checks/android-checks.log` |
+| 自动复制隐私与 5 类损坏配置失效关闭 | 57 + 25 项通过 | `scripts/AndroidPrivacyChecks/Run-AndroidPrivacyChecks.ps1`，日志 `<local-temp>/liuzhuan-m34-privacy-checks/` |
+| 自动回执、实际 HTTP 隐私边界、缓存重试、真实失败 socket 与恢复 | 44 项通过 | `scripts/AutoReceiptChecks/Run-AutoReceiptChecks.ps1`，日志 `<local-temp>/liuzhuan-m34-receipt-checks/android-checks.log` |
 | 真实电脑 WsHub 登记回执与协议兼容 | 14 项通过 | 同上 `websocket-checks.log`，仅隔离检查，未替换电脑交付程序 |
 
 保留的关键约束：后台发送作用域为进程级 SupervisorJob；Hook / Receiver action、模块入口与 intent-filter 不变；没有添加剪贴板轮询、Shizuku、输入法或 root 读取方案；本地回写仍标记防循环；Coordinator 初始化仍幂等；排除/暂停隐私规则会在网络实际入队时重新检查。

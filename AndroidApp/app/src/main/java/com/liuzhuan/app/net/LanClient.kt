@@ -1,6 +1,7 @@
 package com.liuzhuan.app.net
 
 import com.liuzhuan.app.core.SettingsStore
+import com.liuzhuan.app.data.toMaterialItem
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -34,7 +35,8 @@ class LanClient(
     private val onItemDeleted: (String, Long) -> Unit = { _, _ -> },
     private val onItemCleared: (Long) -> Unit = {},
     private val onItemData: (Proto.ItemData) -> Unit = {},
-    private val onConnected: (SettingsStore.Settings) -> Unit = {}
+    private val onConnected: (SettingsStore.Settings) -> Unit = {},
+    private val onSessionItemData: ((SessionItemData) -> Unit)? = null
 ) {
     sealed class State {
         data object Idle : State()
@@ -56,19 +58,133 @@ class LanClient(
     private val receiptJobs = java.util.concurrent.ConcurrentHashMap<String, Job>()
     @Volatile private var clipboardReceipts = false
     @Volatile private var cachedIdentity = ""
+    @Volatile private var lastAuthenticatedIdentity=""
+    @Volatile private var targetRevision=0L
+    private data class TextTarget(val identity:String,val revision:Long)
     @Volatile private var cachedAuth = ""
+    @Volatile private var collectionIdentity=""
+    fun collectionTarget(): String? = collectionIdentity.takeIf { state==State.Connected && ws!=null && it.isNotEmpty() }
     private data class AudioLink(val socket: WebSocket, val host: String, val port: String, val supported: Boolean)
     private data class AudioRequest(val id: String, val socket: WebSocket, val result: kotlinx.coroutines.CompletableDeferred<String>)
     private val audioLink = kotlinx.coroutines.flow.MutableStateFlow<AudioLink?>(null)
     private var audioRequest: AudioRequest? = null
+    private data class AudioConfigurationRequest(val id: String, val socket: WebSocket,
+        val result: kotlinx.coroutines.CompletableDeferred<org.json.JSONObject>)
+    private var audioConfigurationRequest: AudioConfigurationRequest? = null
+    @Volatile var audioConfigurationSupported = false
+        private set
+    @Volatile private var resumeLink:com.liuzhuan.app.DurableTransfers.Link?=null
+    fun recoveryLink()=resumeLink.takeIf {state==State.Connected && ws!=null}
+    @Volatile private var durableReceipts=false
+    @Volatile var librarySupported=false
+        private set
+    @Volatile var libraryEditSupported=false
+        private set
+    @Volatile var libraryChangesSupported=false
+        private set
+    @Volatile var projectPackageSupported=false
+        private set
+    @Volatile private var libraryEpoch=""
+    @Volatile var libraryId=""
+        private set
+    @Volatile private var libraryDeviceId=""
+    private val libraryRequests=java.util.concurrent.ConcurrentHashMap<String,AutomationRequest>()
+    suspend fun library(data:org.json.JSONObject):org.json.JSONObject=kotlinx.coroutines.withTimeout(15_000) {
+        val socket=ws?:throw IOException("请先连接电脑")
+        if(!librarySupported || state!=State.Connected)throw IOException("请同时更新两端并连接电脑")
+        if(libraryRequests.size>=2)throw IOException("正在处理素材库请求，请稍候")
+        val id=java.util.UUID.randomUUID().toString();val pending=AutomationRequest(socket,kotlinx.coroutines.CompletableDeferred())
+        val operationLibrary=libraryId
+        val operationDevice=libraryDeviceId
+        if(data.optString("expectedDeviceId",operationDevice)!=operationDevice)throw IOException("原电脑已变化，操作未发送")
+        if(data.optString("libraryId",operationLibrary)!=operationLibrary)throw IOException("原素材库已变化，操作未发送")
+        libraryRequests[id]=pending
+        try {
+            data.put("libraryId",operationLibrary)
+            if(ws!==socket || operationLibrary!=libraryId || operationDevice!=libraryDeviceId || !socket.send(org.json.JSONObject().put("v",1).put("type","library_request").put("id",id).put("data",data).toString()))throw IOException("电脑连接已变化")
+            val result=pending.result.await()
+            if(ws!==socket || state!=State.Connected)throw IOException("电脑连接已变化")
+            result
+        }finally{libraryRequests.remove(id)}
+    }
+    @Volatile private var automationSupported = false
+    private data class AutomationRequest(val socket: WebSocket, val result: kotlinx.coroutines.CompletableDeferred<org.json.JSONObject>)
+    private val automationRequests = java.util.concurrent.ConcurrentHashMap<String, AutomationRequest>()
+    /** Rules belong to the current authenticated computer. Late replies can never cross a reconnect. */
+    suspend fun automation(action: String, document: org.json.JSONObject? = null): org.json.JSONObject = kotlinx.coroutines.withTimeout(10_000) {
+        val socket = ws ?: throw IOException("请先连接电脑")
+        if (state != State.Connected) throw IOException("请先连接电脑")
+        if (!automationSupported) throw IOException("请同时更新电脑端，以使用整理规则")
+        if (automationRequests.size >= 2) throw IOException("正在处理，请稍候")
+        val id = java.util.UUID.randomUUID().toString()
+        val request = AutomationRequest(socket, kotlinx.coroutines.CompletableDeferred())
+        automationRequests[id] = request
+        try {
+            val data = org.json.JSONObject().put("action", action)
+            if (document != null) data.put("document", document)
+            if (ws !== socket || !socket.send(org.json.JSONObject().put("v",1).put("type","automation_request").put("id",id).put("data",data).toString())) throw IOException("连接已变化，请重新加载")
+            val reply = request.result.await()
+            if (ws !== socket || state != State.Connected) throw IOException("连接已变化，请重新加载")
+            if (reply.optString("error").isNotBlank()) throw IOException(reply.getString("error"))
+            reply
+        } finally { automationRequests.remove(id) }
+    }
     private fun clearAudioLink() {
+        resumeLink?.let(com.liuzhuan.app.DurableTransfers::disconnected)
+        resumeLink=null;durableReceipts=false
+        librarySupported=false;libraryChangesSupported=false;projectPackageSupported=false;libraryId=""
+        libraryRequests.values.forEach {it.result.completeExceptionally(IOException("电脑连接已变化"))};libraryRequests.clear()
+        com.liuzhuan.app.MaterialLibrary.disconnected()
+        automationSupported = false
+        automationRequests.values.forEach { it.result.completeExceptionally(IOException("电脑连接已变化，请重新加载规则")) }; automationRequests.clear()
         audioLink.value = null
         audioRequest?.result?.completeExceptionally(IOException("电脑连接已变化，请重新连接麦克风")); audioRequest = null
+        audioConfigurationSupported = false
+        audioConfigurationRequest?.result?.completeExceptionally(IOException("电脑连接已变化，请重新检查音频"))
+        audioConfigurationRequest = null
+    }
+
+    class AudioConfigurationResult internal constructor(val status: String, val message: String,
+        val canRepair: Boolean, private val current: () -> Boolean) {
+        val ready get() = status == "ready" || status == "repaired"
+        fun isCurrent() = current()
+    }
+
+    /** One explicit foreground action; no retry loop, device IDs or audio consent are persisted. */
+    suspend fun requestAudioConfiguration(repair: Boolean): AudioConfigurationResult = kotlinx.coroutines.withTimeout(20_000) {
+        val request = synchronized(this@LanClient) {
+            val socket = ws ?: throw IOException("请先在连接页连接电脑")
+            if (state != State.Connected) throw IOException("请先在连接页连接电脑")
+            if (!audioConfigurationSupported) throw IOException("电脑版本暂不支持手机修复音频，请先更新电脑端流转")
+            if (audioConfigurationRequest != null) throw IOException("正在检查电脑音频，请稍候")
+            AudioConfigurationRequest(java.util.UUID.randomUUID().toString(), socket,
+                kotlinx.coroutines.CompletableDeferred()).also {
+                audioConfigurationRequest = it
+                if (!socket.send(Proto.buildMicrophoneConfiguration(it.id, repair))) {
+                    audioConfigurationRequest = null
+                    throw IOException("电脑音频请求未能发送，请重试")
+                }
+            }
+        }
+        try {
+            val reply = request.result.await()
+            synchronized(this@LanClient) {
+                if (ws !== request.socket || state != State.Connected) throw IOException("电脑连接已变化，请重新检查音频")
+                AudioConfigurationResult(reply.optString("status", "failed"),
+                    reply.optString("message").take(1200).ifBlank { "电脑未返回检查说明，请重试或在电脑打开麦克风设置" },
+                    reply.optBoolean("canRepair")) {
+                    synchronized(this@LanClient) { ws === request.socket && state == State.Connected }
+                }
+            }
+        } finally {
+            synchronized(this@LanClient) { if (audioConfigurationRequest === request) audioConfigurationRequest = null }
+        }
     }
 
     /** An explicit foreground UI action requests one invitation over the authenticated material socket. */
     class MicrophoneInvitation internal constructor(val payload: String, private val current: () -> Boolean) {
         fun isCurrent() = current()
+        fun onlyWhile(condition: () -> Boolean) = MicrophoneInvitation(payload) { current() && condition() }
     }
     suspend fun requestMicrophoneInvitation(expectedHost: String, expectedPort: String): MicrophoneInvitation = kotlinx.coroutines.withTimeout(10_000) {
         val link = audioLink.first { it != null && it.host == expectedHost && it.port == expectedPort }!!
@@ -91,18 +207,26 @@ class LanClient(
     }
     private fun buildIdentity(s: SettingsStore.Settings): String =
         "${s.serverIp.trim().lowercase()}:${s.serverPort.toIntOrNull() ?: 8899}:${Proto.sha256Hex(s.password)}:${Proto.sha256Hex(s.deviceName)}:${Proto.sha256Hex(Proto.deviceLabel)}"
-    private fun connectionIdentity(s: SettingsStore.Settings): String = if (s === lastSettings) cachedIdentity else buildIdentity(s)
+    private fun connectionIdentity(s: SettingsStore.Settings): String = cachedIdentity
     private val client = HttpClients.socket
 
     @Volatile
     var state: State = State.Idle
         private set
 
+    /** UI work may be posted after a reply. Apply it only while the original socket
+     * and authenticated target are still current, including same-PC reconnects. */
+    class SessionItemData internal constructor(private val data:Proto.ItemData,
+        private val applyCurrent: ((() -> Unit) -> Boolean)) {
+        fun apply(action:(Proto.ItemData)->Unit):Boolean=applyCurrent {action(data)}
+    }
+
     @Synchronized fun connect(settings: SettingsStore.Settings) {
         if (settings.serverIp.isBlank() || settings.password.isBlank()) {
             log("请先填写电脑 IP 和口令")
             return
         }
+        targetRevision++
         manuallyClosed = false
         clearAudioLink()
         reconnectJob?.cancel()
@@ -117,13 +241,14 @@ class LanClient(
         clipboardReceipts = false
         cachedIdentity = buildIdentity(settings)
         cachedAuth = Proto.sha256Hex(settings.password)
+        collectionIdentity="${settings.serverIp.trim().lowercase()}:${settings.serverPort.toIntOrNull()?:8899}:$cachedAuth"
         lastSettings = settings
-        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.changeTarget(connectionIdentity(settings))
         if (networkAvailable) doConnect(settings)
         else { setState(State.Disconnected); log("等待局域网恢复后连接") }
     }
 
     @Synchronized fun disconnect() {
+        targetRevision++
         clearAudioLink()
         manuallyClosed = true
         reconnectJob?.cancel()
@@ -140,6 +265,7 @@ class LanClient(
 
     /** 暂停自动重连（阻止死循环；下次 connect() 可恢复） */
     @Synchronized fun pause() {
+        targetRevision++
         clearAudioLink()
         manuallyClosed = true
         reconnectJob?.cancel()
@@ -152,45 +278,29 @@ class LanClient(
         log("⏸️ 已暂停重连（点「连接」可恢复）")
     }
 
-    fun sendText(content: String, taskId:String=java.util.UUID.randomUUID().toString()): Boolean {
+    fun sendText(content:String,taskId:String=java.util.UUID.randomUUID().toString()):Boolean {
+        val destination=synchronized(this) {
+            if(content.isBlank() || content.length>262144 || cachedIdentity.isEmpty() || (state!=State.Connected && cachedIdentity!=lastAuthenticatedIdentity)) {log("请先连接一次电脑，或缩短待发文字");return false}
+            TextTarget(cachedIdentity,targetRevision)
+        }
+        if(!com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.queue.persistenceReady){log("待发存储正在恢复，请稍后再试");return false}
         com.liuzhuan.app.PowerSignals.touch()
-        com.liuzhuan.app.TransferTasks.start(content.take(40),"手机 → 电脑",taskId) {
-            com.liuzhuan.app.LanHub.client?.sendText(content,taskId)
-                ?: com.liuzhuan.app.TransferTasks.finish(taskId,false,"请先连接电脑，再重试")
+        val event=com.liuzhuan.app.clipboard.ClipboardEvent(content,System.currentTimeMillis(),"android",
+            com.liuzhuan.app.clipboard.ClipboardCaptureSource.MANUAL,listOf("text/plain"),
+            com.liuzhuan.app.clipboard.fingerprintOf(content,listOf("text/plain")),requestId=taskId)
+        com.liuzhuan.app.TransferTasks.outbox(taskId,content.take(40),"正在保存待发文字")
+        scope.launch {
+            try {com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.submit(event,destination.identity) {
+                targetRevision==destination.revision && cachedIdentity==destination.identity
+            }}
+            catch(_:Exception){com.liuzhuan.app.TransferTasks.outbox(taskId,content.take(40),"待发文字未能保存，请重新提交",failed=true)}
         }
-        if (state != State.Connected) {
-            log("未连接，无法发送")
-            com.liuzhuan.app.TransferTasks.finish(taskId,false,"未连接电脑，请连接后重试")
-            return false
-        }
-        val accepted = ws?.send(Proto.buildSyncText(content,requestId=taskId)) == true
-        if(!accepted) com.liuzhuan.app.TransferTasks.finish(taskId,false,"发送未成功，请检查连接")
-        else {
-            receiptJobs.remove(taskId)?.cancel()
-            val job = scope.launch(start = CoroutineStart.LAZY) {
-            delay(20_000)
-            if(com.liuzhuan.app.TransferTasks.running(taskId)) com.liuzhuan.app.TransferTasks.finish(taskId,false,"未收到电脑确认；请先检查电脑再重试，避免重复。旧版电脑需升级。")
-            receiptJobs.remove(taskId)
-            }
-            receiptJobs[taskId] = job
-            job.start()
-            if (!com.liuzhuan.app.TransferTasks.running(taskId)) receiptJobs.remove(taskId)?.cancel()
-        }
-        log(if (accepted) "已提交文字（${content.length} 字）" else "发送未成功，请检查连接")
-        return accepted
+        return true
     }
-
-    /** 显式选中文本兼容入口：只返回网络是否接受发送，不能表示电脑已登记。 */
-    fun pushClipboard(content: String, app: String): Boolean {
-        if (state != State.Connected) return false
-        com.liuzhuan.app.PowerSignals.touch()
-        val accepted = ws?.send(Proto.buildClipboardPush(content, app)) == true
-        log(if (accepted) "剪贴板文字已提交，等待电脑确认（${content.length} 字）" else "剪贴板文字未提交")
-        return accepted
-    }
+    fun pushClipboard(content:String,app:String):Boolean=sendText(content)
 
     internal fun automaticClipboardTransport(): com.liuzhuan.app.clipboard.AutomaticClipboardDelivery.Transport? {
-        if (state != State.Connected) return null
+        if (state != State.Connected || (durableReceipts && Proto.clientId.isBlank())) return null
         val socket = ws ?: return null
         val settings = lastSettings ?: return null
         val identity = connectionIdentity(settings)
@@ -198,11 +308,12 @@ class LanClient(
         return object : com.liuzhuan.app.clipboard.AutomaticClipboardDelivery.Transport {
             override val identity = identity
             override val supportsReceipts = supports
+            override val durableReceipts = this@LanClient.durableReceipts
             override fun send(event: com.liuzhuan.app.clipboard.ClipboardEvent): Boolean {
                 if (state != State.Connected || ws !== socket || lastSettings?.let(::connectionIdentity) != identity) return false
                 com.liuzhuan.app.PowerSignals.touch()
                 return socket.send(Proto.buildClipboardPush(event.text ?: return false, event.sourcePackage ?: "android",
-                    event.requestId, automatic = true))
+                    event.requestId, automatic = event.source!=com.liuzhuan.app.clipboard.ClipboardCaptureSource.MANUAL))
             }
         }
     }
@@ -223,6 +334,7 @@ class LanClient(
         taskId: String = java.util.UUID.randomUUID().toString(),
         automaticEvent: com.liuzhuan.app.clipboard.ClipboardEvent) {
         if (com.liuzhuan.app.TransferTasks.running(taskId)) return
+        if(com.liuzhuan.app.DurableTransfers.cached(file,name,taskId,automaticEvent))return
         com.liuzhuan.app.TransferTasks.start(name, "手机 → 电脑", taskId,
             discard = { file.delete() }, cancel = { com.liuzhuan.app.TransferWork.cancel(taskId) }, retry = {
                 com.liuzhuan.app.LanHub.client?.pushFileCached(file, name, mime, taskId, automaticEvent)
@@ -300,11 +412,11 @@ class LanClient(
         return try { result.get() } catch (ex: java.util.concurrent.ExecutionException) { throw IOException(ex.cause?.message ?: "上传失败", ex.cause) }
     }
 
-    fun thumbnailUrl(id:String):String? {
+    fun thumbnailUrl(id:String,sourceRevision:Long=0,epoch:String=""):String? {
         val s=lastSettings ?: return null
         if(state!=State.Connected) return null
         val port=(s.serverPort.toIntOrNull() ?: 8899)+1
-        return "http://${s.serverIp}:$port/thumbnail/${URLEncoder.encode(id,"UTF-8")}?auth=$cachedAuth"
+        return "http://${s.serverIp}:$port/thumbnail/${URLEncoder.encode(id,"UTF-8")}?auth=$cachedAuth&sv=$sourceRevision&epoch=${URLEncoder.encode(epoch,"UTF-8")}"
     }
 
     /** 请求素材详情（文字全文 / 文件下载地址） */
@@ -316,6 +428,7 @@ class LanClient(
     /** 请求重新全量快照（sequence gap 检测触发 resync 时调用） */
     fun requestSnapshot() {
         if (state != State.Connected) return
+        if(librarySupported){com.liuzhuan.app.MaterialLibrary.invalidated();return}
         log("[SYNC] resync requested")
         ws?.send(Proto.buildListSync())
     }
@@ -347,8 +460,19 @@ class LanClient(
                 val (type, data) = Proto.parse(text)
                 when (type) {
                     "ack" -> {
-                        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.acknowledge(
-                            connectionIdentity(s), data.optString("requestId"), data.optString("status"))
+                        val status=data.optString("status")
+                        val ackPending=com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.queue.find(data.optString("requestId"))?.takeIf {
+                            it.target==connectionIdentity(s) && it.attempts>0 && com.liuzhuan.app.clipboard.ClipboardPrivacy.blockReason(it.event)==null
+                        }
+                        if(ackPending==null)return
+                        if(durableReceipts && status=="stored" && !data.optBoolean("durable"))return
+                        try {
+                            val applied=com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.acknowledge(
+                                connectionIdentity(s),data.optString("requestId"),status) {
+                                    com.liuzhuan.app.clipboard.ClipboardRecovery.receipt(data.optString("requestId"),status)
+                                }
+                            if(!applied)return
+                        }catch(_:Exception){log("登记回执未能保存，待发请求已保留");return}
                         val requestId = data.optString("requestId")
                         receiptJobs.remove(requestId)?.cancel()
                         when (data.optString("status")) {
@@ -356,24 +480,59 @@ class LanClient(
                             "rejected" -> com.liuzhuan.app.TransferTasks.finish(requestId, false, "电脑拒绝登记，请检查电脑后重新发送")
                         }
                     }
+                    "transfer_state" -> {
+                        if(state==State.Connected)com.liuzhuan.app.DurableTransfers.remoteState(data.optString("serverId"),data.optString("id"),data.optString("state"),data.optLong("revision"))
+                    }
                     "welcome" -> {
+                        val actualDevice=data.optString("deviceId")
+                        if(s.expectedDeviceId.isNotBlank() && actualDevice!=s.expectedDeviceId) {
+                            pause();setState(State.AuthFailed("电脑身份与历史不符，请核对电脑后重新扫码"));return
+                        }
                         handshakeJob?.cancel()
                         backoff.reset()
                         reconnectAttempt = 0
                         reconnectJob?.cancel()
                         reconnectJob = null
                         val features = data.optJSONArray("features")
+                        automationSupported = features != null && (0 until features.length()).any { features.optString(it) == "automation_v1" }
                         clipboardReceipts = features != null && (0 until features.length()).any {
                             features.optString(it) == Proto.CLIPBOARD_RECEIPTS
                         }
+                        durableReceipts=features!=null && (0 until features.length()).any {features.optString(it)=="durable_receipts_v1"}
+                        val resumePort=data.optInt("resumePort")
+                        val serverId=data.optString("serverId")
+                        val stable=runCatching {java.util.UUID.fromString(actualDevice).toString()==actualDevice && java.util.UUID.fromString(serverId).toString()==serverId}.getOrDefault(false)
+                        val effective=if(stable)s.copy(expectedDeviceId=actualDevice,serverName=data.optString("deviceName").take(64),serverLibraryId=serverId) else s
+                        val legacyTarget="${s.serverIp.trim().lowercase()}:${s.serverPort.toIntOrNull()?:8899}:$cachedAuth"
+                        collectionIdentity=if(stable)com.liuzhuan.app.FolderSubscriptions.target(effective) else legacyTarget
+                        resumeLink=if(features!=null && (0 until features.length()).any {features.optString(it)=="resumable_transfer_v1"} && resumePort in 1024..65535 && runCatching {java.util.UUID.fromString(serverId)}.isSuccess)
+                            com.liuzhuan.app.DurableTransfers.Link(s.serverIp,resumePort,cachedAuth,serverId,collectionIdentity,if(stable)legacyTarget else "") else null
+                        val previousIdentity=buildIdentity(s)+if(serverId.isNotBlank()) ":$serverId" else ""
+                        cachedIdentity=if(stable)"device:$actualDevice:$serverId:$cachedAuth:${Proto.clientId}" else previousIdentity
+                        lastSettings=effective
+                        if(stable) {
+                            com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.queue.rebindVerifiedTarget(previousIdentity,cachedIdentity)
+                        }
+                        librarySupported=features!=null && (0 until features.length()).any {features.optString(it)=="material_library_v1"}
+                        libraryEditSupported=features!=null && (0 until features.length()).any {features.optString(it)==Proto.LIBRARY_EDIT}
+                        libraryChangesSupported=features!=null && (0 until features.length()).any {features.optString(it)==Proto.LIBRARY_CHANGES}
+                        projectPackageSupported=features!=null && (0 until features.length()).any {features.optString(it)==Proto.PROJECT_PACKAGE}
+                        audioConfigurationSupported=features!=null && (0 until features.length()).any {features.optString(it)==Proto.MICROPHONE_CONFIGURATION}
+                        libraryId=if(librarySupported)serverId else ""
+                        libraryDeviceId=if(stable)actualDevice else ""
+                        libraryEpoch=data.optString("libraryEpoch")
+                        lastAuthenticatedIdentity=cachedIdentity
+                        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.delivery.changeTarget(cachedIdentity)
                         setState(State.Connected)
+                        resumeLink?.let(com.liuzhuan.app.DurableTransfers::connected)
                         audioLink.value = AudioLink(webSocket, s.serverIp, s.serverPort, features != null &&
                             (0 until features.length()).any { features.optString(it) == Proto.MICROPHONE_PAIRING })
-                        onConnected(s)
+                        onConnected(effective)
+                        com.liuzhuan.app.MaterialLibrary.connected(this@LanClient,if(stable)"$actualDevice:$serverId:$libraryEpoch" else "")
                         log("✅ 已连接电脑端流转")
                         log("[SYNC] request snapshot")
                         // 连接成功后拉取最近素材全量快照（接收页初始化）
-                        webSocket.send(Proto.buildListSync())
+                        if(!librarySupported)webSocket.send(Proto.buildListSync())
                     }
                     "auth_fail" -> {
                         clearAudioLink()
@@ -386,6 +545,17 @@ class LanClient(
                         webSocket.close(1000, "auth_fail")
                     }
                     "heartbeat" -> { /* 心跳回执，无需处理 */ }
+                    "library_result" -> {val pending=libraryRequests[data.optString("requestId")];if(pending?.socket===webSocket)data.optJSONObject("result")?.let {pending.result.complete(it)}}
+                    "item_updated" -> {com.liuzhuan.app.data.MaterialRepository.update(Proto.parseItemAdded(data).toMaterialItem());com.liuzhuan.app.MaterialLibrary.invalidated()}
+                    "automation_result" -> {
+                        val pending = automationRequests[data.optString("requestId")]
+                        if (pending?.socket === webSocket) data.optJSONObject("result")?.let { pending.result.complete(it) }
+                    }
+                    Proto.MICROPHONE_CONFIGURATION_RESULT -> {
+                        val pending = audioConfigurationRequest
+                        if (pending != null && pending.socket === webSocket && pending.id == data.optString("requestId"))
+                            pending.result.complete(data)
+                    }
                     Proto.MICROPHONE_INVITE_RESULT -> {
                         val pending = audioRequest
                         if (pending != null && pending.socket === webSocket && pending.id == data.optString("requestId")) {
@@ -397,7 +567,7 @@ class LanClient(
                                         ?: throw IOException("电脑没有提供有效的麦克风邀请"))
                                 } catch (_: Exception) { pending.result.completeExceptionally(IOException("麦克风邀请无效，请同时更新两端")) }
                             } else pending.result.completeExceptionally(IOException(when (data.optString("status")) {
-                                "setup_required" -> "素材已连接，请先在电脑设置里选择虚拟音频设备；之后点左上音波图连接即可，无需重扫"
+                                "setup_required" -> if (audioConfigurationSupported) "素材已连接，请点左上音波图，在手机麦克风页选择“检查并修复电脑音频”，无需重扫" else "素材已连接，请先在电脑设置里选择虚拟音频设备；之后点左上音波图连接即可，无需重扫"
                                 "busy" -> "已有麦克风会话，请先结束原会话后重试"
                                 "diagnostic_only" -> "电脑当前仅诊断收音，请在电脑关闭诊断模式后连接"
                                 "retry_later" -> "请求太快，请稍候两秒再试"
@@ -415,19 +585,29 @@ class LanClient(
                         val item = Proto.parseItemAdded(data)
                         log("[SYNC] material added id=${item.id.take(8)} sequence=${item.sequence}")
                         onItemAdded(item)
+                        com.liuzhuan.app.MaterialLibrary.invalidated()
                     }
                     "item_deleted" -> {
                         val id = Proto.parseItemDeletedId(data)
                         val sequence = Proto.parseSequence(data)
                         log("[SYNC] material deleted id=${id.take(8)} sequence=$sequence")
                         onItemDeleted(id, sequence)
+                        com.liuzhuan.app.MaterialLibrary.invalidated()
                     }
                     "item_cleared" -> {
                         val sequence = Proto.parseSequence(data)
                         log("[SYNC] materials cleared sequence=$sequence")
                         onItemCleared(sequence)
+                        com.liuzhuan.app.MaterialLibrary.invalidated()
                     }
-                    "item_data" -> onItemData(Proto.parseItemData(data))
+                    "item_data" -> {
+                        val reply=Proto.parseItemData(data);val identity=cachedIdentity
+                        val delivery=SessionItemData(reply) {action->synchronized(this@LanClient) {
+                            if(ws!==webSocket || state!=State.Connected || cachedIdentity!=identity)false
+                            else {action();true}
+                        }}
+                        onSessionItemData?.invoke(delivery) ?: delivery.apply(onItemData)
+                    }
                 }
                 }
             }
@@ -463,7 +643,12 @@ class LanClient(
                 }
                 log("等待 ${waitMs / 1000}s 后重连...")
                 delay(waitMs)
+                val saved=lastSettings
+                val discovered=if(saved!=null && saved.expectedDeviceId.isNotBlank())runCatching {
+                    LanDiscovery.discover(1200).firstOrNull {it.deviceId==saved.expectedDeviceId && it.verified(Proto.sha256Hex(saved.password))}
+                }.getOrNull() else null
                 synchronized(this@LanClient) {
+                    if(saved===lastSettings && discovered!=null)lastSettings=saved!!.copy(serverIp=discovered.ip,serverPort=discovered.port.toString())
                     reconnectJob = null
                     if (manuallyClosed || !networkAvailable || state == State.Connected) return@synchronized
                     val s = lastSettings ?: return@synchronized
@@ -489,6 +674,7 @@ class LanClient(
         networkAvailable = available
         if (manuallyClosed || lastSettings == null) return
         if (!available) {
+            clearAudioLink()
             reconnectJob?.cancel(); reconnectJob = null
             handshakeJob?.cancel()
             val previous = ws; ws = null; previous?.cancel()

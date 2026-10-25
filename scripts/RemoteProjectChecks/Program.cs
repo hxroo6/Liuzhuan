@@ -1,0 +1,51 @@
+using System.Diagnostics;
+using System.IO;
+using System.Text.Json;
+using Liuzhuan;
+using Liuzhuan.Models;
+using Liuzhuan.Services;
+using Liuzhuan.Services.Lan;
+
+var root=Path.GetFullPath(Path.Combine(args.Length>0?args[0]:"F:/appdata/Temp/liuzhuan-m57-remote-project",Guid.NewGuid().ToString("N")));Directory.CreateDirectory(root);
+typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,root);Liuzhuan.Utils.Logger.Init(root);
+int checks=0;void Check(bool ok,string label){if(!ok)throw new Exception(label);checks++;Console.WriteLine("PASS "+label);}
+JsonElement Request(object value)=>JsonSerializer.SerializeToElement(value);
+JsonElement Json(object value)=>JsonSerializer.SerializeToElement(value);
+using var store=new DataStore(root);var owner=new object();var library=Guid.NewGuid().ToString("D");
+var beginGate=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+async Task Dispatch(Action action){await beginGate.Task;lock(owner)action();}
+var service=new RemoteProjectPackageService(store,Dispatch,()=>library);
+var file=Path.Combine(root,"synthetic.bin");File.WriteAllText(file,"synthetic project original");
+var first=store.Add(new MaterialItem{Type=MaterialType.Text,TextContent="synthetic project text",DisplayName="项目说明",GroupName="test",Tags=new[]{"tag"}});
+var second=store.Add(new MaterialItem{Type=MaterialType.Other,FilePath=file,DisplayName="synthetic.bin",Size=new FileInfo(file).Length});await store.FlushAsync();
+async Task<JsonElement> Wait(RemoteProjectPackageService host,string id){var clock=Stopwatch.StartNew();while(clock.Elapsed<TimeSpan.FromSeconds(30)){var reply=Json(await host.HandleAsync(Request(new{action="project_status",libraryId=library,jobId=id})));if(reply.TryGetProperty("state",out var state)&&state.GetString() is "ready" or "failed")return reply;await Task.Delay(10);}throw new Exception("synthetic project job did not finish");}
+var operation=Guid.NewGuid().ToString("D");var command=Request(new{action="project_begin",operation="export",operationId=operation,libraryId=library,ids=new[]{first.Id,second.Id}});
+var watch=Stopwatch.StartNew();var accepted=Json(await service.HandleAsync(command));
+Check(accepted.GetProperty("jobId").GetString()==operation&&watch.ElapsedMilliseconds<1000,"project export returns a job immediately while owner dispatch remains blocked");
+Check(Json(await service.HandleAsync(command)).GetProperty("jobId").GetString()==operation,"retrying the same operation and fingerprint returns the original job");
+bool conflict=false;try{await service.HandleAsync(Request(new{action="project_begin",operation="export",operationId=operation,libraryId=library,ids=new[]{first.Id}}));}catch(InvalidOperationException){conflict=true;}Check(conflict,"an operation ID cannot be reused with different selected materials");
+beginGate.SetResult();var exported=await Wait(service,operation);Check(exported.GetProperty("state").GetString()=="ready","export becomes ready only after archive creation and index flush");
+var archiveId=exported.GetProperty("result").GetProperty("itemId").GetString()!;MaterialItem archive;lock(owner)archive=store.Items.Single(x=>x.Id==archiveId);
+Check(File.Exists(archive.FilePath)&&Path.GetDirectoryName(archive.FilePath)==Path.Combine(root,"temp"),"the reusable archive is indexed as a direct temp file for storage accounting");
+Check(!exported.GetRawText().Contains(root,StringComparison.OrdinalIgnoreCase),"project job responses contain no absolute storage paths");
+var previewId=Guid.NewGuid().ToString("D");await service.HandleAsync(Request(new{action="project_begin",operation="preview",operationId=previewId,libraryId=library,itemId=archiveId}));var preview=await Wait(service,previewId);
+Check(preview.GetProperty("state").GetString()=="ready"&&preview.GetProperty("result").GetProperty("count").GetInt32()==2,"preview validates the selected ZIP and returns a bounded entry count");
+var token=preview.GetProperty("result").GetProperty("token").GetString()!;var applyId=Guid.NewGuid().ToString("D");
+var apply=Request(new{action="project_begin",operation="apply",operationId=applyId,libraryId=library,token});
+await service.HandleAsync(apply);var applied=await Wait(service,applyId);Check(applied.GetProperty("state").GetString()=="ready"&&applied.GetProperty("result").GetProperty("added").GetInt32()==1,"confirmed apply merges the original file while preserving matching local text");
+long sequence;lock(owner)sequence=store.CurrentSequence;await service.HandleAsync(apply);await Task.Delay(20);lock(owner)Check(store.CurrentSequence==sequence,"replaying a completed apply never starts a second merge");
+var other=new RemoteProjectPackageService(store,action=>{lock(owner)action();return Task.CompletedTask;},()=>library);
+var stalePreviewId=Guid.NewGuid().ToString("D");await other.HandleAsync(Request(new{action="project_begin",operation="preview",operationId=stalePreviewId,libraryId=library,itemId=archiveId}));var stalePreview=await Wait(other,stalePreviewId);
+lock(owner)store.Add(new MaterialItem{Type=MaterialType.Text,TextContent="concurrent library edit"});
+var staleApplyId=Guid.NewGuid().ToString("D");await other.HandleAsync(Request(new{action="project_begin",operation="apply",operationId=staleApplyId,libraryId=library,token=stalePreview.GetProperty("result").GetProperty("token").GetString()}));
+Check((await Wait(other,staleApplyId)).GetProperty("state").GetString()=="failed","a library edit after preview invalidates apply before any merge");
+Check(Json(await other.HandleAsync(Request(new{action="project_status",libraryId=Guid.NewGuid().ToString("D"),jobId=stalePreviewId}))).GetProperty("code").GetString()=="target_changed","job lookup is bound to the current library identity");
+var changedRootGate=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);var ownerEntered=new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var guarded=new RemoteProjectPackageService(store,async action=>{ownerEntered.TrySetResult();await changedRootGate.Task;lock(owner)action();},()=>library);
+var changedId=Guid.NewGuid().ToString("D");await guarded.HandleAsync(Request(new{action="project_begin",operation="export",operationId=changedId,libraryId=library,ids=new[]{first.Id}}));await ownerEntered.Task;
+int before;lock(owner)before=store.Items.Count;ConfigService.SetDataDir(Path.Combine(root,"changed-library"));changedRootGate.SetResult();
+Check((await Wait(guarded,changedId)).GetProperty("state").GetString()=="failed","switching the configured data root rejects the old queued job before any archive registration");
+ConfigService.SetDataDir(root);lock(owner)Check(store.Items.Count==before,"rejected old-root job leaves the current index unchanged");
+var fourthId=Guid.NewGuid().ToString("D");await service.HandleAsync(Request(new{action="project_begin",operation="export",operationId=fourthId,libraryId=library,ids=new[]{first.Id}}));await Wait(service,fourthId);
+bool full=false;try{await service.HandleAsync(Request(new{action="project_begin",operation="export",operationId=Guid.NewGuid().ToString("D"),libraryId=library,ids=new[]{first.Id}}));}catch(InvalidOperationException){full=true;}Check(full,"four retained jobs form a hard admission budget without evicting idempotency records");
+await store.FlushAsync();Console.WriteLine($"All {checks} remote project checks passed; fixture={root}");

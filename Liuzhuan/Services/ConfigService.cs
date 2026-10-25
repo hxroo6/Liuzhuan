@@ -33,7 +33,7 @@ public static class ConfigService
         {
             Directory.CreateDirectory(Path.GetDirectoryName(ConfigFile)!);
             var config = new Dictionary<string, string> { ["DataDir"] = value };
-            File.WriteAllText(ConfigFile, JsonSerializer.Serialize(config, JsonOpts));
+            DurableJson.WriteText(ConfigFile, JsonSerializer.Serialize(config, JsonOpts));
         }
     }
 

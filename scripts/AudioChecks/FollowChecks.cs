@@ -36,6 +36,22 @@ internal static class FollowChecks
         policy.Enable(phone); policy.Observe(active with { UnknownActive = 1 }, 3700);
         check(!policy.Enabled, "ambiguous ownership cannot enable or sustain automatic forwarding");
         policy.Reset(); check(!policy.Calibrated && !policy.Enabled, "observer restart invalidates calibration and automatic permission");
+        policy.BeginCalibration(); policy.Observe(idle, 0); policy.Observe(idle, 500); policy.Observe(idle, 45_000);
+        check(policy.Compatibility == FollowCompatibility.ManualOnly && !policy.Calibrated && !policy.Enabled,
+            "missing dictation cycle has a bounded 45-second manual fallback, not endless calibration");
+        policy.BeginCalibration(); policy.Observe(idle, 50_000); policy.Observe(idle, 50_500);
+        policy.Observe(active, 50_600); policy.Observe(idle, 51_000); policy.Observe(idle, 51_400);
+        check(policy.Compatibility == FollowCompatibility.Compatible, "compatible is shown only after verified idle-active-idle");
+        policy.Disable("manual stop");
+        check(policy.Evaluate(active, phone, 51_500, true) == null && !policy.Enabled,
+            "new dictation activity cannot override a manual stop");
+        policy.Observe(active with { UnknownActive = 1 }, 51_600);
+        check(!policy.Calibrated && policy.Compatibility == FollowCompatibility.ManualOnly,
+            "ambiguous recording invalidates prior calibration instead of inheriting trust");
+        check(MicrophoneRecovery.Describe(MicrophoneIssue.Driver).Contains("ID") &&
+            MicrophoneRecovery.Describe(MicrophoneIssue.Sleep).Contains("解锁") &&
+            MicrophoneRecovery.Describe(MicrophoneIssue.Network).Contains("无需重扫"),
+            "driver, sleep and network have distinct recovery actions without endpoint fallback");
         var path = Path.Combine(Path.GetTempPath(), "lz-mic-prefs-" + Guid.NewGuid().ToString("N"));
         try
         {

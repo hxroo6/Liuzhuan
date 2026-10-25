@@ -22,7 +22,11 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.catch
 
 @Composable
-fun MicrophoneDialog(initialPayload: String = "", onConnectCurrentComputer: () -> Unit = {}, connecting: Boolean = false, onDismiss: () -> Unit) {
+fun MicrophoneDialog(initialPayload: String = "", onConnectCurrentComputer: () -> Unit = {}, connecting: Boolean = false,
+    computerConnected: Boolean = false, computerAudioSupported: Boolean = false,
+    onComputerAudioConfiguration: suspend (Boolean) -> com.liuzhuan.app.net.LanClient.AudioConfigurationResult = {
+        throw java.io.IOException("请先更新并连接电脑端流转")
+    }, onConnectAfterAudioRepair: () -> Unit = onConnectCurrentComputer, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val state by MicrophoneState.status.collectAsStateWithLifecycle()
     val levels by MicrophoneLevels.state.collectAsStateWithLifecycle()
@@ -40,12 +44,14 @@ fun MicrophoneDialog(initialPayload: String = "", onConnectCurrentComputer: () -
     val optionsScope = rememberCoroutineScope()
     var savingOptions by remember { mutableStateOf(false) }
     var savedMessage by remember { mutableStateOf("") }
-    fun saveOptions(value: MicrophoneOptions) {
+    fun saveOptions(value: MicrophoneOptions, enterEconomy: Boolean = false) {
         if (savingOptions) return
         savingOptions = true; savedMessage = ""; error = ""
-        val write = optionsStore.save(value)
+        val write = optionsStore.save(value, releaseCapture = enterEconomy)
         optionsScope.launch {
-            try { write.await(); savedMessage = "已保存，下次开启会话生效" }
+            try {
+                write.await(); savedMessage = if (enterEconomy) "已保存节能连接：需要收音时在前台手动开启" else "已保存，下次开启会话生效"
+            }
             catch (ex: kotlinx.coroutines.CancellationException) { throw ex }
             catch (_: Exception) { error = "麦克风设置未保存，请重试" }
             finally { savingOptions = false }
@@ -87,19 +93,41 @@ fun MicrophoneDialog(initialPayload: String = "", onConnectCurrentComputer: () -
                 Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)) {
                     Column(Modifier.fillMaxWidth().padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(state.message, style = MaterialTheme.typography.titleMedium)
+                        if (state.issue != MicIssue.NONE) {
+                            Text(state.issue.title, color = MaterialTheme.colorScheme.error)
+                            Text(state.issue.action)
+                            if (state.issue == MicIssue.PERMISSION) TextButton(onClick = {
+                                context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                                    android.net.Uri.parse("package:${context.packageName}")))
+                            }) { Text("打开系统权限设置") }
+                        }
                         if (state.active) Text((if (state.localOnly) "试音剩余 ${state.secondsLeft}秒" else "持续待命 · 直到你结束会话") + " · 已采集 ${state.capturedFrames} 帧 · 已发送 ${state.frames} 帧")
                         if (state.active && !state.localOnly) Text(if (state.suppression) {
                             "安静省流量 · 已省略 ${state.suppressedFrames} 帧" + if (!state.forwarding) " · 等待电脑请求" else if (state.quiet) " · 当前仅心跳" else " · 检测到声音"
                         } else "连续传输 · 若已选择省流量但仍显示连续，请同时更新电脑端")
-                        Text(if (state.active) "下拉或返回只关闭面板，采音继续；结束请用下方按钮或通知栏。" else "麦克风默认关闭；连接页“扫码连接全部功能”会在授权后开启采音，也可点下方连接当前电脑。")
+                        Text(if (state.active) "下拉或返回只关闭面板，采音继续；结束请用下方按钮或通知栏。"
+                            else if (options?.energySaving == true) "当前为节能连接，扫码保持麦克风关闭。需要收音时，在此页点开启当前电脑麦克风。"
+                            else "麦克风默认关闭；即时待命下扫码授权后开启采音，也可点下方连接当前电脑。")
                     }
                 }
                 MicrophoneWaveform(levels, state.active)
+                ComputerAudioConfigurationCard(connected = computerConnected, supported = computerAudioSupported,
+                    microphoneActive = state.active, connecting = connecting, onRequest = onComputerAudioConfiguration,
+                    onConnectAfterRepair = onConnectAfterAudioRepair)
                 Card {
                     Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("麦克风偏好", style = MaterialTheme.typography.titleMedium)
                         val saved = options
                         if (saved == null) Text("设置尚未就绪；若长时间未显示，请关闭面板后重试。") else {
+                            Text("连接模式", style = MaterialTheme.typography.titleSmall)
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                FilterChip(selected = !saved.energySaving, enabled = !savingOptions,
+                                    onClick = { saveOptions(saved.copy(energySaving = false)) }, label = { Text("即时待命") })
+                                FilterChip(selected = saved.energySaving, enabled = !savingOptions,
+                                    onClick = { saveOptions(saved.copy(energySaving = true), enterEconomy = true) }, label = { Text("节能连接") })
+                            }
+                            Text(if (saved.energySaving) "扫码只连接素材；不采音、不运行音频心跳、不持有音频 CPU 锁。需要听写时在此页点开启；结束后回到节能连接。"
+                                else "扫码授权后持续采音待命，便于即时听写。切换节能连接会结束当前音频会话，素材同步继续。", style = MaterialTheme.typography.bodySmall)
                             Row {
                                 Checkbox(checked = saved.suppressSilence, enabled = !savingOptions,
                                     onCheckedChange = { saveOptions(saved.copy(suppressSilence = it)) })
@@ -126,7 +154,7 @@ fun MicrophoneDialog(initialPayload: String = "", onConnectCurrentComputer: () -
                         else permission.launch(Manifest.permission.RECORD_AUDIO)
                     }, enabled = options != null && !savingOptions, modifier = Modifier.fillMaxWidth()) { Text("本机试音 60 秒 · 不连接电脑") }
                     Button(onClick = onConnectCurrentComputer, enabled = !connecting && options != null && !savingOptions, modifier = Modifier.fillMaxWidth()) {
-                        Text(if (connecting) "正在连接麦克风…" else "连接当前电脑麦克风 · 不用再扫码")
+                        Text(if (connecting) "正在连接麦克风…" else if (state.issue != MicIssue.NONE) "重新连接当前电脑 · 无需扫码" else "开启当前电脑麦克风 · 无需扫码")
                     }
                     Text("连接页扫一次码即会完成素材与麦克风握手。这里可直接重新连接；返回连接页后，音波图缩到左上角，点击即可展开。", style = MaterialTheme.typography.bodySmall)
                     if (pending.isNotBlank()) {
@@ -152,6 +180,8 @@ fun MicrophoneDialog(initialPayload: String = "", onConnectCurrentComputer: () -
                     Button(onClick = { context.startService(Intent(context, MicrophoneService::class.java).setAction(MicrophoneService.END)) }, modifier = Modifier.fillMaxWidth()) { Text("结束会话 · 释放麦克风") }
                 }
                 if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error)
+                if (state.capturedFrames > 0) Text("本次采集 ${state.captureMs / 1000} 秒 · 读取 ${state.readCalls} 次 · 采集 ${state.capturedFrames} 帧 · 发送 ${state.frames} 帧 · 音频 CPU 锁${if (state.wakeHeld) "持有" else "已释放"}。仅为工作量计数，不是电池耗电测量。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("需同一局域网或手机热点。开启后持续待命，没有闲置或15分钟限制；断线、撤权或系统阻断采音时结束。安静时仍需采音检测，不能完全消除功耗；本机试音仍限60秒。", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 TextButton(onClick = onDismiss, modifier = Modifier.fillMaxWidth()) { Text("返回流转") }
             }

@@ -227,12 +227,46 @@ fun main(args: Array<String>) = runBlocking {
     verify(client.texts.last().first == "permitted hook", "permitted LSPosed text traverses production dispatcher and action")
 
     val receiver = ClipReceiver()
+    verify(com.liuzhuan.app.HookSenderIdentity.verify("com.allowed.app", "com.allowed.app", 1_010_001) {
+        setOf("com.allowed.app")
+    } == com.liuzhuan.app.HookSenderIdentity.Result.VERIFIED,
+        "application sender identity remains valid in an Android secondary user")
+    verify(com.liuzhuan.app.HookSenderIdentity.verify("android", "android", 1_001_000) {
+        setOf("android")
+    } == com.liuzhuan.app.HookSenderIdentity.Result.UNKNOWN,
+        "system UID in another user cannot be mistaken for an application writer")
+    verify(com.liuzhuan.app.HookSenderIdentity.verify("com.allowed.app", "com.allowed.app", 10001) {
+        throw SecurityException("isolated package lookup unavailable")
+    } == com.liuzhuan.app.HookSenderIdentity.Result.UNKNOWN,
+        "unavailable package ownership lookup also fails closed")
     fun hook(kind: String, pkg: String = "com.allowed.app", text: String = "hook text") =
         Intent(ClipReceiver.ACTION_CLIP).putExtra(ClipReceiver.EXTRA_TOKEN, ClipReceiver.TOKEN)
             .putExtra(ClipReceiver.EXTRA_KIND, kind).putExtra(ClipReceiver.EXTRA_PKG, pkg)
             .putExtra(ClipReceiver.EXTRA_TS, System.currentTimeMillis() + 10)
             .putExtra(ClipReceiver.EXTRA_TEXT, text).putExtra(ClipReceiver.EXTRA_FILE_B64, "AQID")
             .putExtra(ClipReceiver.EXTRA_FILE_MIME, "image/png").putExtra(ClipReceiver.EXTRA_FILE_SIZE, 3)
+    val forged = hook(ClipReceiver.KIND_TEXT)
+    receiver.sentFromUid = 10002; receiver.sentFromPackage = "com.secret.app"
+    receiver.onReceive(context, forged)
+    verify(forged.reads[ClipReceiver.EXTRA_TEXT] == null,
+        "copied protocol marker cannot impersonate an allowed package from another UID")
+    val unknown = hook(ClipReceiver.KIND_FILE)
+    receiver.sentFromUid = -1; receiver.sentFromPackage = null
+    receiver.onReceive(context, unknown)
+    verify(unknown.reads[ClipReceiver.EXTRA_FILE_B64] == null &&
+        ClipboardMonitorCoordinator.diagnostic.value.contains("系统未提供复制来源身份"),
+        "missing platform sender identity fails closed before payload extraction with explicit fallback guidance")
+    val lyingUid = hook(ClipReceiver.KIND_TEXT)
+    receiver.sentFromUid = 10002; receiver.sentFromPackage = "com.allowed.app"
+    receiver.onReceive(context, lyingUid)
+    verify(lyingUid.reads[ClipReceiver.EXTRA_TEXT] == null,
+        "sender package must also belong to the UID returned by the platform")
+    receiver.sentFromUid = 10001; receiver.sentFromPackage = "com.allowed.app"
+    val verifiedCount = client.texts.size
+    receiver.onReceive(context, hook(ClipReceiver.KIND_TEXT, text = "identity-verified-hook"))
+    awaitValue { client.texts.size == verifiedCount + 1 }
+    verify(client.texts.last().first == "identity-verified-hook" && client.texts.last().second == "com.allowed.app",
+        "matching platform UID and package preserve the genuine receiver-to-dispatcher text chain")
     ClipboardPrivacy.pause()
     val pausedText = hook(ClipReceiver.KIND_TEXT)
     val pausedFile = hook(ClipReceiver.KIND_FILE)
@@ -243,9 +277,11 @@ fun main(args: Array<String>) = runBlocking {
     ClipboardPrivacy.resume(); ClipboardPrivacy.saveExcludedPackages("com.secret.app")
     val secretText = hook(ClipReceiver.KIND_TEXT, "com.secret.app")
     val secretFile = hook(ClipReceiver.KIND_FILE, "com.secret.app")
+    receiver.sentFromUid = 10002; receiver.sentFromPackage = "com.secret.app"
     receiver.onReceive(context, secretText); receiver.onReceive(context, secretFile)
     verify(secretText.reads[ClipReceiver.EXTRA_TEXT] == null && secretFile.reads[ClipReceiver.EXTRA_FILE_B64] == null && client.files.isEmpty(),
         "excluded LSPosed source cannot bypass privacy using text or file broadcasts")
+    receiver.sentFromUid = 10001; receiver.sentFromPackage = "com.allowed.app"
     val textCount = client.texts.size
     ClipboardEventDispatcher.dispatch(live("unknown origin", null))
     delay(80)

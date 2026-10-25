@@ -1,11 +1,13 @@
 <Project Sdk="Microsoft.NET.Sdk">
-  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net7.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
   <ItemGroup>
-    <Reference Include="Fleck"><HintPath>F:/nuget-packages/fleck/1.2.0/lib/netcoreapp2.0/Fleck.dll</HintPath></Reference>
+    <PackageReference Include="Fleck" Version="1.2.0" />
     <Compile Include="../../Liuzhuan/Services/Lan/WsHub.cs" Link="Production/WsHub.cs" />
     <Compile Include="../../Liuzhuan/Services/Lan/LanMessage.cs" Link="Production/LanMessage.cs" />
     <Compile Include="../../Liuzhuan/Services/Lan/LanItemSummary.cs" Link="Production/LanItemSummary.cs" />
     <Compile Include="../../Liuzhuan/Services/Lan/LanListSnapshot.cs" Link="Production/LanListSnapshot.cs" />
     <Compile Include="../../Liuzhuan/Services/Lan/AuthService.cs" Link="Production/AuthService.cs" />
+  <Compile Include="../../Liuzhuan/Services/DurableJson.cs" Link="Production/DurableJson.cs" />
+    <Compile Include="../../Liuzhuan/Services/Lan/DurableInbox.cs" Link="Production/DurableInbox.cs" />
   </ItemGroup>
 </Project>

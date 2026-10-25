@@ -7,12 +7,19 @@ import com.liuzhuan.app.net.LanClient
 import com.liuzhuan.app.net.Proto
 import kotlinx.coroutines.*
 import java.util.concurrent.CopyOnWriteArrayList
+import kotlin.coroutines.CoroutineContext
 
 private var checks = 0
 private fun verify(ok: Boolean, label: String) { check(ok) { label }; checks++; println("PASS $label") }
 private fun copyEvent(at: Long, text: String = "isolated copy", pkg: String? = "com.allowed.app") = ClipboardEvent(text, at, pkg,
     ClipboardCaptureSource.XPOSED_HOOK, listOf("text/plain"), fingerprintOf(text, listOf("text/plain")), diagnosticId = "COPY-test")
 private suspend fun eventually(test: () -> Boolean) { withTimeout(5000) { while (!test()) delay(10) } }
+
+private class HeldDispatcher : CoroutineDispatcher() {
+    private val pending = java.util.concurrent.ConcurrentLinkedQueue<Runnable>()
+    override fun dispatch(context: CoroutineContext, block: Runnable) { pending.add(block) }
+    fun release() { while (true) (pending.poll() ?: break).run() }
+}
 
 private class Fixture(capable: Boolean = true) {
     var at = 10_000L
@@ -23,12 +30,14 @@ private class Fixture(capable: Boolean = true) {
     var accepted = true
     var connected = true
     var capability = capable
+    var durable=false
     var identity = "pc-one"
     var onSend: (ClipboardEvent) -> Unit = {}
     val inactiveScope = CoroutineScope(SupervisorJob().apply { cancel() } + Dispatchers.Default)
     val transport = object : AutomaticClipboardDelivery.Transport {
         override val identity get() = this@Fixture.identity
         override val supportsReceipts get() = capability
+        override val durableReceipts get()=durable
         override fun send(event: ClipboardEvent): Boolean { sent.add(event); onSend(event); return accepted }
     }
     val delivery = AutomaticClipboardDelivery(queue, { if (connected) transport else null }, policy::runIfAllowed,
@@ -38,7 +47,46 @@ private class Fixture(capable: Boolean = true) {
     fun tick(increment: Long = 0) { at += increment; delivery.step() }
 }
 
-fun main(args: Array<String>): Unit = runBlocking {
+fun runChecks(args: Array<String>): Unit = runBlocking {
+    val upgradedQueue=ClipboardEventQueue(now={1000L})
+    val upgrading=copyEvent(1000,"fixture upgrade")
+    upgradedQueue.enqueue(upgrading,"old-endpoint")
+    upgradedQueue.update(upgrading.requestId){it.copy(attempts=1,mayHaveRegistered=true)}
+    upgradedQueue.rebindVerifiedTarget("old-endpoint","stable-computer")
+    verify(upgradedQueue.find(upgrading.requestId)?.let{it.target=="stable-computer" && it.attempts==1 && it.mayHaveRegistered}==true,"verified identity upgrade preserves original request and registration uncertainty")
+    upgradedQueue.changeTarget("stable-computer")
+    verify(upgradedQueue.find(upgrading.requestId)!=null,"upgraded outbox survives reconnect to same stable target")
+    var disk=emptyList<ClipboardEventQueue.Pending>()
+    val durable=Fixture();durable.durable=true
+    durable.queue.attachPersistence(emptyList()){disk=it.toList()}
+    val committed=durable.submit("durable-outbox-fixture")
+    durable.onSend={verify(disk.single().event.requestId==committed.requestId && disk.single().awaitingReceipt && disk.single().mayHaveRegistered,"send intent and stable request ID are persisted before network submission")}
+    durable.tick()
+    val restored=Fixture();restored.at=durable.at+21;restored.durable=true
+    restored.queue.attachPersistence(disk){disk=it.toList()};restored.tick();restored.tick(2)
+    verify(restored.sent.single().requestId==committed.requestId,"fresh delivery actor restores and retries the original durable request")
+    val legacyRecovery=Fixture();legacyRecovery.at=restored.at+30
+    legacyRecovery.queue.attachPersistence(disk){};legacyRecovery.tick();legacyRecovery.tick(3)
+    verify(legacyRecovery.sent.isEmpty() && legacyRecovery.queue.size()==0,"restored possibly submitted text is not replayed against a legacy receipt store")
+    val noDisk=Fixture();noDisk.queue.attachPersistence(emptyList()){}
+    val unsaved=noDisk.submit("write-failure")
+    noDisk.queue.attachPersistence(noDisk.queue.snapshot()){if(it.any {p->p.awaitingReceipt})throw java.io.IOException("injected storage failure")}
+    runCatching {noDisk.tick()}
+    verify(noDisk.sent.isEmpty() && noDisk.queue.find(unsaved.requestId)!=null,"storage failure cannot submit an unjournaled request")
+    val expiredRestore=Fixture();expiredRestore.at=ClipboardEventQueue.MAX_AGE_MS+50_000
+    expiredRestore.queue.attachPersistence(listOf(ClipboardEventQueue.Pending(copyEvent(10_000),10_000,20_000,target="pc-one"))){}
+    verify(expiredRestore.queue.size()==0,"expired automatic content is pruned during restoration")
+    val privateRestore=Fixture();privateRestore.durable=true;privateRestore.queue.attachPersistence(disk){};privateRestore.policy.pause();privateRestore.tick()
+    verify(privateRestore.sent.isEmpty() && privateRestore.queue.size()==0,"restored automatic content still passes current privacy rules before replay")
+    val manualHold=Fixture();manualHold.durable=true
+    val manualEvent=copyEvent(manualHold.at,"explicit durable text").copy(source=ClipboardCaptureSource.MANUAL)
+    manualHold.delivery.submit(manualEvent);manualHold.tick();repeat(2){manualHold.tick(20);manualHold.tick(3)};manualHold.tick(20)
+    verify(manualHold.queue.find(manualEvent.requestId)?.held==true && manualHold.queue.head()==null,"manual text remains durable for explicit retry after automatic retry budget is exhausted")
+    val later=manualHold.submit("later automatic event");manualHold.tick()
+    verify(manualHold.sent.last().requestId==later.requestId,"held manual request does not block later eligible messages")
+    manualHold.tick(ClipboardEventQueue.MANUAL_MAX_AGE_MS)
+    verify(manualHold.queue.find(manualEvent.requestId)==null,"held manual request expires during the same process lifetime without a restart or retry")
+
     val f = Fixture()
     val first = f.submit(); f.tick()
     verify(f.sent.size == 1 && f.queue.size() == 1 && f.diagnostics.last().contains("等待"), "accepted network send remains pending and cannot report registration success")
@@ -99,6 +147,17 @@ fun main(args: Array<String>): Unit = runBlocking {
     verify(immediateAck.queue.size() == 0 && immediateAck.diagnostics.last() == "电脑已登记文字", "synchronous or very fast receipt is correlated before send returns and cannot revert to waiting")
     val rejection = Fixture(); val rejected = rejection.submit(); rejection.tick(); rejection.delivery.acknowledge("pc-one", rejected.requestId, "rejected"); rejection.tick(100)
     verify(rejection.sent.size == 1 && rejection.queue.size() == 0 && rejection.diagnostics.last().contains("拒绝"), "server rejection is final and does not automatically duplicate a possibly partial registration")
+    val receiptRaceQueue=ClipboardEventQueue(now={10_000L})
+    val receiptRaceEvent=copyEvent(10_000L,"receipt race fixture")
+    receiptRaceQueue.enqueue(receiptRaceEvent,"pc-one");receiptRaceQueue.update(receiptRaceEvent.requestId){it.copy(attempts=1)}
+    var receiptWrites=0
+    val receiptRace=AutomaticClipboardDelivery(receiptRaceQueue,{null},{_,action->receiptRaceQueue.remove(receiptRaceEvent.requestId);action();true},{_,_->},
+        CoroutineScope(SupervisorJob().apply{cancel()}+Dispatchers.Default),{10_000L})
+    verify(!receiptRace.acknowledge("pc-one",receiptRaceEvent.requestId,"stored"){receiptWrites++} && receiptWrites==0,
+        "cancellation racing receipt application cannot write a receipt or report completion")
+    val receiptFailure=Fixture();val receiptFailureEvent=receiptFailure.submit();receiptFailure.tick()
+    verify(runCatching {receiptFailure.delivery.acknowledge("pc-one",receiptFailureEvent.requestId,"stored"){throw java.io.IOException("fixture write failed")}}.isFailure &&
+        receiptFailure.queue.find(receiptFailureEvent.requestId)!=null,"receipt journal failure retains the original pending request")
 
     val frame = org.json.JSONObject(Proto.buildClipboardPush("wire text", "com.allowed.app", "stable-wire", automatic = true))
     verify(frame.optString("id") == "stable-wire" && frame.optJSONObject("data")?.optString("content") == "wire text", "production Proto preserves the stable request identity and original text on the wire")
@@ -106,19 +165,66 @@ fun main(args: Array<String>): Unit = runBlocking {
     // 下列连接使用真实生产 LanClient/OkHttp ↔ 真实生产 PC WsHub。
     val port = args.single()
     val context = Context(); ClipboardMonitorCoordinator.init(context); ClipboardPrivacy.migrateLegacyAutomaticEnabled(true)
+    val held = HeldDispatcher(); val heldScope = CoroutineScope(SupervisorJob() + held)
+    val uiReplies = CopyOnWriteArrayList<() -> Unit>(); var staleReplyEffects = 0
+    val delayedClient = LanClient(scope = heldScope, onSessionItemData = { reply -> uiReplies.add { reply.apply {staleReplyEffects++} };Unit })
+    LanHub.client = delayedClient
+    val firstTargetSettings = SettingsStore.Settings(serverIp="127.0.0.1",serverPort=port,password="isolated-only",deviceName="session-target-A")
+    val delayedRequest = "deferred-session-boundary"
+    try {
+        delayedClient.connect(firstTargetSettings);eventually {delayedClient.state==LanClient.State.Connected}
+        delayedClient.requestItem("private-file");eventually {uiReplies.isNotEmpty()}
+        verify(delayedClient.sendText("deferred boundary fixture",delayedRequest),"manual text accepts its original authenticated target before deferred work")
+        ClipboardMonitorCoordinator.queue.persistenceReady=false
+        delayedClient.connect(firstTargetSettings.copy(deviceName="session-target-B"));eventually {delayedClient.state==LanClient.State.Connected}
+        val secondTarget=delayedClient.automaticClipboardTransport()!!.identity
+        held.release();uiReplies.forEach {it()}
+        val rebound=ClipboardMonitorCoordinator.queue.find(delayedRequest)?.target==secondTarget
+        println("SESSION_BOUNDARY_OBSERVED reboundToNewTarget=$rebound staleReplyEffects=$staleReplyEffects")
+        verify(!rebound,"deferred manual text cannot bind to a newly connected target")
+        verify(staleReplyEffects==0,"old queued item reply cannot start a download after a session switch")
+        delayedClient.requestItem("private-text");eventually {uiReplies.size==2}
+        val currentReply:()->Unit=uiReplies[uiReplies.size-1];currentReply()
+        verify(staleReplyEffects==1,"a current-session item reply still applies normally")
+        val abaId="deferred-session-aba"
+        ClipboardMonitorCoordinator.queue.persistenceReady=true
+        verify(delayedClient.sendText("ABA boundary fixture",abaId),"ABA fixture accepts work before changing connection intents")
+        ClipboardMonitorCoordinator.queue.persistenceReady=false
+        delayedClient.connect(firstTargetSettings);eventually {delayedClient.state==LanClient.State.Connected}
+        delayedClient.connect(firstTargetSettings.copy(deviceName="session-target-B"));eventually {delayedClient.state==LanClient.State.Connected}
+        held.release()
+        verify(ClipboardMonitorCoordinator.queue.find(abaId)==null && TransferTasks.tasks.value.any {it.id==abaId&&it.failed},
+            "switching away and back cannot revive unpersisted work from an earlier connection intent")
+        ClipboardMonitorCoordinator.queue.persistenceReady=true
+        delayedClient.disconnect()
+        val offlineId="same-target-offline"
+        verify(delayedClient.sendText("offline original target fixture",offlineId),"offline text remains available after a prior authenticated connection")
+        held.release()
+        verify(ClipboardMonitorCoordinator.queue.find(offlineId)?.target==secondTarget,"offline text persists against its original target")
+        delayedClient.connect(firstTargetSettings.copy(deviceName="session-target-B"));eventually {delayedClient.state==LanClient.State.Connected}
+        eventually {ClipboardMonitorCoordinator.queue.find(offlineId)==null && TransferTasks.tasks.value.any {it.id==offlineId&&!it.failed&&!it.running}}
+        verify(TransferTasks.tasks.value.any {it.id==offlineId&&it.state=="电脑已接收"},"same-computer reconnect still sends and confirms a previously persisted offline request")
+    } finally {
+        ClipboardMonitorCoordinator.queue.remove(delayedRequest)
+        ClipboardMonitorCoordinator.queue.persistenceReady=true
+        delayedClient.disconnect();heldScope.cancel()
+    }
     val receivedDetails = CopyOnWriteArrayList<Proto.ItemData>()
     val liveClient = LanClient(onItemData = { receivedDetails.add(it) })
     LanHub.client = liveClient
     liveClient.connect(SettingsStore.Settings(serverIp = "127.0.0.1", serverPort = port, password = "isolated-only"))
     eventually { liveClient.state == LanClient.State.Connected }
     verify(liveClient.state == LanClient.State.Connected, "production Android client authenticates against the production PC websocket hub")
+    liveClient.requestItem("registered-count");eventually {receivedDetails.isNotEmpty()}
+    val registeredBeforeMain=receivedDetails.last().content.toInt()
+    receivedDetails.clear()
     ClipboardEventDispatcher.dispatch(copyEvent(System.currentTimeMillis() + 10, "end-to-end automatic"))
     eventually { ClipboardMonitorCoordinator.diagnostic.value.contains("电脑已登记文字") }
     verify(ClipboardMonitorCoordinator.queue.size() == 0, "production dispatcher-action-outbox-LanClient chain completes only after the actual stored wire acknowledgement")
     liveClient.requestItem("registered-count"); eventually { receivedDetails.isNotEmpty() }
-    verify(receivedDetails.last().content == "1", "real server registration callback executed once for the automatic client event")
+    verify(receivedDetails.last().content == (registeredBeforeMain+1).toString(), "real server registration callback executed once for the automatic client event")
     val manualId = "manual-real"
-    liveClient.sendText("manual preserved", manualId); eventually { !TransferTasks.running(manualId) }
+    liveClient.sendText("manual preserved", manualId); eventually { TransferTasks.tasks.value.any {it.id==manualId} && !TransferTasks.running(manualId) }
     verify(TransferTasks.tasks.value.any { it.id == manualId && !it.failed && it.state == "电脑已接收" }, "actual manual task still completes through its existing acknowledgement handling")
     val conflictStarted = System.nanoTime()
     liveClient.sendText("different manual content", manualId)
@@ -128,12 +234,12 @@ fun main(args: Array<String>): Unit = runBlocking {
         "real rejected manual acknowledgement fails the matching task immediately without exposing technical reason fields")
     val countBeforeConflictQuery = receivedDetails.size
     liveClient.requestItem("registered-count"); eventually { receivedDetails.size > countBeforeConflictQuery }
-    verify(receivedDetails.last().content == "2", "conflicting real manual retry does not register another material on PC")
+    verify(receivedDetails.last().content == (registeredBeforeMain+2).toString(), "conflicting real manual retry does not register another material on PC")
     ClipboardPrivacy.pause(); ClipboardEventDispatcher.dispatch(copyEvent(System.currentTimeMillis() + 10, "should not register"))
     delay(80)
     val countBeforePauseQuery = receivedDetails.size
     liveClient.requestItem("registered-count"); eventually { receivedDetails.size > countBeforePauseQuery }
-    verify(receivedDetails.last().content == "2", "privacy pause prevents production automatic capture from submitting another network registration")
+    verify(receivedDetails.last().content == (registeredBeforeMain+2).toString(), "privacy pause prevents production automatic capture from submitting another network registration")
 
     val priorIdentity = liveClient.automaticClipboardTransport()!!.identity
     liveClient.disconnect()
@@ -154,7 +260,7 @@ fun main(args: Array<String>): Unit = runBlocking {
         "changing saved device name cancels the old awaiting request rather than replaying under another PC deduplication scope")
     val countBeforeRenameQuery = receivedDetails.size
     liveClient.requestItem("registered-count"); eventually { receivedDetails.size > countBeforeRenameQuery }
-    verify(receivedDetails.last().content == "2", "renamed production client does not create another server registration from the cancelled old request")
+    verify(receivedDetails.last().content == (registeredBeforeMain+2).toString(), "renamed production client does not create another server registration from the cancelled old request")
     val filePosts=java.util.concurrent.atomic.AtomicInteger()
     val failFileOnce=java.util.concurrent.atomic.AtomicBoolean(false)
     val uploadedBytes=CopyOnWriteArrayList<ByteArray>()
@@ -195,7 +301,25 @@ fun main(args: Array<String>): Unit = runBlocking {
         verify(uploadedBytes.size==2 && uploadedBytes.all { it.contentEquals(byteArrayOf(4,5,6)) },
             "cached upload and retry preserve raw file bytes on the actual HTTP wire")
     } finally { fileHost.stop(0) }
+    val beforeIdentitySwitch=receivedDetails.size
+    liveClient.requestItem("enable-stable-identity");eventually{receivedDetails.size>beforeIdentitySwitch}
     liveClient.disconnect()
+    Proto.clientId="33333333-3333-4333-8333-333333333333"
+    val authenticated=CopyOnWriteArrayList<SettingsStore.Settings>()
+    val stableClient=LanClient(onConnected={authenticated.add(it)})
+    val stableSettings=SettingsStore.Settings(serverIp="127.0.0.1",serverPort=port,password="isolated-only",expectedDeviceId="11111111-1111-4111-8111-111111111111")
+    stableClient.connect(stableSettings);eventually{stableClient.state==LanClient.State.Connected && authenticated.size==1}
+    val identityBefore=stableClient.automaticClipboardTransport()!!.identity
+    verify(authenticated.single().expectedDeviceId==stableSettings.expectedDeviceId && authenticated.single().serverLibraryId.isNotBlank(),"authenticated stable IDs are exposed for history upgrade")
+    stableClient.disconnect();stableClient.connect(stableSettings.copy(deviceName="renamed-fixture"))
+    eventually{stableClient.state==LanClient.State.Connected && authenticated.size==2}
+    verify(stableClient.automaticClipboardTransport()!!.identity==identityBefore,"stable outbox target survives friendly-name change")
+    stableClient.disconnect()
+    val wrongIdentity=LanClient()
+    wrongIdentity.connect(stableSettings.copy(expectedDeviceId="44444444-4444-4444-8444-444444444444"))
+    eventually{wrongIdentity.state is LanClient.State.AuthFailed}
+    verify(wrongIdentity.recoveryLink()==null && wrongIdentity.collectionTarget()==null,"mismatched historical computer identity cannot enable file or collection routes")
+    wrongIdentity.disconnect()
     val offlineLogs = CopyOnWriteArrayList<String>()
     val unusedPort = java.net.ServerSocket(0).use { it.localPort.toString() }
     val retryClient = LanClient(onLog = { offlineLogs.add(it) })
@@ -214,4 +338,10 @@ fun main(args: Array<String>): Unit = runBlocking {
     println("All $checks production automatic receipt checks passed.")
     // OkHttp 与进程级 scope 刻意不按 Activity 生命周期关闭；独立检查程序到此退出。
     kotlin.system.exitProcess(0)
+}
+
+fun main(args:Array<String>) {
+    var code=0
+    try {runChecks(args)}catch(ex:Throwable){ex.printStackTrace();code=1}
+    finally {kotlin.system.exitProcess(code)}
 }

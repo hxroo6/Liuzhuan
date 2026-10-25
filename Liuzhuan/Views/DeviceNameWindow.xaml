@@ -1,0 +1,11 @@
+<Window x:Class="Liuzhuan.Views.DeviceNameWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+ Title="电脑身份" Width="450" Height="300" ResizeMode="NoResize" WindowStartupLocation="CenterOwner" Background="{StaticResource PanelBrush}" Foreground="{StaticResource TextBrush}" FontFamily="{StaticResource UIFont}">
+ <StackPanel Margin="24">
+  <TextBlock Text="让手机认出这台电脑" FontSize="21" FontWeight="SemiBold"/>
+  <TextBlock Text="名称便于辨认；更名和换网不改变设备 ID。" Foreground="{StaticResource TextDimBrush}" Margin="0,10,0,18"/>
+  <TextBox x:Name="NameInput" MaxLength="64" Padding="10" Background="{StaticResource PanelLightBrush}" Foreground="{StaticResource TextBrush}" CaretBrush="{StaticResource AccentBrush}" BorderBrush="{StaticResource BorderBrush}"/>
+  <TextBlock x:Name="IdentityText" Margin="0,10" TextWrapping="Wrap" Foreground="{StaticResource TextDimBrush}"/>
+  <TextBlock x:Name="ErrorText" Foreground="{StaticResource AccentBrush}" TextWrapping="Wrap"/>
+  <Button Content="保存名称" Click="Save_Click" Style="{StaticResource ActionButtonStyle}" Padding="16,8" HorizontalAlignment="Right"/>
+ </StackPanel>
+</Window>

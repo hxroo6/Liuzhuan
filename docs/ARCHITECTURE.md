@@ -1,6 +1,6 @@
 # ARCHITECTURE — 当前真实架构
 
-> 基线：M13（HEAD `ebc3da4`，2026-08-27），本文以当前源码为准逐文件核实。
+> 当前结构更新：M57 / v1.20.0 本地开发版（2026-10-25）；M13及后续分节保留各阶段背景，当前行为以最新分节和源码为准。
 > 维护约定：改动下述任一链路的结构（新增/删除组件、改协议、改端口）时**必须同步更新本文**。
 > 冲突裁决顺序：源码 > 本文 > `logs/项目迁移交接文档_20260827.md` > 其他历史资料。
 
@@ -8,7 +8,114 @@
 
 ## 1. 总览
 
-### 手机麦克风实验链（M39–M45 / v1.9.0）
+### M57 / v1.20.0：恢复边界、离线原件、传输调度与音频配置保护
+
+- PC现为WPF/.NET 10，`global.json`固定SDK基线；Android使用AGP 8.10.1、Gradle 8.11.1及JDK 21，API 36与既有签名不变。升级不改变剪贴板Hook、进程级发送作用域、FGS停启或录音许可边界。
+- `MaterialRecord`先作为无文件访问副作用的DTO完整校验，之后才构造索引对象。`DataStore.DataRoot`在实例构造时固定；启动先发布索引，派生来源检查批次异步执行。`QueryRevision`仅随影响查询的索引/整理/来源变更推进，缩略图与来源状态通知不重复重建分类查询。大库使用不可变快照在后台查询；网络缩略图受长边、并发和缓存预算约束。
+- `LibraryRecoveryService`保留旧索引历史：最多每5分钟尝试一次、10份/128 MiB总量/64 MiB单份。`LibraryHealthWindow`提供库位置、历史差异及启动计划；切库或索引恢复在下次启动、创建DataStore之前执行。恢复先保留现索引并复核历史指纹，只恢复条目/整理，不搬动原件、设置、身份或回执；与迁移计划冲突时拒绝执行，不热切当前根目录。
+- `ProjectStagingService`显式扫描`project-imports`，区别已引用、完整未引用、不完整、阻塞和回收区。索引/Undo/续传保护、坏绑定或链接检查先于回收；每批最多200个原件，先落盘意图再同卷移入独立回收区，恢复不覆盖。准备和合入共用`.prepare.lock`租约，不递归删除目录，也不自动清理。
+- 手机项目包能力`project_package_v1`沿用已鉴权素材连接，`project_begin`提交export/preview/apply，`project_status`查询结果。电脑后台串行作业、最多4项/15分钟、按电脑/库/操作指纹绑定；导出完成登记ZIP后走原可靠下载，预览返回有界令牌，合入重新校验并Flush索引后才确认。进度只在手机面板可见且生命周期活跃时查询，关闭面板不代表撤销已提交的电脑作业；此作业状态未做跨进程恢复。
+- Android完整离线索引使用`serverRun`和有界变更日志做显式增量更新；跨服务运行、游标过旧、序号不一致或能力缺失退回完整保存。下载准备不长期占本地写锁，最终提交复核库/epoch/代次。`LibraryWorkspace`草稿只叠加真正编辑的字段，重新编辑仍保留原基线、反向编辑与未编辑的电脑字段。
+- `OfflineOriginals`按电脑安装ID/库/素材/来源版本保存用户主动固定的原件，复用可靠下载并验证SHA-256；私有`noBackup`副本为明文文件，目录记录沿用加密恢复存储。最多200项，可选128/512 MiB、1/2 GiB全机预算，预留及孤立副本也计入。只读Provider仅为选中的原件临时授权，取消固定不删Downloads文件；服务器重启后旧副本明确视作历史快照，不冒充最新。
+- 两端传输策略持久保存发送/接收优先、方向总限速及音频让行：最多2项实际传输，等待任务有老化保护；策略在实际数据块边界应用。音频转发时可将上下行各限制为1 MiB/s，既有分块校验、durable偏移、fsync与ACK边界不变。目录收集等待素材索引Flush之后才保存已收集指纹；手动待发即使保留待重试也受七天期限约束。
+- `AudioConfigurationGuard`区分两类本机档案：收到当前非静音PCM且虚拟输出实际读取时，只自动保留已验证的虚拟端点选择；用户实际确认外放与听写正常后，才保存六种系统默认端点与外放静音/音量作为对照。坏记录、未知/静音/疑似错误配置不覆盖好档案。恢复只预检原ID并停止服务、保存流转设备选择，不恢复系统默认/音量、录音许可或自动跟随，不自动开麦。
+- `AudioConfigurationMonitor`通过Core Audio设备/默认端点/音量事件合并检查，无空闲周期轮询、无试录音或试播放；原麦克风体检窗口可见时的10秒刷新独立保留。发现实体扬声器缺失、外放进虚拟线、静音或与基准不同时提醒并提供Windows入口，不静默修改系统设置。档案不随迁移导出，不含录音。
+
+本阶段仅本地交付，未推送GitHub；隔离测试、构建与离屏布局检查不等同真机、声卡驱动恢复、实际外放/听写或功耗验收。详见[M57记录](performance/M57_RELIABILITY_OFFLINE_2026-10-24.md)。
+
+### M56 / v1.19.0：项目包合入与手机常用搜索
+
+- ProjectPackageService使用独立白名单DTO，项目ZIP不复用整库Migration的设置/MaterialItem反序列化。最多1000条、16MiB有界清单、64GiB原件；路径、成员、元数据和时间先校验，再构造本机材料。原件逐字节计数、SHA-256及ZIP CRC32检查；规范来源路径只打包一次，输出.partial强刷后公布。准备目录以包UUID绑定清单指纹，重试复验原ZIP及既有原件，不信mtime。
+- project-imports目录不自动清理，预览只准备文件。DataStore专用Preview/ImportProjectBatch先完整验证root/sequence/范围，再单Reset加入新项，保持原库对象/顺序；内部project键规范为N格式，识别同包重试。同内联文字保留本机整理并追加内部键，跨包文件不自动按hash合并，不执行自动整理规则。窗口提交前重核原包及库代次，提交后禁取消，FlushAsync落盘后才报成功；失败保留原件和当前内存状态供重试。
+- Android LibrarySavedSearches按电脑安装ID+库ID隔离，复用加密LibraryRecords/noBackup，最多10项命名条件，明确保存/更新/删除后才写盘；损坏保留且不影响素材库。普通清索引保留，显式移除整个库时清该库设置，不参与PC迁移或跨端同步。
+- 分页actor改为collectLatest可替换的只读子job，旧await取消后释放请求锁；250ms尾沿输入合并，元数据同步actor/持久草稿仍独立进程作用域。外部应用查询时复核epoch与当前关键词，同文字输入不重建IME选区/组合态。详见[M56记录](performance/M56_PROJECT_PACK_SEARCH_2026-10-23.md)。
+
+### M55 / v1.18.0：任务中心与只读重复素材检查
+
+- 两端TransferTaskQuery只负责展示筛选，按名称/方向/状态搜索，四组互斥归类为进行中、待处理、成功、取消；已结束筛选含成功及取消，失败/暂停/过期/未知归待处理。PC独立ListCollectionView避免影响其他观察者；Android remember派生查询、横向筛选和可滚动工具，无新权限/协议/轮询。
+- TransferJournal每ID只保留待显示的最新值，最多一个待处理Dispatcher更新；UI drain从Latest取值，更新和淘汰共用Gate。控制变更通知发布前核对原Latest对象及原Controller实例，EndControl后迟到通知不恢复控制。恢复控制仍存在的失败项不参与显示预算淘汰。
+- Android TransferTaskStates统一成功/终态文案，历史恢复、可清理判断和查询共用；旧协议“已保存到手机”按成功恢复，持久描述和断点仍由原恢复引擎持有。
+- DuplicateMaterialService显式启动，最多10万条索引、全进程一个扫描，规范路径去重、大小预筛后顺序SHA-256、100ms进度限频，末尾复核元信息及UI发布复核来源修订。只读预览，不改基线/文件/索引；逻辑重复字节不等于实际可释放空间。DataStore批量收藏以HashSet单次遍历替代逐ID扫描，保持实际变更的逐项修订与同步。详见[M55记录](performance/M55_TASK_CENTER_DUPLICATES_2026-10-23.md)。
+
+### M54 / v1.17.0：并发准入、目标边界与异步整理
+
+- 续传服务短锁维护持久任务索引与容量预留，合计最多1000任务；下载SHA256不持全局锁，仍持原任务Gate，提交前核对文件大小/mtime和素材来源绑定。失败/取消释放预留，校验与fsync/ACK不变。启动建立索引，后续请求按一分钟或容量压力核对；每轮过期检查最多128项，有游标避免坏记录阻塞后续候选。在途Gate优先，坏/null记录保留计数，Windows大小写共享Gate。
+- DurableInbox按规范目录共享弱引用状态、容量索引和每请求Gate，文字WS/文件HTTP的两个实例不能重复登记同key或分别突破10000预算。慢登记不占目录Gate，可靠意图/回执仍分别原子强刷。正常登记只维护自身；一分钟/容量压力按业务事件核对，过期前核验合法记录、创建时间与元信息；坏/null/超预算记录保留，读取最多64KiB，无额外轮询任务。
+- 手动文字捕获原目标和显式连接意图代次，异步提交不换绑；item_data携带原socket/身份票据，在UI动作执行时原子复核。已持久化待发允许原电脑重连。ACK的最终复核、回执落盘和出队与取消互斥，日志/任务状态只在确认应用后更新。
+- MaterialLibrary本机草稿落盘后立即返回，进程级合并信号worker串行同步，网络await不占本地工作锁；syncing与索引保存workBusy分开。迟到saved ACK只推进可逐字段证明来自旧请求的基线，新token和真正远端冲突保留；最多4个revertedFields持久保留反向编辑，未知结果转显式核对。
+- 分页/同步长期actor在边界区分自身取消与子请求超时：真正取消传播，内部超时显示错误并继续处理后续刷新/重试；没有空闲网络轮询。详见[M54记录](performance/M54_TRANSFER_SESSION_2026-10-22.md)。
+
+### M53 / v1.16.0：审查修复、离线翻页与持久化预算
+
+- 素材WS默认仅允许hello/heartbeat/bye匿名，其余功能要求当前socket已鉴权；get_item及异步快照回发再次复核。既有口令及一次扫码协议保持兼容。
+- Hook发送用来源App的Application Context与平台shareIdentity选项；接收在读取复制内容前校验平台发送UID/包名及PM归属。固定token仅作协议标记，无法证明身份时跳过自动发送并显示诊断；保留exported receiver、action、旁路try-catch和前台/手动链路。
+- DataStore在所有者线程捕获不可变持久化字段，单后台worker序列化并原子落盘；新pending覆盖旧pending，版本等待者只在覆盖自己的快照成功持久化后完成。失败拒绝ACK且可再次Flush，迟到旧快照不能覆盖新版本。顶层null索引走不可读取保护。
+- 同路径重收集使用Add返回的实际索引对象，更新文字预览、推进SourceRevision并重建派生信息，保留手工整理。摘要新增可选sourceRevision，手机缩略图URL以来源版本和库运行epoch区分缓存。Shell/媒体预处理统一最多2并发，排队过期请求跳过。
+- Android上传调度拒绝或排队前置取消保证一次准备结果回调；下载以目标+服务身份+素材ID原子预留。入队提示与持久登记终态分开；RecoveryHistory纯进度最多每3秒写入，状态转换即时，恢复描述/fsync/可靠回执语义不变。
+- 旧FileHttpServer跟踪并关闭已接纳连接；默认16并发、请求头10秒/单行8KiB/总64KiB/100条限制，合法body不套用头部期限，停止后可重启。
+- LibraryWorkspace单筛选缓存页内匹配位置（最多5万个Int约200KB），索引提交/ACK/草稿修改后失效；同条件翻页只读所需页。独立离线库管理可在旧电脑离线或第6库无法激活时释放无草稿旧缓存，拒绝删除待同步/不可读取记录；离线打开在IO后复核连接代次。
+- 电脑选择统计使用HashSet且共享单次选择事件结果，保留视图顺序。CI加入DataStore、派生加载、整理与WS鉴权回归。实施与验证边界见[M53记录](performance/M53_AUDIT_OPTIMIZATION_2026-10-22.md)。
+
+
+### M52 / v1.15.0：手机批量整理与离线工作区
+
+- `LibraryWorkspace` 使用现有 AndroidKeyStore / RecoveryStorage，在noBackup目录分电脑安装ID+素材库ID存放加密分页索引及草稿。最近浏览摘要自动保存为“部分”；用户明确保存完整离线索引时，逐页写新代次，验证连续序号/去重/总数后原子提交manifest。最多5万项/64MB/5库，界面仍只保留1000行；不自动下载原件或缩略图，纯文字仅在完整保存且不超过16000字符时可离线复制。
+- 离线查询逐页解密过滤，叠加本地草稿，不整库装入Repository。索引是保存时快照，手动刷新，不声称离线反映电脑实时状态。清除索引保留待同步草稿，移除离线库须先无草稿；旧加密记录不可读时停止离线写入并保留记录。
+- `material_library_edit_v2`协商新功能；`merge_batch`最多100项、WS请求最多256Ki字符。手机先持久保存每项原基线/期望值/本地修订令牌，发送按10项切批，串行请求，断线不清草稿。服务端先验证全批字段，再按素材进行三方字段合并；冲突项返回当前状态，不影响同批可保存项。Flush索引后才回应，重复期望状态不产生重复修改；客户端先更新索引页再持久移除已确认草稿。
+- 请求排队与真正发送时均核对当前会话、原电脑及库身份，不能因LanClient复用跨目标错投。重连原库自动提交无冲突草稿；冲突/电脑删除保留本地内容，显式核对后重新基准提交或放弃。批量收藏、分组、标签追加/移除/替换仅影响已选择字段，每次最多100项、待同步最多500项/库，不修改批量备注。
+- 旧电脑保留原单项乐观编辑；未协商新功能不重放离线草稿。无新权限、后台轮询、额外保活锁或第三方依赖，音频与剪贴板链保持原有行为。详见[M52记录](performance/M52_OFFLINE_LIBRARY_2026-10-20.md)。
+
+### M51 / v1.14.0：容量预览、保留策略与大库预算
+
+- `StorageMaintenance`在后台扫描已知托管目录直接文件，UI线程捕获索引/撤回引用。区分索引、托管副本、缩略图、非托管来源、续传及回收区逻辑大小；默认30天/保护最新500条和全部收藏，没有自动清理。预览绑定库根、序号和来源元信息，扫描不完整时拒绝文件回收。
+- 索引移除继续复用DataStore与Undo/既有LAN增量；文件回收仅针对未引用历史文件，保护HEIC原件、续传引用、最近一天创建文件和链接路径。每批最多200个，先Flush回收意图再同卷逐文件移动到cleanup-trash；恢复不覆盖，永久清空需先查看明细并确认，复核回收版本和文件元信息。永久清空/恢复在后台，非递归删除；根目录和UNC库不支持回收。
+- `StorageRetention`作为迁移包可选参数，导入验证范围，不迁移trash、任务/回执或隐藏历史。Android `StoragePanel`只统计本机缓存/加密恢复占用、清缩略图内存和已结束展示历史，不删接收文件、任务来源或可靠回执。`RecoveryHistory`先持久加密隐藏ID，再保存展示历史；未变化的隐藏集不重复写盘，进行中任务不受隐藏集影响。
+- DataStore复用排序缓存，批量移除单次集合Reset、批量Undo用邻居锚点链表合并；同筛选的大批视图变化使用一次Reset并恢复幸存选择。`MaterialLibraryService`串行查询，按库序号/数量缓存不可变摘要与筛选结果，同版本翻页不重复捕获全库。
+- `ThumbnailBudget`两边最长320px/最多2个可见解码，离屏取消等待并丢弃过期结果，粘贴不在界面线程同步解码。手机保留8MB缩略图缓存/3并发，并用缓存代次阻止清空前请求回填旧缓存；`LibraryBudget`和Repository将分页/增量摘要限制为1000条滚动窗口，全库搜索仍在PC。
+- 可复现脚本`StorageScaleChecks/Run-StorageScaleChecks.ps1`隔离运行1千/1万/5万条、96/144/192DPI导出、回收保护和128MiB续传中断+音频并发；真实设备与未验收矩阵见[M51记录](performance/M51_STORAGE_SCALE_2026-10-18.md)。
+
+### M50 / v1.13.0：音频恢复、跟随兼容与节能连接
+
+- `MicrophoneRecovery` / Android `MicIssue` 使用白名单故障分类。电脑原设备重试只解析原ID，端点不在时拒绝替换；锁屏/睡眠不自动恢复音频或手机录音许可。音频异常保留素材链。
+- `FollowDemandPolicy` 增加Unknown/Calibrating/Compatible/ManualOnly。校准45秒超时转手动；不可信归属废止既有校准，开启时再核对最新观察，手动停止优先。兼容不代表ASR成功，完整实机听写验收见M50记录。
+- 手机`microphone_options.energy_saving`只保存扫码行为偏好，不是开麦许可。明确切换节能时进程级串行保存完成后结束音频FGS，即使设置面板已关闭；后续扫码跳过音频邀请和权限请求，仅原素材WS运行。用户在前台明确开启可临时使用麦克风，结束后仍保留节能偏好；无后台自动冷启动。
+- `VirtualAudioOutput`在首次有效PCM时创建/播放WASAPI输出，静音、手动停止或会话结束即Stop；再次有效PCM时Play，继续保留原200ms有界缓冲/60ms预热。回调计数用于实测，不记录音频。手机统计采集/发送帧、AudioRecord读取次数、采集时长和CPU锁状态，不据此宣称电池省电比例。
+
+### M49 / v1.12.0：稳定身份、完整分页与整理同步
+
+- `DeviceIdentity` 在安装默认数据根持久化电脑 UUID 与可改名称，独立于地址和每库 serverId；不进入迁移包。`UdpDiscovery` 增加有随机挑战和配对口令 HMAC 的 V2 应答，旧发现消息保持兼容。Android `IdentityProof` 核对证明后才跟随换址；welcome 再核对期望 ID，不把广播 ID 当信任。
+- `ConnectionProfiles` v2 兼容读取 v1；成功鉴权后按设备 ID 归并，保留最新地址、五个历史地址和本机备注名。`SettingsStore` 保存已认证身份与库 ID，写入时复核当前目标；迟到旧连接不覆盖新配置。M48 发送描述/目录绑定仅在原库身份与旧凭据目标一致时升级。先完成绑定再恢复自动收集。
+- `MaterialLibraryService` 通过已认证素材 WS 的 `library_request/library_result` 提供最多100条分页、全库筛选与乐观编辑，协商 `material_library_v1`。仅在素材所属线程捕获摘要和提交修改，过滤在后台进行；分页序号失效需重新获取。`LanItemSummary` 新增收藏、逐项版本、来源与缓存失效状态，不发送电脑路径或内部登记键。
+- `DataStore.ItemUpdated` 持久递增 MetadataRevision，共用原连续序号广播 `item_updated`；收藏、组织和来源状态变化都可通知。元数据更新不移动列表顺序。手机编辑检查当前库和基准版本；冲突不修改，成功在索引 Flush 后响应。PC 视图刷新合并到背景调度。
+- Android `MaterialLibrary` 只负责串行请求、分页代次和筛选状态；素材仍只存 `MaterialRepository`。搜索250ms合并、迟到页作废、事件触发重新加载已浏览范围，无空闲轮询。旧服务端沿用50条镜像。相同电脑的新运行代次会废止旧编辑界面；离线只保留本进程已加载摘要，不提供离线修改或完整原件下载。
+- 本轮保持明文 LAN、口令鉴权及一次扫码，未接入外部服务、强认证证书或新增依赖。采用范围和验证边界见 [M49记录](performance/M49_IDENTITY_LIBRARY_2026-10-18.md)。
+
+### M48 / v1.11.0：虚拟化、持久收发与登记回执
+
+- `ResettableCollection` 合并分类切换通知，视图未变不触发集合重排；网格使用 MIT VirtualizingWrapPanel 2.5.4，三个列表均回收容器。MaterialItem 仅为已实现卡片申请后台缩略图，2并发/320像素；DataContext回收与离屏释放成对处理。
+- `ResumableTransferServer` 复用现有 ASP.NET Core 运行时，在控制端口+4（默认8903）提供每次鉴权的成对分块协议；旧FileHttpServer不变。协商 `resumable_transfer_v1` 和 `durable_receipts_v1`，welcome含serverId/resumePort，hello含本机clientId，普通二维码仍扫一次。
+- 上传：准备稳定私有副本 → 查服务端持久偏移 → 1MiB块/分块SHA-256 → 数据Flush后原子推进偏移 → 完整SHA-256 → 移入uploads → HEIC/素材登记 → 索引与成功回执落盘。下载：固定源指纹与大小/mtime → 块校验 → 私有部分文件落盘/描述推进 → 完整校验 → 固定接收目录MediaStore发布 → 手机保存回执。重复完成不重复登记或创建文件。
+- `DurableInbox` 写前意图以稳定登记键关联DataStore素材；提交索引和回执后才发送durable stored ACK。DataStore在所有者线程捕获序列化快照，在后台串行原子保存，旧快照不覆盖新快照；损坏索引拒绝覆盖和可靠确认。
+- Android `DurableTransfers` 描述持久化，仍由进程级 `TransferWork` 双并发执行。`RecoveryStorage` 在noBackupFilesDir中用AndroidKeyStore AES-GCM保存状态；正文不进入新诊断消息。`ClipboardRecovery` 持久FIFO/稳定请求号/收据，自动文字5分钟，手动文字7天；手动自动重试耗尽后仍保留显式重试与取消。
+- PC `TransferJournal` 与 Android `RecoveryHistory` 保存界面历史，协议描述才是恢复权威。电脑控制通过owner绑定的 `transfer_state` 通知，持久控制修订抵御迟到命令，重连查一次状态补漏；手动暂停不自动解除。离线取消和断线都关闭正在进行的IO，任务在原电脑重新鉴权后恢复；不新增空闲轮询、唤醒锁或开麦恢复。
+- UUID仅关联任务，不等于认证；同名的新客户端不会互踢。M49补上换网重发现与按身份归并历史；长期证书信任管理仍未完成。迁移不携带任务、回执、UUID或登记关联键；新手机/新电脑需重新配对。
+- 版本边界、容量/过期、额外空间及平台替身测试范围见 [M48记录](performance/M48_RECOVERY_2026-10-18.md)；参考采用范围见 [开源参考](research/RECOVERY_REFERENCES_2026-10-18.md)。
+
+### M47 / v1.10.0：整理、收集与竖屏扫码
+
+- `AutomationStore` 是每个电脑素材库的规则表，独立 `automation.json` 原子保存。最多30条，按素材类型、收集来源、设备名称和素材名称匹配；只给新条目填空分组、追加标签，重复收集保留原手动整理。预览不修改素材，版本不支持/配置损坏时保留原文件并阻止覆盖；revision冲突要求重新加载。
+- 素材WS增加可选能力 `automation_v1`，已鉴权socket才能发送 `automation_request`（action=get/preview/save，document为camelCase version/revision/rules）；`automation_result`以requestId单独回复，result含document、matched/samples或error。两端绑定当前socket，断开废止待答复；手机不持久化规则权限或跨目标草稿。64KiB请求上限、每会话300ms限频、10秒手机超时。规则执行与快照在素材UI线程串行，音频邀请仍独立处理。
+- `LanItemSummary`/`Proto.ItemSummary` 增加可选 group/tags/note/hasFile，快照与新增广播都携带。Android展示分组、标签并按名称/分组/标签/备注搜索，仍是最近50条；旧服务端缺字段默认为空。单条手工整理尚无专用元数据增量，重连快照或再次新增时刷新。
+- HTTP上传可携带可选 origin=directory、device；只作为整理来源显示，不是设备安全身份。保留原FileUploaded事件，新增FileCollected供主窗口登记，HEIC转换仍在最终登记前完成。M47实机检查同时修复文本文件被按空文字误去重：按HasFileSource区分文件与纯文字，文本预览最多读取5001字符，WS详情/HTTP下载返回完整源文件，Android通过hasFile选择保存动作。
+- PC `FolderCollectionService` 使用明确选定目录的FileSystemWatcher，非递归、首次指纹基线、稳定检查、忽略临时/链接文件，分批最多32个；无空闲轮询。每机独立 `collection-folders.json`，最多10目录×5000文件。拒绝磁盘根、程序/素材库及其上级、网络路径和重解析路径；停止只移除订阅。离线目录和通知遗漏可手动检查。
+- Android `FolderSubscriptions` 在LanController.init后初始化，只持久化系统SAF授权的来源树、文件指纹和接收电脑目标散列；本机 `AtomicFile`，不是接收目录选择。连接期间保留最多10个授权目录的通知cursor，断开/停止即关闭，并订阅提供者通知，前台/重连/显式按钮补查，1.2秒稳定对照后复用进程级TransferWork，最多2个真实传输并发。分批最多16个，更多文件另批处理。入队前记录尝试，取消/失败不自动重复；可在收发显式重试，不提供跨进程任务恢复。连接目标变化/停止订阅在排队、发送前和流式发送中校验。
+- Windows opt-in Ctrl+Alt+V 收集现有剪贴板，默认关闭；热键与原Ctrl+反引号使用不同ID并正确注销。Android顶部“收集”提供前台文字预览/确认发送、文件选择及既有系统分享入口；不注册Windows右键菜单、不增加剪贴板轮询。
+- 规则随整库迁移；订阅本地路径/SAF URI、目标散列、临时任务与快捷键偏好不迁移。手机接收路径始终为Download/Liuzhuan。
+- `PairingScanActivity` 替代ZXing默认横屏CaptureActivity，仅该相机页声明portrait，沿用ScanContract原配对结果；Compose统一深墨绿卡片、真实解码框角标、返回/手电筒/权限重试。取景框位置来自实际相机解码区，不用假扫描进度；暂停关闭灯与相机。Android16大屏系统可能忽略方向约束，需另做平板适配验收。
+
+### 手机麦克风实验链（M39–M46 / PC v1.9.1 本地构建）
+
+- M46 `AudioRouteScanner` 在后台只读枚举当前/禁用/断开的端点及 Console、Multimedia、Communications 三种默认播放/录音，不激活音频流；`AudioRouteHealth` 独立判定三路配置，区分读取失败、未选择与保存设备失效。设置页可见时每10秒与手动体检共用最多一个扫描任务，关闭停止计时且忽略迟到结果；服务开启时仍可体检，不重新绑定当前选择或重启服务。三路卡片区分实体外放、流转写入和听写读取，修复按钮仅打开固定Windows声音/播放/录音面板。复制诊断只附受控问题代码与标题，排除设备名称/ID，不把配置结果当作端点连通、应用输入选择或ASR证据。手机协议与应用未改。
 
 - 独立 TCP 8902 `/audio` WebSocket 承载音频，原素材 WS8899、HTTP8900、UDP8901 保留。M42在素材WS增加可选鉴权后配对协商，不混传原始音频；随机一次性音频邀请两分钟有效且不持久化，一次只接入一台手机。按用户要求暂不加密，仅接受私网 IPv4/本机，不提供公网模式。
 - PC `Services/Audio/MicrophoneHost` 持有服务；设置页 `Views/MicrophoneWindow` 只操作/观察。新音频后端用 Kestrel 限制连接/消息并提供可取消发送，未改原 `FileHttpServer`。NAudio 2.2.1 用于显式设备枚举和共享 WASAPI；不引入竞品应用或复制其业务源码。
@@ -38,7 +145,7 @@
                   UDP 8901 发现(DISCOVER/OFFER 广播应答)          └───────────────┘
 ```
 
-- **PC = Hub 服务器**：WPF (.NET 7)，Fleck WebSocket + 手写 TcpListener HTTP。
+- **PC = Hub 服务器**：WPF (.NET 10)，Fleck WebSocket + 手写 TcpListener HTTP；可靠收发另复用ASP.NET Core。
 - **Android = 客户端**：Kotlin 2.0.21 + Compose（BOM 2024.12.01）+ OkHttp 4.12 + DataStore；`minSdk=compileSdk=targetSdk=36`，只支持 Android 16+。namespace `com.liuzhuan.app`。
 - 端口：`LanServer.Start()` 使用 `LanConfig.Port`(默认 8899) 作为 WS，HTTP 为 port+1；UDP 发现固定 8901，在 OFFER 中返回实际 WS 端口。修改连接端口不改变发现端口。
 - 认证：口令 6 位数字，WS 握手 data 带 `auth=sha256(口令)` + `ts`(Unix 秒)，服务器校验 ts ±300s 与哈希匹配；HTTP 文件上传/下载同规则。传输为局域网明文（Manifest `usesCleartextTraffic="true"`）。
@@ -191,7 +298,7 @@
 - 按 ISO BMFF `ftyp` 中 HEVC 图像品牌识别，不能信任扩展名（手机可能提供 HEIC 内容和 `.png` 文件名）。PNG 保留分辨率，JPEG 质量 95、透明区域白底；多帧只转换主图。
 - 输出独立文件，原始上传文件始终保留；素材路径、显示名、大小及广播均使用转换后的文件。失败时保留并登记原文件、记录错误并异步提示用户，不阻止上传回执。
 - 使用 Windows WIC 解码器，目标电脑需具备 HEIF/HEVC 解码支持；本机已用两张问题原图验证。输出是兼容静态图片，不承诺保留原 HEIC 的动态内容、HDR 或全部元数据。
-- 回归命令：`F:/dotnet7/dotnet.exe run --project scripts/HeicConversionChecks -- <HEIC样本路径> ...`，验证设置持久化、格式识别、PNG/JPEG 全分辨率解码、关闭/普通图片透传及损坏文件保留。
+- 回归命令：`dotnet run --project scripts/HeicConversionChecks -- <HEIC样本路径> ...`，验证设置持久化、格式识别、PNG/JPEG 全分辨率解码、关闭/普通图片透传及损坏文件保留。
 
 帧格式 `{v, type, id, ts, device, data}`（`LanMessage.cs` ↔ `Proto.kt` 对应，字段两端成对修改）。
 

@@ -34,10 +34,10 @@ Android M36 / v1.8.4 已将所有新接收文件改为固定 `Download/Liuzhuan`
 - 37 项 Android 功耗/传输检查：含真实阻塞 HTTP 取消、暂停释放槽位与保留来源、迟到进度不覆盖状态、重复继续只重传一次、取消暂停任务释放缓存、真实完成与暂停竞争、保存目录关联。
 - 28 项生产素材仓库同步回归；排序/序号/撤回行为保留。
 - 21 项真实 PC HTTP/WS 检查：原上传/下载/缩略图鉴权与字节完整性、实际网络上传暂停/继续/取消、未完成上传清理及不登记、有限暂停期限（从点击开始，包含阻塞在当前块的网络 I/O）、服务停止唤醒门闩、目录参数安全边界。
-- 6 项实际 WPF 收发界面检查与离屏渲染：窗口尺寸、目录按钮、运行控制、完成条目保存位置、暂停后的继续按钮、管理器设置页保存入口。图片位于 `F:/appdata/Temp/liuzhuan-m35-ui/`；已检查渲染结果并调整按钮内边距。
+- 6 项实际 WPF 收发界面检查与离屏渲染：窗口尺寸、目录按钮、运行控制、完成条目保存位置、暂停后的继续按钮、管理器设置页保存入口。图片位于 `<local-temp>/liuzhuan-m35-ui/`；已检查渲染结果并调整按钮内边距。
 - 44 项生产安卓自动回执与 HTTP 隐私边界回归、14 项生产电脑 WsHub 登记回执回归。
 
-脚本分别为 `scripts/AndroidPowerChecks/Run-AndroidPowerChecks.ps1`、`scripts/TransferChecks`、`scripts/DesktopUiChecks`（输出目录后加 `--transfer-only`）、`scripts/AutoReceiptChecks/Run-AutoReceiptChecks.ps1`。日志保存在 `F:/appdata/Temp/liuzhuan-m35-*`。PC 构建、发布通过；Android Debug / Distribution / lintDebug 通过，Lint 无错误、18 警告与 2 信息（已有警告保留），D8 的 API 36 工具链警告仍存在。Android 53 个源文件与 ASCII 编译副本的摘要一致。
+脚本分别为 `scripts/AndroidPowerChecks/Run-AndroidPowerChecks.ps1`、`scripts/TransferChecks`、`scripts/DesktopUiChecks`（输出目录后加 `--transfer-only`）、`scripts/AutoReceiptChecks/Run-AutoReceiptChecks.ps1`。日志保存在 `<local-temp>/liuzhuan-m35-*`。PC 构建、发布通过；Android Debug / Distribution / lintDebug 通过，Lint 无错误、18 警告与 2 信息（已有警告保留），D8 的 API 36 工具链警告仍存在。Android 53 个源文件与 ASCII 编译副本的摘要一致。
 
 ## 本地交付
 

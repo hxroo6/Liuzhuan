@@ -12,6 +12,7 @@ public static class DeferredMaterialLoader
 {
     private sealed class RequestState { public long Generation; }
     private static readonly ConditionalWeakTable<MaterialItem, RequestState> Requests = new();
+    private static readonly SemaphoreSlim WorkSlots = new(2, 2);
 
     public static Task LoadAsync(MaterialItem item,
         Func<MaterialSourceSnapshot, Task<DeferredMaterialProperties>> loader,
@@ -24,7 +25,7 @@ public static class DeferredMaterialLoader
         var source = new MaterialSourceSnapshot(item.FilePath, item.Type, item.SourceRevision);
         if (!item.IsFile) return Task.CompletedTask;
         var scheduler = completionScheduler ?? TaskScheduler.FromCurrentSynchronizationContext();
-        return Task.Run(() => loader(source)).ContinueWith(task =>
+        return RunLoader().ContinueWith(task =>
         {
             // Observe loader failures even for stale requests, but never let them write back or refresh UI.
             if (task.IsFaulted)
@@ -38,10 +39,22 @@ public static class DeferredMaterialLoader
             if (!string.IsNullOrEmpty(result.ThumbnailPath))
             {
                 item.ThumbnailPath = result.ThumbnailPath;
-                item.TryLoadThumbnailSync();
             }
             if (result.Duration > 0) item.Duration = result.Duration;
             onCompleted?.Invoke();
         }, CancellationToken.None, TaskContinuationOptions.None, scheduler);
+
+        async Task<DeferredMaterialProperties> RunLoader()
+        {
+            await WorkSlots.WaitAsync().ConfigureAwait(false);
+            try
+            {
+                // A superseded queued request must not start expensive Shell/media work.
+                if (generation != Interlocked.Read(ref request.Generation) || item.SourceRevision != source.SourceRevision)
+                    return new(null, 0);
+                return await Task.Run(() => loader(source)).ConfigureAwait(false);
+            }
+            finally { WorkSlots.Release(); }
+        }
     }
 }

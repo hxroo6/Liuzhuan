@@ -12,6 +12,7 @@ namespace Liuzhuan.Services.Lan;
 /// </summary>
 public class UdpDiscovery : IDisposable
 {
+    public Func<string,int,string>? IdentityOffer {get;set;}
     public const int DiscoveryPort = 8901;
     private readonly object _lifecycleLock = new();
     private UdpClient? _udp;
@@ -80,6 +81,14 @@ public class UdpDiscovery : IDisposable
             {
                 var result = await udp.ReceiveAsync(ct);
                 var msg = Encoding.UTF8.GetString(result.Buffer).Trim();
+                if(msg.StartsWith("LIUZHUAN_DISCOVER_V2|",StringComparison.Ordinal)) {
+                    var nonce=msg[21..];
+                    if(nonce.Length==32 && nonce.All(Uri.IsHexDigit) && IdentityOffer!=null) {
+                        var response=Encoding.UTF8.GetBytes(IdentityOffer(nonce,wsPort));
+                        await udp.SendAsync(response,response.Length,result.RemoteEndPoint);
+                    }
+                    continue;
+                }
                 if (msg != DiscoverMagic) continue;
 
                 // 收到探测 → 回复 OFFER（本机 IP + WS 端口 + 设备名）

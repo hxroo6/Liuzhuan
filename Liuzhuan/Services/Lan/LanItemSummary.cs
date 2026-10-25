@@ -5,6 +5,17 @@ namespace Liuzhuan.Services.Lan;
 /// </summary>
 public class LanItemSummary
 {
+    [System.Text.Json.Serialization.JsonIgnore] public string SearchText {get;set;}="";
+    public bool Favorite { get; set; }
+    public long Revision { get; set; }
+    public long SourceRevision { get; set; }
+    public bool SourceMissing { get; set; }
+    public string Source { get; set; } = "";
+    public string SourceDevice { get; set; } = "";
+    public bool HasFile { get; set; }
+    public string Group { get; set; } = "";
+    public string[] Tags { get; set; } = Array.Empty<string>();
+    public string Note { get; set; } = "";
     public string Id { get; set; } = "";
     public string Type { get; set; } = "Text";
     public string Name { get; set; } = "";

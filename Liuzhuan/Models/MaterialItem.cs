@@ -25,6 +25,19 @@ public enum MaterialType
 /// </summary>
 public class MaterialItem : INotifyPropertyChanged
 {
+    private bool _deferSourceProbe;
+    internal static MaterialItem CreateWithoutSourceProbe(Action<MaterialItem> initialize)
+    {
+        var item = new MaterialItem { _deferSourceProbe = true };
+        initialize(item);
+        item._deferSourceProbe = false;
+        return item;
+    }
+    /// <summary>Collection provenance, not a device identity or authorization boundary.</summary>
+    public long MetadataRevision { get; set; }
+    public string CollectionSource { get; set; } = "Desktop";
+    public string CollectionDevice { get; set; } = "本机";
+    public string[] RegistrationKeys { get; set; } = Array.Empty<string>();
     public string Id { get; set; } = Guid.NewGuid().ToString("N");
 
     private MaterialType _type;
@@ -42,7 +55,7 @@ public class MaterialItem : INotifyPropertyChanged
             OnPropertyChanged(nameof(DetailLabel));
             OnPropertyChanged(nameof(IsFile));
             OnPropertyChanged(nameof(HasFileSource));
-            RefreshSourceStatus();
+            if (!_deferSourceProbe) RefreshSourceStatus();
             ResetIntegrityStatus();
         }
     }
@@ -50,6 +63,17 @@ public class MaterialItem : INotifyPropertyChanged
     /// <summary>来源变化代数，防止 A→B→A 的旧异步结果重新写入；不持久化。</summary>
     [JsonIgnore]
     public long SourceRevision => Interlocked.Read(ref _sourceRevision);
+
+    /// <summary>同路径重新收集也代表新来源，废止旧派生结果及手机缩略图缓存。</summary>
+    public void InvalidateSourceContent()
+    {
+        Interlocked.Increment(ref _sourceRevision);
+        ThumbnailPath = string.Empty;
+        ThumbnailSource = null;
+        Duration = 0;
+        ResetIntegrityStatus();
+        OnPropertyChanged(nameof(SourceRevision));
+    }
 
     [JsonIgnore]
     public string KindLabel => Type switch
@@ -79,7 +103,7 @@ public class MaterialItem : INotifyPropertyChanged
                 OnPropertyChanged(nameof(HasFileSource));
                 ResetIntegrityStatus();
             }
-            RefreshSourceStatus();
+            if (!_deferSourceProbe) RefreshSourceStatus();
         }
     }
 
@@ -153,7 +177,19 @@ public class MaterialItem : INotifyPropertyChanged
     public string DisplayName { get; set; } = string.Empty;
 
     /// <summary>文字内容（仅文字类有值）</summary>
-    public string TextContent { get; set; } = string.Empty;
+    private string _textContent = string.Empty;
+    public string TextContent
+    {
+        get => _textContent;
+        set
+        {
+            var next = value ?? string.Empty;
+            if (_textContent == next) return;
+            _textContent = next;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(DetailLabel));
+        }
+    }
 
     /// <summary>拖入时间戳</summary>
     public DateTime AddedTime { get; set; } = DateTime.Now;
@@ -185,12 +221,49 @@ public class MaterialItem : INotifyPropertyChanged
                 OnPropertyChanged();
                 // 路径变化时重置 ThumbnailSource 缓存（下次 getter 会懒加载新路径）
                 _thumbnailSource = null;
+                _thumbnailCancellation?.Cancel();
+                Interlocked.Increment(ref _thumbnailVersion);
+                _thumbnailPending=false;
                 OnPropertyChanged(nameof(ThumbnailSource));
+                if(_thumbnailDemand>0)LoadThumbnailAsync();
             }
         }
     }
 
     private ImageSource? _thumbnailSource;
+    private static readonly SemaphoreSlim ThumbnailSlots=new(2,2);
+    private int _thumbnailDemand;
+    private long _thumbnailVersion;
+    private bool _thumbnailPending;
+    private CancellationTokenSource? _thumbnailCancellation;
+    public void AcquireThumbnail() { _thumbnailDemand++;LoadThumbnailAsync(); }
+    public void ReleaseThumbnail() { _thumbnailDemand=Math.Max(0,_thumbnailDemand-1);if(_thumbnailDemand==0){Interlocked.Increment(ref _thumbnailVersion);_thumbnailCancellation?.Cancel();_thumbnailPending=false;if(!string.IsNullOrWhiteSpace(_thumbnailPath))_thumbnailSource=null;} }
+    private void LoadThumbnailAsync()
+    {
+        if(_thumbnailSource!=null || _thumbnailPending || string.IsNullOrWhiteSpace(_thumbnailPath) || _thumbnailDemand==0)return;
+        var dispatcher=System.Windows.Application.Current?.Dispatcher;
+        if(dispatcher==null)return;
+        _thumbnailPending=true;
+        _thumbnailCancellation?.Cancel();_thumbnailCancellation?.Dispose();
+        _thumbnailCancellation=new CancellationTokenSource();var cancellation=_thumbnailCancellation.Token;
+        var path=_thumbnailPath;var version=Interlocked.Increment(ref _thumbnailVersion);
+        _=DecodeAsync();
+        async Task DecodeAsync()
+        {
+            ImageSource? image=null;
+            bool acquired=false;
+            try
+            {
+                await ThumbnailSlots.WaitAsync(cancellation);acquired=true;
+                if(version!=Interlocked.Read(ref _thumbnailVersion))return;
+                image=await Task.Run(()=>Services.ThumbnailBudget.Decode(path),cancellation);
+            }
+            catch { }
+            finally {if(acquired)ThumbnailSlots.Release();}
+            if(dispatcher.HasShutdownStarted)return;
+            await dispatcher.InvokeAsync(()=> {if(version!=_thumbnailVersion || path!=_thumbnailPath)return;_thumbnailPending=false;if(image!=null){_thumbnailSource=image;OnPropertyChanged(nameof(ThumbnailSource));} });
+        }
+    }
     /// <summary>
     /// 缩略图 ImageSource（UI 绑定用）
     /// Getter 懒加载：若 _thumbnailSource 为 null 且有有效 ThumbnailPath，自动创建 BitmapImage
@@ -201,18 +274,15 @@ public class MaterialItem : INotifyPropertyChanged
     {
         get
         {
-            if (_thumbnailSource != null) return _thumbnailSource;
-            // 懒加载：从 ThumbnailPath 创建
-            if (!string.IsNullOrEmpty(_thumbnailPath) && File.Exists(_thumbnailPath))
-            {
-                TryLoadThumbnailSync();
-            }
+            if(_thumbnailDemand>0)LoadThumbnailAsync();
             return _thumbnailSource;
         }
         set
         {
             if (_thumbnailSource != value)
             {
+                Interlocked.Increment(ref _thumbnailVersion);
+                _thumbnailPending=false;
                 _thumbnailSource = value;
                 OnPropertyChanged();
             }
@@ -226,14 +296,7 @@ public class MaterialItem : INotifyPropertyChanged
             return;
         try
         {
-            var uri = new Uri(_thumbnailPath, UriKind.Absolute);
-            var bmp = new BitmapImage();
-            bmp.BeginInit();
-            bmp.CacheOption = BitmapCacheOption.OnLoad;
-            bmp.UriSource = uri;
-            bmp.EndInit();
-            bmp.Freeze();
-            _thumbnailSource = bmp;
+            _thumbnailSource = Services.ThumbnailBudget.Decode(_thumbnailPath);
             OnPropertyChanged(nameof(ThumbnailSource));
         }
         catch

@@ -61,12 +61,14 @@ internal static class OrganizationUiChecks
             ((TextBox)batch.FindName("TagsInput")).Text = "发布，发布; Review；review";
             patch = Patch(batch);
             var sequence = store.CurrentSequence;
+            var materialOrder = store.Items.Select(x => x.Id).ToArray();
             Check(patch.GroupName == "新项目" && patch.Tags!.SequenceEqual(new[]{"发布","Review"}) && patch.TagsMode == TagsMode.Add,
                 "batch editor normalizes group names and delimiter-separated tags");
             store.UpdateOrganization(texts.Select(x=>x.Id),patch);
             Check(texts.All(x=>x.GroupName == "新项目" && x.Tags.Contains("待处理") && x.Tags.Contains("发布"))
-                && texts[0].Note == "封面搜索线索" && texts[1].Note == "第二条的原备注" && store.CurrentSequence == sequence,
-                "batch append changes chosen fields while retaining notes and LAN order");
+                && texts[0].Note == "封面搜索线索" && texts[1].Note == "第二条的原备注" && store.CurrentSequence == sequence + texts.Length
+                && store.Items.Select(x => x.Id).SequenceEqual(materialOrder),
+                "batch append preserves notes and material order while advancing one LAN revision per changed item");
             Render(batch, "desktop-organization-batch.png", 560, 650);
             ((RadioButton)batch.FindName("TagsReplace")).IsChecked = true;
             ((TextBox)batch.FindName("TagsInput")).Clear();
@@ -87,6 +89,7 @@ internal static class OrganizationUiChecks
             Set("_tagFilter","待处理"); Invoke("RefreshView");
             Check(grid.Items.Count == 1 && grid.Items.Contains(texts[0]), "group and tag filters combine without revealing hidden materials");
             search.Text = "封面搜索线索";
+            DesktopQueryWait.UntilApplied(window, () => grid.Items.Count == 1 && grid.Items.Contains(texts[0]), "organization note search");
             Check(grid.Items.Count == 1 && grid.Items.Contains(texts[0]), "search finds notes within the active organization filters");
             Render(window,"desktop-organization-filter.png",380,680);
             search.Clear(); Set("_groupFilter",null); Set("_tagFilter","不存在的标签"); Invoke("RefreshView");

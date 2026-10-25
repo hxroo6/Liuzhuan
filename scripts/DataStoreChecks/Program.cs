@@ -124,6 +124,21 @@ internal static class Program
             Check(events.Count == 0 && store.CurrentSequence == sequence && !store.CanUndo, "no-op deletions and clears preserve sequences and undo history");
         });
 
+        Scenario("batch-favorites", store =>
+        {
+            var originals=Seed(store,"first","second","third");
+            var changed=new List<string>();store.ItemUpdated+=item=>changed.Add(item.Id);
+            var sequence=store.CurrentSequence;
+            store.SetFavoriteMultiple(new(){"third","first","first","unknown"},true);
+            Check(changed.SequenceEqual(new[]{"first","third"})&&store.CurrentSequence==sequence+2,"batch favorites update distinct matches in library order with one event per actual change");
+            Check(Ids(store).SequenceEqual(new[]{"first","second","third"})&&originals[0].IsFavorite&&!originals[1].IsFavorite&&originals[2].IsFavorite,"batch favorites preserve order and unrelated items");
+            changed.Clear();sequence=store.CurrentSequence;
+            store.SetFavoriteMultiple(new(){"third","first","missing"},true);
+            Check(changed.Count==0&&store.CurrentSequence==sequence,"unchanged favorite batch emits no metadata revisions or synchronization events");
+            store.SetFavoriteMultiple(new(){"first","first"},false);
+            Check(changed.SequenceEqual(new[]{"first"})&&!originals[0].IsFavorite&&originals[2].IsFavorite,"batch unfavorite respects duplicates and retains unselected favorites");
+        });
+
         Scenario("bounded-history", store =>
         {
             Seed(store, Enumerable.Range(0, 55).Select(i => "item-" + i).ToArray());
@@ -144,6 +159,7 @@ internal static class Program
             store.ItemAdded += item => { Next(); mirror.Add(item.Id); };
             store.ItemRemoved += id => { Next(); mirror.Remove(id); };
             store.ItemCleared += () => { Next(); mirror.Clear(); };
+            store.ItemUpdated += _ => Next();
             var random = new Random(5319);
             var nextId = 0;
             var consistent = true;
@@ -223,6 +239,83 @@ internal static class Program
             Check(ReferenceEquals(store.Items.Single(x => x.Id == missing.Id), missing) && missing.Note == "keep memo" && missing.IsFavorite, "missing-source deletion remains undoable without losing metadata");
         });
 
+        Scenario("recollect-current-source", store =>
+        {
+            var path = Path.Combine(root, "recollect.txt"); File.WriteAllText(path, "updated");
+            var original = new MaterialItem { Type=MaterialType.Text, FilePath=path, TextContent="old", IsFavorite=true,
+                GroupName="kept", Tags=new[]{"tag"}, Note="memo", ThumbnailPath="old-thumb", Duration=12,
+                RegistrationKeys=new[]{"first"} };
+            store.Add(original); var revision=original.SourceRevision;
+            var retained=store.Add(new MaterialItem {Type=MaterialType.Text,FilePath=path,TextContent="updated",Size=7,RegistrationKeys=new[]{"second"}});
+            Check(ReferenceEquals(retained,original) && retained.TextContent=="updated", "ordinary same-path recollection updates the actual indexed text object");
+            Check(retained.IsFavorite && retained.GroupName=="kept" && retained.Tags.SequenceEqual(new[]{"tag"}) && retained.Note=="memo", "source refresh preserves all manual organization");
+            Check(retained.SourceRevision>revision && retained.ThumbnailPath=="" && retained.Duration==0 && retained.RegistrationKeys.Length==2, "recollection invalidates stale derivatives while retaining durable registration keys");
+            Check(store.GetSummary(retained).SourceRevision==retained.SourceRevision, "LAN summaries carry the refreshed source generation");
+        });
+        Scenario("immutable-save", store =>
+        {
+            var item=Text("immutable", "captured"); item.RegistrationKeys=new[]{"captured-key"};
+            item.IsFavorite=true;item.GroupName="group";item.Tags=new[]{"tag"};item.Note="note";
+            store.Add(item); var flush=store.FlushAsync();
+            item.TextContent="later";item.RegistrationKeys[0]="later-key";
+            flush.GetAwaiter().GetResult();
+            var saved=File.ReadAllText(Path.Combine(ConfigService.GetEffectiveDataDir(),"data.json"));
+            Check(saved.Contains("captured") && !saved.Contains("later"), "background serialization uses immutable owner-thread fields including copied arrays");
+            var tasks=new List<Task>();for(var i=0;i<30;i++){item.TextContent="generation-"+i;tasks.Add(store.FlushAsync());}
+            Task.WhenAll(tasks).GetAwaiter().GetResult();
+            using var loaded=new DataStore();var copy=loaded.Items.Single();
+            Check(copy.TextContent=="generation-29", "all durable waiters complete only after a covering generation is persisted");
+            Check(copy.IsFavorite && copy.GroupName=="group" && copy.Tags.SequenceEqual(new[]{"tag"}) && copy.Note=="note" && copy.RegistrationKeys.SequenceEqual(new[]{"later-key"}), "immutable persistence snapshots retain organization and registration schema");
+        });
+        Scenario("retry-failed-save", store =>
+        {
+            var target=Path.Combine(ConfigService.GetEffectiveDataDir(),"data.json");Directory.CreateDirectory(target);
+            store.Add(Text("retry-save"));var refused=false;
+            try{store.FlushAsync().GetAwaiter().GetResult();}catch(Exception ex) when (ex is IOException or UnauthorizedAccessException){refused=true;}
+            Check(refused,"a failed durable write faults its waiter instead of acknowledging registration");
+            Directory.Delete(target);store.FlushAsync().GetAwaiter().GetResult();
+            Check(File.ReadAllText(target).Contains("retry-save"),"the save worker can retry successfully after a storage failure");
+        });
+        var nullRoot=Path.Combine(root,"null-index");Directory.CreateDirectory(nullRoot);
+        var nullFile=Path.Combine(nullRoot,"data.json");File.WriteAllText(nullFile,"null");
+        typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,nullRoot);
+        using(var nullStore=new DataStore()) {
+            Check(nullStore.LoadFailed,"a null top-level index is treated as unreadable rather than an empty library");
+            var refused=false;try{nullStore.FlushAsync().GetAwaiter().GetResult();}catch(IOException){refused=true;}
+            Check(refused && File.ReadAllText(nullFile)=="null","null index is retained and cannot produce a durable acknowledgement");
+        }
+
+        var damaged=Path.Combine(root,"damaged-index");Directory.CreateDirectory(damaged);
+        var damagedFile=Path.Combine(damaged,"data.json");File.WriteAllText(damagedFile,"[broken original index");
+        typeof(App).GetProperty(nameof(App.DataDir))!.SetValue(null,damaged);
+        using(var failedStore=new DataStore()) {
+            Check(failedStore.LoadFailed,"damaged material index is surfaced as an unavailable store");
+            var refused=false;try{failedStore.FlushAsync().GetAwaiter().GetResult();}catch(IOException){refused=true;}
+            Check(refused && File.ReadAllText(damagedFile)=="[broken original index","failed index load cannot overwrite the original or acknowledge a durable save");
+        }
+
+        Scenario("query-revision", store => {
+            var before=store.QueryRevision; var text=Text("query-text"); store.Add(text);
+            Check(store.QueryRevision>before,"adding material advances the desktop query revision");
+            before=store.QueryRevision; store.SetFavorite(text.Id,true);
+            Check(store.QueryRevision>before,"favorite changes invalidate query snapshots");
+            before=store.QueryRevision; store.UpdateOrganization(new[]{text.Id},MaterialOrganization.Normalize("project",new[]{"tag"},"note"));
+            Check(store.QueryRevision>before,"group, tag and note changes invalidate query snapshots");
+            before=store.QueryRevision; store.UpdateOrganization(new[]{text.Id},MaterialOrganization.Normalize("project",new[]{"tag"},"note"));
+            Check(store.QueryRevision==before,"idempotent metadata does not invalidate query snapshots");
+            var path=Path.Combine(root,"query-source.bin");File.WriteAllText(path,"source");
+            var file=new MaterialItem{Id="query-file",Type=MaterialType.Other,FilePath=path,DisplayName="query-file"};store.Add(file);
+            before=store.QueryRevision;var sequence=store.CurrentSequence;File.Delete(path);store.RefreshSourceStatuses(new[]{file.Id});
+            Check(file.IsSourceMissing&&store.CurrentSequence==sequence+1&&store.QueryRevision==before,"source-status scans retain LAN sequence semantics without rebuilding desktop queries");
+            sequence=store.CurrentSequence;store.ApplySourceStatuses(new[]{new SourceRelinkStatus(file.Id,file.FilePath,true)});
+            Check(!file.IsSourceMissing&&store.CurrentSequence==sequence+1&&store.QueryRevision==before,"background source-status results do not invalidate search fields");
+            file.ThumbnailPath="synthetic-thumbnail";file.Duration=42;file.IntegrityBaseline=new(new string('A',64),1,DateTimeOffset.UtcNow,file.FilePath,file.Type);store.ClearIntegrityBaselines(new[]{file.Id});
+            Check(store.QueryRevision==before,"thumbnail, duration and integrity-only changes retain the query revision");
+            var candidate=Path.Combine(root,"query-relinked.bin");File.WriteAllText(candidate,"candidate");store.RelinkSource(SourceRelinkService.PrepareSingle(file,candidate));
+            Check(store.QueryRevision>before,"confirmed source path changes invalidate path search snapshots");
+            before=store.QueryRevision;store.Remove(text.Id);Check(store.QueryRevision>before,"removing material advances query revision");
+            before=store.QueryRevision;store.Undo();Check(store.QueryRevision>before,"undo collection restoration advances query revision");
+        });
         Console.WriteLine($"PASS {_checks} data-store checks; isolated artifacts: {root}");
     }
 

@@ -32,6 +32,10 @@ object MaterialRepository {
     /** 最近一次收到的服务器序号（用于 gap 检测） */
     @Volatile
     private var lastSequence: Long = 0
+    private var windowLimit=Int.MAX_VALUE
+    @Synchronized fun setWindowLimit(limit:Int){require(limit>0);windowLimit=limit;emitSorted()}
+    @Synchronized fun sequence():Long=lastSequence
+    @Synchronized fun reset() {map.clear();ordered.clear();displayOrder.clear();removedOrder.clear();_materials.value=emptyList();markSyncing()}
 
     /** 建连或 gap 后先等权威快照，不让增量改动旧连接的画面。 */
     private var awaitingSnapshot = true
@@ -88,7 +92,9 @@ object MaterialRepository {
 
     @Synchronized
     fun update(item: MaterialItem) {
-        add(item)
+        if(!acceptSequence(item.sequence))return
+        val previous=map[item.id]?:return
+        ordered.remove(previous);map[item.id]=item;ordered.add(item);emitSorted()
     }
 
     @Synchronized
@@ -150,6 +156,7 @@ object MaterialRepository {
 
     /** 序号代表变更，撤回不能因此把旧素材推到列表顶部。 */
     private fun emitSorted() {
+        while(ordered.size>windowLimit){val removed=ordered.pollLast();map.remove(removed.id);displayOrder.remove(removed.id)}
         _materials.value = ordered.toList()
     }
 

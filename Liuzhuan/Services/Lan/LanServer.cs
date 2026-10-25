@@ -8,9 +8,17 @@ namespace Liuzhuan.Services.Lan;
 /// </summary>
 public class LanServer : IDisposable
 {
+    public Func<System.Text.Json.JsonElement,Task<object>>? LibraryProvider {get=>_hub.LibraryProvider;set=>_hub.LibraryProvider=value;}
+    public string LibraryId=>_hub.ServerId;
+    public void BroadcastItemUpdated(LanItemSummary item)=>_hub.BroadcastItemUpdated(item);
+    public Func<System.Text.Json.JsonElement, object>? AutomationProvider { get => _hub.AutomationProvider; set => _hub.AutomationProvider = value; }
+    public event Action<string, string, string, string>? FileCollected;
     private readonly WsHub _hub = new();
     private readonly FileHttpServer _fileServer = new();
     private readonly UdpDiscovery _discovery = new();
+    private readonly ResumableTransferServer _resume = new();
+    public Func<string,string,string,Task>? DurableTextReceiver {get=>_hub.DurableTextReceiver;set=>_hub.DurableTextReceiver=value;}
+    public Func<string,string,string,string,string,Task>? DurableFileReceiver {get=>_resume.FileReceiver;set=>_resume.FileReceiver=value;}
     private bool _running;
 
     /// <summary>收到手机文字素材（文本内容, 来源设备）</summary>
@@ -50,10 +58,16 @@ public class LanServer : IDisposable
         {
             _hub.ItemLookup = value;
             _fileServer.ItemLookup = value;
+            _resume.ItemLookup = value;
         }
     }
 
     public int ClientCount => _hub.ClientCount;
+    public Func<string,Task<Dictionary<string,object?>>>? MicrophoneConfigurationProvider
+    {
+        get => _hub.MicrophoneConfigurationProvider;
+        set => _hub.MicrophoneConfigurationProvider = value;
+    }
     public Func<Task<Dictionary<string, object?>>>? MicrophoneInviteProvider
     {
         get => _hub.MicrophoneInviteProvider;
@@ -97,10 +111,21 @@ public class LanServer : IDisposable
             return;
         }
 
+        var identityRoot=App.DataDir;
+        var identity=DeviceIdentity.Load(identityRoot);
+        _hub.DeviceId=identity.Id;_hub.DeviceName=()=>DeviceIdentity.Load(identityRoot).Name;
+        _discovery.IdentityOffer=(nonce,port)=>{var d=DeviceIdentity.Load(identityRoot);var name=Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(d.Name));return $"LIUZHUAN_OFFER_V2|{d.Id}|{port}|{name}|{nonce}|{DeviceIdentity.Proof(LanConfig.PasswordHash,nonce,d.Id,port,name)}";};
+        _resume.ControlChanged=_hub.SendTransferState;
         _hub.TextReceived += OnTextReceived;
         _hub.ClientCountChanged += OnClientCountChanged;
         _hub.ClientAuthenticated += OnClientAuthenticated;
         _fileServer.FileUploaded += OnFileUploaded;
+        _fileServer.FileCollected += OnFileCollected;
+        // Resume service failure must not take away the existing material/clipboard connection.
+        try {_hub.ServerId=ResumableTransferServer.LoadIdentity(ConfigService.GetEffectiveDataDir());}
+        catch(Exception ex){_hub.ServerId="";Logger.Error("Library identity unavailable: {0}",ex.GetType().Name);}
+        try {_resume.Start(checked(LanConfig.Port+4));_hub.ResumePort=LanConfig.Port+4;_hub.ServerId=_resume.ServerId;}
+        catch(Exception ex){_hub.ResumePort=0;Logger.Error("Resume service unavailable: {0}",ex.GetType().Name);}
         _hub.Start(LanConfig.Port, LanConfig.PasswordHash);
         _fileServer.Start(LanConfig.Port + 1);
         _discovery.Start(LanConfig.Port);
@@ -115,8 +140,10 @@ public class LanServer : IDisposable
         _hub.ClientCountChanged -= OnClientCountChanged;
         _hub.ClientAuthenticated -= OnClientAuthenticated;
         _fileServer.FileUploaded -= OnFileUploaded;
+        _fileServer.FileCollected -= OnFileCollected;
         _hub.Stop();
         _fileServer.Stop();
+        _resume.Dispose();
         _discovery.Stop();
         _running = false;
         Logger.Run("LanServer stopped");
@@ -131,6 +158,7 @@ public class LanServer : IDisposable
     {
         FileUploaded?.Invoke(filePath, displayName);
     }
+    private void OnFileCollected(string path, string name, string source, string device) => FileCollected?.Invoke(path, name, source, device);
 
     private void OnClientCountChanged(int count)
     {

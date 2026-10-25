@@ -22,6 +22,9 @@ class SettingsStore(context: Context) {
         private val KEY_AUTO_SEND = booleanPreferencesKey("auto_send_clipboard")
         private val KEY_BALANCED_POWER = booleanPreferencesKey("balanced_power")
         private val KEY_FILE_MANAGER = stringPreferencesKey("receive_file_manager")
+        private val KEY_EXPECTED_DEVICE = stringPreferencesKey("expected_device_id")
+        private val KEY_SERVER_NAME = stringPreferencesKey("server_name")
+        private val KEY_LIBRARY = stringPreferencesKey("server_library_id")
     }
 
     data class Settings(
@@ -31,7 +34,9 @@ class SettingsStore(context: Context) {
         val deviceName: String = android.os.Build.MODEL,
         val autoSendClipboard: Boolean = true,
         val balancedPower: Boolean = false,
-        val fileManagerPackage: String = ""
+        val fileManagerPackage: String = "",
+        val expectedDeviceId:String="",
+        val serverName:String="",val serverLibraryId:String=""
     )
 
     val settings: Flow<Settings> = context.settingsDataStore.data.map { prefs ->
@@ -42,7 +47,8 @@ class SettingsStore(context: Context) {
             deviceName = prefs[KEY_DEVICE_NAME] ?: android.os.Build.MODEL,
             autoSendClipboard = prefs[KEY_AUTO_SEND] ?: true,
             balancedPower = prefs[KEY_BALANCED_POWER] ?: false,
-            fileManagerPackage = prefs[KEY_FILE_MANAGER] ?: ""
+            fileManagerPackage = prefs[KEY_FILE_MANAGER] ?: "",
+            expectedDeviceId=prefs[KEY_EXPECTED_DEVICE]?:"",serverName=prefs[KEY_SERVER_NAME]?:"",serverLibraryId=prefs[KEY_LIBRARY]?:""
         )
     }
 
@@ -54,8 +60,18 @@ class SettingsStore(context: Context) {
             prefs[KEY_DEVICE_NAME] = s.deviceName
             prefs[KEY_AUTO_SEND] = s.autoSendClipboard
             prefs[KEY_BALANCED_POWER] = s.balancedPower
+            prefs[KEY_EXPECTED_DEVICE]=s.expectedDeviceId
+            prefs[KEY_SERVER_NAME]=s.serverName
+            prefs[KEY_LIBRARY]=s.serverLibraryId
         }
     }
+
+    suspend fun authenticated(s:Settings,current:()->Boolean={true}):Boolean {var applied=false;context.settingsDataStore.edit {p ->
+        if(!current())return@edit
+        applied=true
+        p[KEY_IP]=s.serverIp;p[KEY_PORT]=s.serverPort;p[KEY_PASSWORD]=s.password
+        p[KEY_EXPECTED_DEVICE]=s.expectedDeviceId;p[KEY_SERVER_NAME]=s.serverName;p[KEY_LIBRARY]=s.serverLibraryId
+    };return applied}
 
     // 专用写入避免连接设置的旧页面快照覆盖文件管理器偏好。
     suspend fun saveFileManager(packageName: String) {

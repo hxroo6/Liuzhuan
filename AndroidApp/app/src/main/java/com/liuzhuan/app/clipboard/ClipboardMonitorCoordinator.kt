@@ -1,4 +1,4 @@
-package com.liuzhuan.app.clipboard
+﻿package com.liuzhuan.app.clipboard
 
 import android.content.Context
 import android.util.Log
@@ -33,7 +33,7 @@ object ClipboardMonitorCoordinator {
         AutomaticClipboardDelivery(queue,
             transport = { LanHub.client?.automaticClipboardTransport() },
             guarded = ClipboardPrivacy::runIfAllowed,
-            diagnostic = { event, message -> setDiagnostic("[${event.diagnosticId}] $message") })
+            diagnostic = { event, message -> ClipboardRecovery.show(event,message);setDiagnostic("[${event.diagnosticId}] $message") })
     }
 
     /** App 前台/后台状态（进程级追踪，供链路诊断标注 appState） */
@@ -77,6 +77,7 @@ object ClipboardMonitorCoordinator {
         synchronized(this) {
             if (initialized) return
             ClipboardPrivacy.init(context.applicationContext)
+            ClipboardRecovery.init(context.applicationContext,queue)
             initialized = true
             captureManager = ClipboardCaptureManagerImpl(context.applicationContext)
             pipeline.add(PushToPcAction(queue))

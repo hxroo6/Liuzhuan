@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><OutputType>Exe</OutputType><TargetFramework>net10.0-windows</TargetFramework><UseWPF>true</UseWPF><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../Liuzhuan/Services/Lan/RemoteProjectPackageService.cs" Link="Production/RemoteProjectPackageService.cs" />
+    <Compile Include="../../Liuzhuan/Services/ProjectPackageService.cs" Link="Production/ProjectPackageService.cs" />
+    <Compile Include="../../Liuzhuan/Services/ProjectStagingService.cs" Link="Production/ProjectStagingService.cs" />
+    <Compile Include="../../Liuzhuan/Models/ProjectPackageModels.cs" Link="Production/ProjectPackageModels.cs" />
+    <Compile Include="../../Liuzhuan/Services/DataStore.cs" Link="Production/DataStore.cs" />
+    <Compile Include="../../Liuzhuan/Services/AutomationStore.cs" Link="Production/AutomationStore.cs" />
+    <Compile Include="../../Liuzhuan/Services/SourceRelinkService.cs" Link="Production/SourceRelinkService.cs" />
+    <Compile Include="../../Liuzhuan/Services/ConfigService.cs" Link="Production/ConfigService.cs" />
+    <Compile Include="../../Liuzhuan/Services/IntegrityService.cs" Link="Production/IntegrityService.cs" />
+    <Compile Include="../../Liuzhuan/Services/DurableJson.cs" Link="Production/DurableJson.cs" />
+    <Compile Include="../../Liuzhuan/Services/ThumbnailBudget.cs" Link="Production/ThumbnailBudget.cs" />
+    <Compile Include="../../Liuzhuan/Services/Lan/LanItemSummary.cs" Link="Production/LanItemSummary.cs" />
+    <Compile Include="../../Liuzhuan/Services/LibraryRecoveryService.cs" Link="Production/LibraryRecoveryService.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialRecord.cs" Link="Production/MaterialRecord.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialItem.cs" Link="Production/MaterialItem.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialOrganization.cs" Link="Production/MaterialOrganization.cs" />
+    <Compile Include="../../Liuzhuan/Models/MaterialIntegrity.cs" Link="Production/MaterialIntegrity.cs" />
+    <Compile Include="../../Liuzhuan/Utils/FileClassifier.cs" Link="Production/FileClassifier.cs" />
+    <Compile Include="../../Liuzhuan/Utils/Logger.cs" Link="Production/Logger.cs" />
+    <Compile Include="../../Liuzhuan/Utils/ResettableCollection.cs" Link="Production/ResettableCollection.cs" />
+    <Compile Include="../DataStoreChecks/TestApp.cs" Link="TestApp.cs" />
+  </ItemGroup>
+</Project>

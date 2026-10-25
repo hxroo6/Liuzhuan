@@ -37,6 +37,7 @@ object LanController {
     @Synchronized fun init(context: Context): LanClient {
         LanHub.client?.let { if (initialized) return it }
         val app = context.applicationContext
+        com.liuzhuan.app.clipboard.ClipboardMonitorCoordinator.init(app)
         // 启动前快照只包含旧进程缓存，异步清理不会删除随后新建的任务文件。
         val oldCache = app.cacheDir.listFiles()?.filter {
             it.isFile && (it.name.startsWith("lz_clip_") || it.name.startsWith("lz_upload_"))
@@ -48,6 +49,7 @@ object LanController {
         val client = LanClient(
             onState = { next ->
                 mutableState.value = next
+                if(next!=LanClient.State.Connected)FolderSubscriptions.connectionChanged()
                 if (next == LanClient.State.Connected) {
                     // 在 WS 请求快照之前建立同步边界，不能等 UI Handler 再重置。
                     MaterialRepository.markSyncing()
@@ -67,20 +69,35 @@ object LanController {
                 try { history.remember(settings) }
                 catch (ex: kotlinx.coroutines.CancellationException) { throw ex }
                 catch (_: Exception) { appendLog("历史连接未能保存；当前连接不受影响") }
+                try {
+                    val target=FolderSubscriptions.target(settings)
+                    if(!SettingsStore(app).authenticated(settings){LanHub.client?.collectionTarget()==target})return@launch
+                    val old="${settings.serverIp.trim().lowercase()}:${settings.serverPort.toIntOrNull()?:8899}:${com.liuzhuan.app.net.Proto.sha256Hex(settings.password)}"
+                    FolderSubscriptions.rebindVerifiedTargetAwait(old,FolderSubscriptions.target(settings))
+                    FolderSubscriptions.connectionChanged()
+                }catch(ex:kotlinx.coroutines.CancellationException){throw ex}
+                catch(_:Exception){appendLog("连接配置未能保存，目录订阅暂不启动；请检查存储后重连")}
+
             } },
             onListData = { items, seq -> MaterialRepository.replaceAll(items.map { it.toMaterialItem() }, seq) },
             onItemAdded = { MaterialRepository.add(it.toMaterialItem()) },
             onItemDeleted = { id, seq -> MaterialRepository.delete(id, seq) },
             onItemCleared = { MaterialRepository.clear(it) },
-            onItemData = { data -> ui {
+            onSessionItemData = { reply -> ui { reply.apply { data ->
+                if(OfflineOriginals.consumeItemData(data,MaterialLibrary.state.value.epoch))return@apply
                 if (data.error.isNotEmpty()) toast(app, "获取素材失败")
                 else if (data.content.isNotEmpty()) { copyToClipboard(app, data.content); toast(app, "已复制到剪贴板") }
                 else if (data.downloadUrl.isNotEmpty()) receiveFile(app, data)
-            } }
+            } } }
         )
         LanHub.client = client
+        RecoveryHistory.init(app)
+        MaterialLibrary.attachRecords(EncryptedLibraryRecords(app))
+        FolderSubscriptions.init(app)
+        OfflineOriginals.init(app)
+        DurableTransfers.init(app)
         initialized = true
-        MaterialRepository.onSequenceGap = { client.requestSnapshot() }
+        MaterialRepository.onSequenceGap = { scope.launch(Dispatchers.IO) { client.requestSnapshot() } }
         app.registerComponentCallbacks(object : android.content.ComponentCallbacks2 {
             override fun onConfigurationChanged(configuration: android.content.res.Configuration) {}
             override fun onLowMemory() { clearThumbnailCache() }

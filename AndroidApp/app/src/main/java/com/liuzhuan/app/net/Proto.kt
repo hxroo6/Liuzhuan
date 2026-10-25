@@ -1,4 +1,4 @@
-package com.liuzhuan.app.net
+﻿package com.liuzhuan.app.net
 
 import org.json.JSONObject
 import java.security.MessageDigest
@@ -10,11 +10,20 @@ import java.util.UUID
  * 与电脑端 LanMessage 对应：docs/流转安卓版开发文档.md §3
  */
 object Proto {
+    const val LIBRARY_EDIT = "material_library_edit_v2"
+    const val LIBRARY_CHANGES = "material_library_changes_v1"
+    const val PROJECT_PACKAGE = "project_package_v1"
     const val MICROPHONE_PAIRING = "microphone_pairing_v1"
     const val MICROPHONE_INVITE = "microphone_invite"
     const val MICROPHONE_INVITE_RESULT = "microphone_invite_result"
+    const val MICROPHONE_CONFIGURATION = "microphone_configuration_v1"
+    const val MICROPHONE_CONFIGURATION_REQUEST = "microphone_configuration_request"
+    const val MICROPHONE_CONFIGURATION_RESULT = "microphone_configuration_result"
     fun buildMicrophoneInvite(requestId: String): String = JSONObject().put("v", 1)
         .put("type", MICROPHONE_INVITE).put("id", requestId).put("device", deviceLabel).put("data", JSONObject()).toString()
+    fun buildMicrophoneConfiguration(requestId: String, repair: Boolean): String = JSONObject().put("v", 1)
+        .put("type", MICROPHONE_CONFIGURATION_REQUEST).put("id", requestId).put("device", deviceLabel)
+        .put("data", JSONObject().put("action", if (repair) "repair" else "check")).toString()
 
     /**
      * 设备名（hello/heartbeat 等消息的 device 字段）。
@@ -29,6 +38,7 @@ object Proto {
         return digest.hexString()
     }
 
+    @Volatile var clientId: String = ""
     fun buildHello(authHash: String): String = JSONObject()
         .put("v", 1)
         .put("type", "hello")
@@ -36,6 +46,7 @@ object Proto {
         .put("ts", System.currentTimeMillis() / 1000)
         .put("device", deviceLabel)
         .put("data", JSONObject()
+            .put("clientId", clientId)
             .put("auth", authHash)
             .put("ts", System.currentTimeMillis() / 1000))
         .toString()
@@ -91,7 +102,13 @@ object Proto {
         val name: String,
         val size: Long,
         val time: Long,
-        val sequence: Long = 0
+        val sequence: Long = 0,
+        val group: String = "",
+        val tags: List<String> = emptyList(),
+        val note: String = "",
+        val hasFile: Boolean = type != "Text",
+        val favorite:Boolean=false,val revision:Long=0,val sourceMissing:Boolean=false,
+        val source:String="",val sourceDevice:String="",val offlineText:String="",val textComplete:Boolean=false,val sourceRevision:Long=0
     )
 
     /** 解析 list_data 消息 → 素材摘要列表 */
@@ -105,8 +122,10 @@ object Proto {
                 type = it.optString("type", "Text"),
                 name = it.optString("name", ""),
                 size = it.optLong("size", 0),
-                time = it.optLong("time", 0),
-                sequence = it.optLong("sequence", 0)
+                time = it.optLong("time", it.optLong("addedTime")),
+                sequence = it.optLong("sequence", 0),
+                group = it.optString("group"), tags = parseTags(it), note = it.optString("note"), hasFile=it.optBoolean("hasFile",it.optString("type")!="Text"),
+                favorite=it.optBoolean("favorite"),revision=it.optLong("revision"),sourceMissing=it.optBoolean("sourceMissing"),source=it.optString("source"),sourceDevice=it.optString("sourceDevice"),offlineText=it.optString("offlineText"),textComplete=it.optBoolean("textComplete"),sourceRevision=it.optLong("sourceRevision")
             ))
         }
         return out
@@ -118,11 +137,15 @@ object Proto {
         type = data.optString("type", "Text"),
         name = data.optString("name", ""),
         size = data.optLong("size", 0),
-        time = data.optLong("time", 0),
-        sequence = data.optLong("sequence", 0)
+        time = data.optLong("time", data.optLong("addedTime")),
+        sequence = data.optLong("sequence", 0),
+        group = data.optString("group"), tags = parseTags(data), note = data.optString("note"), hasFile=data.optBoolean("hasFile",data.optString("type")!="Text"),
+        favorite=data.optBoolean("favorite"),revision=data.optLong("revision"),sourceMissing=data.optBoolean("sourceMissing"),source=data.optString("source"),sourceDevice=data.optString("sourceDevice"),offlineText=data.optString("offlineText"),textComplete=data.optBoolean("textComplete"),sourceRevision=data.optLong("sourceRevision")
     )
 
     /** 解析消息携带的服务器序号（snapshot / added / deleted / cleared 通用） */
+    private fun parseTags(data: JSONObject): List<String> = data.optJSONArray("tags")?.let { arr -> (0 until minOf(arr.length(),20)).map { arr.optString(it) } } ?: emptyList()
+
     fun parseSequence(data: JSONObject): Long = data.optLong("sequence", 0)
 
     /** 解析 item_deleted 消息 → 素材 id */

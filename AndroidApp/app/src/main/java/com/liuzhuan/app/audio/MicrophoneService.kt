@@ -25,6 +25,7 @@ class MicrophoneService : Service() {
         const val END = "com.liuzhuan.app.audio.END"
         const val PAUSE = "com.liuzhuan.app.audio.PAUSE"
         const val RESUME = "com.liuzhuan.app.audio.RESUME"
+        const val ECONOMY = "com.liuzhuan.app.audio.ECONOMY"
         private const val CHANNEL = "phone_microphone"
         private const val NOTIFICATION = 8902
         // Remains held if native cleanup fails, preventing a second capture instance.
@@ -49,6 +50,9 @@ class MicrophoneService : Service() {
     private var sequence = 0L
     private var frames = 0L
     @Volatile private var capturedFrames = 0L
+    @Volatile private var readCalls = 0L
+    private var captureStarted = 0L
+    private var energySaving = false
     private var localOnly = false
     private var lifetime: MicrophoneLifetime? = null
     private var lastControl = 0L
@@ -79,6 +83,7 @@ class MicrophoneService : Service() {
             stopSelf(); return START_NOT_STICKY
         }
         when (intent?.action) {
+            ECONOMY -> { energySaving = true; finishSession("节能连接 · 已释放麦克风，素材同步继续") }
             RESUME -> scope.launch {
                 if (!ending.get()) {
                     synchronized(frameGate) { paused = false }
@@ -106,9 +111,9 @@ class MicrophoneService : Service() {
                     val payload = intent.getStringExtra("payload").orEmpty()
                     scope.launch { try { begin(payload) } catch (ex: Exception) {
                         Log.w("MicAudio", "START_FAILED ${ex.javaClass.simpleName}")
-                        finishSession(if (ex is SecurityException) "系统不允许采音，请在前台检查录音权限后重试" else "无法启动麦克风，请检查录音权限和系统麦克风状态")
+                        finishSession("无法启动麦克风", if (ex is SecurityException) MicIssue.PERMISSION else MicIssue.CAPTURE)
                     } }
-                } catch (_: Exception) { finishSession("麦克风服务未能启动，请回到流转授权后重试") }
+                } catch (_: Exception) { finishSession("麦克风服务未能启动，请回到流转授权后重试", MicIssue.PERMISSION) }
             }
             else -> stopSelf()
         }
@@ -127,7 +132,7 @@ class MicrophoneService : Service() {
             require(token.matches(Regex("[A-F0-9]{48}")))
         }
         MicrophoneLevels.reset()
-        require(audioManager?.isMicrophoneMute != true) { "系统麦克风已静音" }
+        if (audioManager?.isMicrophoneMute == true) { finishSession("系统麦克风已静音", MicIssue.SYSTEM_BLOCKED); return }
         val min = AudioRecord.getMinBufferSize(AudioProtocol.RATE, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
         require(min > 0)
         val record = AudioRecord.Builder()
@@ -143,12 +148,12 @@ class MicrophoneService : Service() {
         recordingCallback = object : AudioManager.AudioRecordingCallback() {
             override fun onRecordingConfigChanged(configs: MutableList<AudioRecordingConfiguration>) {
                 if (configs.any { it.clientAudioSessionId == record.audioSessionId && it.isClientSilenced })
-                    finishSession("系统已阻断麦克风，请在手机重新开启会话")
+                    finishSession("系统已阻断麦克风", MicIssue.SYSTEM_BLOCKED)
             }
         }.also { audioManager!!.registerAudioRecordingCallback(it, Handler(Looper.getMainLooper())) }
         mutedReceiver = object : BroadcastReceiver() {
             override fun onReceive(context: Context?, intent: Intent?) {
-                if (audioManager?.isMicrophoneMute == true) finishSession("系统麦克风已静音，会话已结束")
+                if (audioManager?.isMicrophoneMute == true) finishSession("系统麦克风已静音", MicIssue.SYSTEM_BLOCKED)
             }
         }.also { registerReceiver(it, IntentFilter(AudioManager.ACTION_MICROPHONE_MUTE_CHANGED), RECEIVER_NOT_EXPORTED) }
         val now = SystemClock.elapsedRealtime()
@@ -159,6 +164,7 @@ class MicrophoneService : Service() {
             it.acquire(if (localOnly) MicrophoneLifetime.LOCAL_WAKE_MS else MicrophoneLifetime.REMOTE_WAKE_MS)
         }
         record.startRecording()
+        captureStarted = SystemClock.elapsedRealtime()
         require(record.recordingState == AudioRecord.RECORDSTATE_RECORDING)
         running = true
         Log.i("MicAudio", "CAPTURE_START localOnly=$localOnly rate=${AudioProtocol.RATE} suppressionRequested=$suppressSilence thresholdDb=$thresholdDb")
@@ -179,14 +185,14 @@ class MicrophoneService : Service() {
             }
             override fun onMessage(webSocket: WebSocket, text: String) {
                 if (text.length > 8192) { finishSession("音频控制消息过大，会话已结束"); return }
-                scope.launch { try { control(JSONObject(text)) } catch (_: Exception) { finishSession("音频协议不兼容，请同时更新两端") } }
+                scope.launch { try { control(JSONObject(text)) } catch (_: Exception) { finishSession("音频协议不兼容", MicIssue.PROTOCOL) } }
             }
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) { finishSession("电脑发送了无效的音频控制数据") }
-            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { finishSession(if (connected) "电脑音频连接已结束，请重新扫码" else "连接未建立，请检查邀请是否已到期或已使用，在电脑刷新二维码后重扫") }
-            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { finishSession(if (connected) "电脑音频连接已结束，请重新扫码" else "连接未建立，请检查邀请是否已到期或已使用，在电脑刷新二维码后重扫") }
+            override fun onClosed(webSocket: WebSocket, code: Int, reason: String) { finishSession("电脑音频连接已结束", MicIssue.NETWORK) }
+            override fun onClosing(webSocket: WebSocket, code: Int, reason: String) { finishSession("电脑音频连接已结束", MicIssue.NETWORK) }
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.w("MicAudio", "CONNECTION_FAILED ${t.javaClass.simpleName}")
-                finishSession(if (t is java.net.ConnectException) "电脑音频服务未接通，请先开启服务再生成新二维码" else if (!connected) "电脑未接受音频连接，请检查服务、网络和二维码有效期" else "音频连接中断，会话已结束，请重新扫码")
+                finishSession("音频连接未能继续", if (t is java.net.ConnectException) MicIssue.DRIVER else MicIssue.NETWORK)
             }
         })
         }
@@ -195,7 +201,7 @@ class MicrophoneService : Service() {
                 delay(1000)
                 val time = SystemClock.elapsedRealtime()
                 if (lifetime?.expired(time) == true) { finishSession("本机试音已结束"); break }
-                if (!localOnly && time - lastControl > 5000) { finishSession("电脑未响应，请检查音频服务；麦克风会话已结束"); break }
+                if (!localOnly && time - lastControl > 5000) { finishSession("电脑音频心跳超时", MicIssue.NETWORK); break }
                 val active = synchronized(frameGate) { forwarding }
                 if (active && time - lastDemand > 5000) { finishSession("电脑录音需求已过期，会话已结束"); break }
                 // User-authorized remote session stays armed until explicitly ended or interrupted.
@@ -258,10 +264,11 @@ class MicrophoneService : Service() {
             var offset = 0L
             while (running) {
                 val batchGeneration = synchronized(frameGate) { generation }
-                val batchSize = if (silenceQuiet || !MicrophoneLevels.observed && !forwarding) batch.size else pcm.size
+                val batchSize = pcm.size * MicrophonePowerPolicy.batchFrames(silenceQuiet, MicrophoneLevels.observed, forwarding)
                 var size = 0
                 while (size < batchSize && running) {
                     val count = record.read(batch, size, batchSize - size, AudioRecord.READ_BLOCKING)
+                    readCalls++
                     if (count <= 0) error("AudioRecord read failed")
                     size += count
                 }
@@ -281,14 +288,15 @@ class MicrophoneService : Service() {
                     if (MicrophoneLevels.observed && level != null) MicrophoneLevels.accept(level, SystemClock.elapsedRealtime())
                     if (forwarding && generation == batchGeneration && !ending.get()) {
                         consideredFrames++
-                        val ws = socket ?: error("音频连接已关闭")
+                        val ws = socket ?: throw java.io.IOException("Audio disconnected")
                         val timestamp = capturedUs - (batchSize - position - pcm.size) / 2 * 1_000_000L / AudioProtocol.RATE
                         val outgoing = if (suppressionSupported) silenceGate.accept(pcm, offset, timestamp, level!!.dbfs)
                             else listOf(SilenceGate.Frame(pcm, offset, timestamp))
                         for (frame in outgoing) {
-                            if (ws.queueSize() > AudioProtocol.FRAME * 15) error("网络音频排队超限")
+                            if (ws.queueSize() > AudioProtocol.FRAME * 15) throw java.io.IOException("Audio queue full")
                             val bytes = AudioProtocol.frame(frame.pcm, generation, sequence++, frame.sampleOffset, frame.captureUs)
-                            check(ws.send(bytes.toByteString())); frames++
+                            if (!ws.send(bytes.toByteString())) throw java.io.IOException("Audio send failed")
+                            frames++
                         }
                         val nowQuiet = suppressionSupported && silenceGate.quiet
                         if (silenceQuiet != nowQuiet) { silenceQuiet = nowQuiet; sendStatus() }
@@ -299,7 +307,11 @@ class MicrophoneService : Service() {
             }
         } catch (ex: Exception) { if (running) {
             Log.w("MicAudio", "CAPTURE_FAILED ${ex.javaClass.simpleName}")
-            finishSession("麦克风或网络不可用，会话已结束，请重新开启")
+            finishSession("麦克风或网络不可用，会话已结束", when (ex) {
+                is java.io.IOException -> MicIssue.NETWORK
+                is SecurityException -> MicIssue.PERMISSION
+                else -> MicIssue.CAPTURE
+            })
         } }
         finally { captureReady = false }
     }
@@ -318,7 +330,8 @@ class MicrophoneService : Service() {
         if (ending.get()) return
         val state = synchronized(frameGate) { MicStatus(true, connected, forwarding, lastMessage,
             lifetime?.secondsLeft(SystemClock.elapsedRealtime()) ?: 0, frames, localOnly, capturedFrames,
-            suppressionSupported, forwarding && silenceQuiet, (consideredFrames - frames).coerceAtLeast(0), paused, thresholdDb) }
+            suppressionSupported, forwarding && silenceQuiet, (consideredFrames - frames).coerceAtLeast(0), paused, thresholdDb,
+            readCalls = readCalls, captureMs = if (captureStarted > 0) SystemClock.elapsedRealtime() - captureStarted else 0, wakeHeld = wakeLock?.isHeld == true) }
         MicrophoneState.update(state)
         if (notificationText != state.message) {
             notificationText = state.message
@@ -332,7 +345,7 @@ class MicrophoneService : Service() {
             .setContentTitle("流转 · 手机麦克风").setContentText(message).setContentIntent(open).setOngoing(true)
             .setSilent(true).setOnlyAlertOnce(true).addAction(0, "结束会话", end).build()
     }
-    private fun finishSession(message: String) {
+    private fun finishSession(message: String, issue: MicIssue = MicIssue.NONE) {
         if (!ending.compareAndSet(false, true)) return
         Log.i("MicAudio", "SESSION_END localOnly=$localOnly captured=$capturedFrames sent=$frames")
         MicrophoneLevels.reset()
@@ -355,7 +368,9 @@ class MicrophoneService : Service() {
                 client?.connectionPool?.evictAll(); client?.dispatcher?.executorService?.shutdown()
                 if (ownsCapture) {
                     if (released) occupied.set(false)
-                    MicrophoneState.update(MicStatus(active = !released, message = if (released) message else "麦克风释放异常，请重启流转后重试"))
+                    MicrophoneState.update(MicStatus(active = !released, message = if (released) message else "麦克风释放异常，请重启流转后重试",
+                        issue = if (released) issue else MicIssue.CAPTURE, capturedFrames = capturedFrames, frames = frames, readCalls = readCalls,
+                        captureMs = if (captureStarted > 0) SystemClock.elapsedRealtime() - captureStarted else 0, energySaving = energySaving))
                 }
                 withContext(Dispatchers.Main) { stopForeground(STOP_FOREGROUND_REMOVE); stopSelf() }
                 scope.cancel(); dispatcher.close()
