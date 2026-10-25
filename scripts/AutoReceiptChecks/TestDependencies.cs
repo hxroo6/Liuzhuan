@@ -7,7 +7,7 @@ namespace Liuzhuan.Models {
         public bool IsFile {get;set;} public string FilePath {get;set;}=""; public long Size {get;set;} public string TextContent {get;set;}=""; }
 }
 namespace Liuzhuan.Services {
-    public static class ConfigService {private static readonly string Root=System.IO.Path.Combine("F:/appdata/Temp/liuzhuan-receipt-hosts",Guid.NewGuid().ToString("N"));public static string GetEffectiveDataDir()=>Root;}
+    public static class ConfigService {private static readonly string Root=System.IO.Path.Combine(System.IO.Path.GetTempPath(),"liuzhuan-receipt-hosts",Guid.NewGuid().ToString("N"));public static string GetEffectiveDataDir()=>Root;}
     public record TransferEntry(string Id,string Name,string Direction,long Done,long Total,string State,string Error,double BytesPerSecond);
     public static class TransferJournal { public static void Report(TransferEntry entry){} }
 }
